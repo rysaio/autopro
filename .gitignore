@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+secops.config.json
+coverage/
+.vite/
+/runtime/
+/apps/server/runtime/
+*.log
+*.tsbuildinfo

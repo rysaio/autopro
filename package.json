@@ -1,0 +1,25 @@
+{
+  "name": "secops-agent-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "plugins/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,green \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
+    "stop:dev": "node scripts/stop-dev.mjs",
+    "dev:server": "npm run dev -w apps/server",
+    "dev:web": "npm run dev -w apps/web",
+    "build": "npm run build -w @secops-agent/shared && npm run build -w @secops-agent/wazuh-secops && npm run build -w @secops-agent/shuffle-secops && npm run build -w @secops-agent/server && npm run build -w @secops-agent/web",
+    "typecheck": "npm run build -w @secops-agent/shared && npm run build -w @secops-agent/wazuh-secops && npm run build -w @secops-agent/shuffle-secops && npm run typecheck -w @secops-agent/server && npm run typecheck -w @secops-agent/web",
+    "test": "npm run test -w @secops-agent/shared && npm run test -w @secops-agent/wazuh-secops && npm run test -w @secops-agent/shuffle-secops && npm run test -w @secops-agent/server && npm run test -w @secops-agent/web",
+    "lint": "npm run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.3"
+  }
+}
