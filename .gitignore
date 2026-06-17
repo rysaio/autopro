@@ -6,7 +6,7 @@ dist/
 secops.config.json
 coverage/
 .vite/
-/runtime/
+runtime/
 /apps/server/runtime/
 *.log
 *.tsbuildinfo
