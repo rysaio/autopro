@@ -12,6 +12,7 @@ Start here after the root README when an agent needs project progress or next ta
 
 - `2026-06-15` plan: [Wazuh SecOps Plugin Extraction](plans/2026-06-15-wazuh-plugin-extraction.md)
 - `2026-06-16` plan: [Shuffle SecOps Plugin](plans/2026-06-16-shuffle-secops-plugin.md)
+- `2026-06-19` plan: [Agent Control Boundary Implementation](plans/2026-06-19-agent-control-boundary.md)
 
 ## Work Records
 
@@ -22,8 +23,7 @@ Start here after the root README when an agent needs project progress or next ta
 
 ## Current Next Tasks
 
-- Review `2026-06-19` Agent Control Boundary Design, then write the
-  implementation plan.
+- Execute `2026-06-19` Agent Control Boundary Implementation plan.
 - Integrate Shuffle into `apps/server` through a thin adapter only if the Web console needs it.
 - Run live Wazuh and Shuffle smoke checks when real credentials are available.
 - Include Postgres-backed durable chat/run storage in the first
