@@ -23,6 +23,8 @@ export interface AppConfig {
   runtimeConfigPath: string;
   auditLogPath: string;
   approvalStorePath: string;
+  databaseUrl: string | undefined;
+  durableSessionMode: "postgres" | "disabled";
   allowedHosts: string[];
   allowedOrigins: string[];
   apiToken: string | undefined;
@@ -60,6 +62,8 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     runtimeConfigPath: resolveWorkspacePath(env.SECOPS_RUNTIME_CONFIG_PATH, workspaceRoot, path.join("runtime", "config", "settings.json")),
     auditLogPath: resolveWorkspacePath(env.SECOPS_AUDIT_LOG_PATH, workspaceRoot, path.join("runtime", "audit", "events.jsonl")),
     approvalStorePath: resolveWorkspacePath(env.SECOPS_APPROVAL_STORE_PATH, workspaceRoot, path.join("runtime", "approvals", "pending.json")),
+    databaseUrl: env.SECOPS_DATABASE_URL?.trim() || undefined,
+    durableSessionMode: env.SECOPS_DATABASE_URL?.trim() ? "postgres" : "disabled",
     allowedHosts: parseCsv(env.SECOPS_ALLOWED_HOSTS) ?? DEFAULT_ALLOWED_HOSTS,
     allowedOrigins: parseCsv(env.SECOPS_ALLOWED_ORIGINS) ?? DEFAULT_ALLOWED_ORIGINS,
     apiToken: env.SECOPS_API_TOKEN?.trim() || undefined

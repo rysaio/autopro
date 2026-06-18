@@ -38,4 +38,23 @@ describe("config file loading", () => {
     expect(config.modelBaseUrl).toBeUndefined();
     expect(config.modelApiKey).toBeUndefined();
   });
+
+  it("enables postgres durable session mode when SECOPS_DATABASE_URL is configured", () => {
+    const config = getConfig({
+      SECOPS_CONFIG_PATH: path.join(os.tmpdir(), "missing-secops.config.json"),
+      SECOPS_DATABASE_URL: "postgres://secops:secret@localhost:5432/secops_agent"
+    });
+
+    expect(config.databaseUrl).toBe("postgres://secops:secret@localhost:5432/secops_agent");
+    expect(config.durableSessionMode).toBe("postgres");
+  });
+
+  it("keeps durable session mode disabled without SECOPS_DATABASE_URL", () => {
+    const config = getConfig({
+      SECOPS_CONFIG_PATH: path.join(os.tmpdir(), "missing-secops.config.json")
+    });
+
+    expect(config.databaseUrl).toBeUndefined();
+    expect(config.durableSessionMode).toBe("disabled");
+  });
 });
