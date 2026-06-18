@@ -14,6 +14,7 @@ export interface ToolContext {
   sandboxRoot: string;
   workspaceRoot: string;
   approvedToolCallIds?: string[];
+  stateMarkers?: string[];
 }
 
 export interface ToolExecutionResult {

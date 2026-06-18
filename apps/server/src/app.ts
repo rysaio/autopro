@@ -248,6 +248,9 @@ function coerceRunRequest(body: Partial<AgentRunRequest> | undefined): AgentRunR
     messages: body.messages,
     permissionMode: coercePermissionMode(body.permissionMode)
   };
+  if (typeof body.sessionId === "string" && body.sessionId.length > 0) {
+    runRequest.sessionId = body.sessionId;
+  }
   if (body.enabledTools) {
     runRequest.enabledTools = body.enabledTools;
   }

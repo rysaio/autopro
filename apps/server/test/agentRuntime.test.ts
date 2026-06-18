@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { rm } from "node:fs/promises";
 import path from "node:path";
+import type {
+  LanguageModelV3,
+  LanguageModelV3CallOptions,
+  LanguageModelV3GenerateResult,
+  LanguageModelV3StreamResult
+} from "@ai-sdk/provider";
+import type { LanguageModel } from "ai";
 import type { EvidenceArtifact, SkillManifest, ToolGuidance } from "@secops-agent/shared";
 import type { ModelTool } from "../src/providers/types.js";
 import { AgentRuntime } from "../src/runtime/agentRuntime.js";
+import { MemorySessionStateStore } from "../src/runtime/sessionStateStore.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/types.js";
 import { createScriptedModel } from "./fixtures/scriptedModel.js";
@@ -174,6 +182,88 @@ describe("AgentRuntime", () => {
     expect(run.audit.some((event) => event.type === "tool_result" && event.detail.includes("recoverable guidance"))).toBe(true);
     expect(events.some((event) => event.includes("needs_precondition"))).toBe(true);
   });
+
+  it("records run state and carries tool state markers into later tool calls", async () => {
+    const config = testConfig({
+      SECOPS_ACTION_LEVEL: "sandbox"
+    });
+    const sessionStateStore = new MemorySessionStateStore();
+    let observedMarkers: string[] | undefined;
+    const artifact: EvidenceArtifact = {
+      id: "artifact-marker",
+      title: "Marker artifact",
+      kind: "runtime",
+      summary: "A state marker was produced.",
+      data: { stateMarkers: ["state.ready:target-1"] },
+      createdAt: new Date().toISOString()
+    };
+    const registry = new ToolRegistry([
+      new TestTool("test_state_prepare", testManifest("test.state.prepare", "Prepare State"), async () => ({
+        output: {
+          stateMarkers: ["state.ready:target-1"],
+          prepared: true
+        },
+        artifacts: [artifact]
+      })),
+      new TestTool("test_state_consume", testManifest("test.state.consume", "Consume State"), async (_args, context) => {
+        observedMarkers = context.stateMarkers;
+        return {
+          output: {
+            sawMarker: context.stateMarkers?.includes("state.ready:target-1") ?? false
+          }
+        };
+      })
+    ]);
+    const runtime = new AgentRuntime({
+      model: createTwoStepToolModel(["test_state_prepare", "test_state_consume"]),
+      registry,
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      maxToolRounds: 4,
+      sessionStateStore
+    });
+
+    const run = await runtime.run({
+      sessionId: "session-state-test",
+      messages: [
+        {
+          role: "user",
+          content: "Prepare then consume state."
+        }
+      ]
+    });
+
+    expect(run.status).toBe("completed");
+    expect(run.toolInvocations.map((invocation) => invocation.toolName)).toEqual(["test.state.prepare", "test.state.consume"]);
+    expect(run.toolInvocations[1]?.result).toMatchObject({ sawMarker: true });
+    expect(observedMarkers).toContain("state.ready:target-1");
+    expect(sessionStateStore.runs).toHaveLength(1);
+    expect(sessionStateStore.runs[0]).toMatchObject({
+      sessionId: "session-state-test",
+      runId: run.id,
+      completed: {
+        id: run.id
+      }
+    });
+    expect(sessionStateStore.messages.length).toBeGreaterThanOrEqual(3);
+    expect(sessionStateStore.invocations).toHaveLength(2);
+    expect(sessionStateStore.artifacts).toEqual([artifact]);
+    expect(sessionStateStore.markers).toMatchObject([
+      {
+        sessionId: "session-state-test",
+        runId: run.id,
+        key: "state.ready:target-1",
+        value: {
+          toolName: "test.state.prepare"
+        }
+      }
+    ]);
+    expect(sessionStateStore.events.some((event) => event.type === "run_completed")).toBe(true);
+    expect(sessionStateStore.audit.some((event) => event.type === "tool_result")).toBe(true);
+  });
 });
 
 class TestTool implements SecOpsTool {
@@ -217,6 +307,70 @@ function testManifest(id: string, name: string): SkillManifest {
       },
       required: [],
       additionalProperties: false
+    }
+  };
+}
+
+function createTwoStepToolModel(toolNames: [string, string]): LanguageModel {
+  return new TwoStepToolModel(toolNames);
+}
+
+class TwoStepToolModel implements LanguageModelV3 {
+  readonly specificationVersion = "v3";
+  readonly provider = "test-provider";
+  readonly modelId = "two-step-test-model";
+  readonly supportedUrls = {};
+  private step = 0;
+
+  constructor(private readonly toolNames: [string, string]) {}
+
+  async doGenerate(_options: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> {
+    this.step += 1;
+    if (this.step <= this.toolNames.length) {
+      return {
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: `call_${this.step}`,
+            toolName: this.toolNames[this.step - 1],
+            input: "{}"
+          }
+        ],
+        finishReason: { unified: "tool-calls", raw: "tool_calls" },
+        usage: usage(),
+        warnings: []
+      };
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: "State marker flow completed."
+        }
+      ],
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: usage(),
+      warnings: []
+    };
+  }
+
+  async doStream(_options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
+    throw new Error("Streaming is not implemented for the two-step test model.");
+  }
+}
+
+function usage() {
+  return {
+    inputTokens: {
+      total: 20,
+      noCache: 20,
+      cacheRead: undefined,
+      cacheWrite: undefined
+    },
+    outputTokens: {
+      total: 10,
+      text: 10,
+      reasoning: undefined
     }
   };
 }

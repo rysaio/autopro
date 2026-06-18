@@ -153,6 +153,7 @@ export interface AgentRunEvent {
 
 export interface AgentRunRequest {
   messages: Array<Pick<ChatMessage, "role" | "content">>;
+  sessionId?: string;
   enabledTools?: string[];
   permissionMode?: PermissionMode;
 }
