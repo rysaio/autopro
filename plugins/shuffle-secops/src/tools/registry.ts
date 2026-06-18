@@ -132,9 +132,11 @@ export function createShuffleTools(clientFactory: () => ShuffleClient = memoized
       async (args) => {
         const workflowId = requireString(args, "workflowId");
         const raw = await clientFactory().getWorkflow(workflowId);
+        const stateMarkers = [`shuffle.workflow.metadata:${workflowId}`];
         const output = {
           endpointClass: "shuffle.workflow",
           workflowId,
+          stateMarkers,
           workflow: pickSummary(raw, ["id", "name", "description", "status", "triggers", "actions"]),
           raw
         };
@@ -168,6 +170,27 @@ export function createShuffleTools(clientFactory: () => ShuffleClient = memoized
         const workflowId = requireString(args, "workflowId");
         const reason = requireString(args, "reason");
         const executionArgument = parseJsonObject(optionalString(args, "executionArgumentJson"), "executionArgumentJson");
+        const requiredMarker = `shuffle.workflow.metadata:${workflowId}`;
+        if (!context.stateMarkers?.includes(requiredMarker)) {
+          return {
+            output: {
+              status: "needs_precondition",
+              guidance: {
+                kind: "precondition",
+                message: "Call shuffle.workflow.get before shuffle.workflow.execute so the workflow target and expected arguments are known.",
+                nextTools: [
+                  {
+                    toolName: "shuffle.workflow.get",
+                    reason: "Fetch workflow metadata before execution.",
+                    suggestedArgs: { workflowId }
+                  }
+                ],
+                requiredState: [requiredMarker],
+                recoverable: true
+              }
+            }
+          };
+        }
         const raw = await clientFactory().executeWorkflow(workflowId, executionArgument);
         const output = {
           policyDecision: `executed under ${context.actionLevel} access level`,

@@ -40,6 +40,28 @@ export interface ShuffleExecutionContext {
   sandboxRoot?: string;
   workspaceRoot?: string;
   approvedToolCallIds?: string[];
+  stateMarkers?: string[];
+}
+
+export type ToolGuidanceKind = "precondition" | "missing_context" | "policy" | "validation";
+
+export interface ToolGuidanceNextTool {
+  toolName: string;
+  reason: string;
+  suggestedArgs?: Record<string, unknown>;
+}
+
+export interface ToolGuidance {
+  kind: ToolGuidanceKind;
+  message: string;
+  nextTools?: ToolGuidanceNextTool[];
+  requiredState?: string[];
+  recoverable: boolean;
+}
+
+export interface RecoverableToolResult {
+  status: "needs_precondition" | "needs_context";
+  guidance: ToolGuidance;
 }
 
 export interface ShuffleExecutionResult {

@@ -65,7 +65,7 @@ describe("shuffle plugin tools", () => {
         executionArgumentJson: "{\"alert\":{\"rule\":{\"id\":\"5710\"}}}",
         reason: "test execution"
       },
-      context()
+      context({ stateMarkers: ["shuffle.workflow.metadata:wf-1"] })
     );
 
     expect(result?.output).toMatchObject({
@@ -74,6 +74,53 @@ describe("shuffle plugin tools", () => {
       executionArgument: { alert: { rule: { id: "5710" } } }
     });
     expect(fake.executedWorkflowBody()).toEqual({ alert: { rule: { id: "5710" } } });
+  });
+
+  it("guides workflow execution toward workflow metadata when preconditions are missing", async () => {
+    const fake = fakeClient();
+    const tool = createShuffleTools(() => fake).find((candidate) => candidate.manifest.id === "shuffle.workflow.execute");
+
+    const result = await tool?.execute(
+      {
+        workflowId: "wf-1",
+        executionArgumentJson: "{\"alert\":{\"rule\":{\"id\":\"5710\"}}}",
+        reason: "test execution"
+      },
+      context()
+    );
+
+    expect(result?.output).toEqual({
+      status: "needs_precondition",
+      guidance: {
+        kind: "precondition",
+        message: "Call shuffle.workflow.get before shuffle.workflow.execute so the workflow target and expected arguments are known.",
+        nextTools: [
+          {
+            toolName: "shuffle.workflow.get",
+            reason: "Fetch workflow metadata before execution.",
+            suggestedArgs: { workflowId: "wf-1" }
+          }
+        ],
+        requiredState: ["shuffle.workflow.metadata:wf-1"],
+        recoverable: true
+      }
+    });
+    expect(fake.executedWorkflowBody()).toBeUndefined();
+    expect(JSON.stringify(result?.output)).not.toContain("test-key");
+  });
+
+  it("records workflow metadata state markers when inspecting a workflow", async () => {
+    const tool = createShuffleTools(() => fakeClient()).find((candidate) => candidate.manifest.id === "shuffle.workflow.get");
+
+    const result = await tool?.execute({ workflowId: "wf-1" }, context());
+
+    expect(result?.output).toMatchObject({
+      workflowId: "wf-1",
+      stateMarkers: ["shuffle.workflow.metadata:wf-1"]
+    });
+    expect(result?.artifacts?.[0]?.data).toMatchObject({
+      stateMarkers: ["shuffle.workflow.metadata:wf-1"]
+    });
   });
 
   it("validates JSON object payloads before webhook calls", async () => {
@@ -170,10 +217,11 @@ function fakeClient() {
   };
 }
 
-function context(): ShuffleExecutionContext {
+function context(overrides: Partial<ShuffleExecutionContext> = {}): ShuffleExecutionContext {
   return {
     runId: "test-run",
     permissionMode: "auto",
-    actionLevel: "full-access"
+    actionLevel: "full-access",
+    ...overrides
   };
 }
