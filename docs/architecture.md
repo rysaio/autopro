@@ -14,7 +14,8 @@ flowchart LR
   Registry --> Approvals["Approval store"]
   Registry --> MCP["MCP SDK facade and Streamable HTTP endpoint"]
   Registry --> Skills["SecOps skills and action tools"]
-  Runtime --> Audit["Audit and evidence records"]
+  Runtime --> Store["Postgres session state store"]
+  Store --> Audit["Audit and evidence records"]
 ```
 
 ## Boundary
@@ -34,9 +35,23 @@ runtime's model request, tool execution, audit, artifact, message, and final run
 checkpoints. This keeps the agent loop SDK-owned while giving the console a
 coding-agent style progress feed.
 
-Agent run events are appended to a local JSONL audit log at
-`SECOPS_AUDIT_LOG_PATH` and can be read through `GET /api/audit/events`. This is
-local persistence for operator traceability, not a production SIEM or database.
+When `SECOPS_DATABASE_URL` is configured, Postgres is the durable source of
+truth for sessions, runs, messages, tool invocations, recoverable guidance,
+artifacts, state markers, pending approvals, and audit events. The local JSONL
+audit log at `SECOPS_AUDIT_LOG_PATH` remains a development/export trace and can
+be read through `GET /api/audit/events`; it is not the recovery authority.
+
+Durable sessions are exposed through `GET /api/sessions` and
+`GET /api/sessions/:id`. If Postgres is not configured, these routes return an
+empty list or an explicit unavailable/not-found response instead of pretending
+frontend memory is recoverable state.
+
+Recoverable guidance is a tool result, not a pre-model workflow engine. The
+runtime exposes available tools, the registry validates input and host policy,
+and the interface/plugin checks its own business preconditions. If a call is
+valid but out of sequence, the tool returns structured guidance such as the
+next tool to call and required state marker; the UI renders that separately
+from hard failures and policy denials.
 
 ## Tool Safety Classes
 
