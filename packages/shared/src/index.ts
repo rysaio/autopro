@@ -8,6 +8,27 @@ export type ToolClass = "perception" | "reasoning" | "evidence" | "action";
 
 export type AutomationLevel = "observe" | "sandbox" | "full-access";
 
+export type ToolGuidanceKind = "precondition" | "missing_context" | "policy" | "validation";
+
+export interface ToolGuidanceNextTool {
+  toolName: string;
+  reason: string;
+  suggestedArgs?: Record<string, unknown>;
+}
+
+export interface ToolGuidance {
+  kind: ToolGuidanceKind;
+  message: string;
+  nextTools?: ToolGuidanceNextTool[];
+  requiredState?: string[];
+  recoverable: boolean;
+}
+
+export interface RecoverableToolResult {
+  status: "needs_precondition" | "needs_context";
+  guidance: ToolGuidance;
+}
+
 export interface RuntimeSettings {
   actionLevel: AutomationLevel;
 }
@@ -61,6 +82,7 @@ export interface ToolInvocation {
   arguments: Record<string, unknown>;
   result?: unknown;
   error?: string;
+  guidance?: ToolGuidance;
   startedAt: string;
   completedAt?: string;
 }

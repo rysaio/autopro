@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ToolGuidance, ToolInvocation } from "@secops-agent/shared";
 import { ToolRegistry } from "../src/tools/registry.js";
 
 const context = {
@@ -110,5 +111,48 @@ describe("ToolRegistry", () => {
     );
     expect(invalidEnum.invocation.status).toBe("failed");
     expect(invalidEnum.invocation.error).toContain("Invalid value");
+  });
+
+  it("supports typed recoverable guidance on tool invocations", () => {
+    const guidance: ToolGuidance = {
+      kind: "precondition",
+      message: "Call shuffle.workflow.get before shuffle.workflow.execute.",
+      nextTools: [
+        {
+          toolName: "shuffle.workflow.get",
+          reason: "Fetch workflow metadata before execution.",
+          suggestedArgs: { workflowId: "wf-123" }
+        }
+      ],
+      requiredState: ["shuffle.workflow.metadata:wf-123"],
+      recoverable: true
+    };
+    const invocation: ToolInvocation = {
+      id: "guided-call",
+      toolName: "shuffle.workflow.execute",
+      displayName: "Execute Shuffle Workflow",
+      status: "failed",
+      risk: "high",
+      arguments: { workflowId: "wf-123" },
+      result: {
+        status: "needs_precondition",
+        guidance
+      },
+      guidance,
+      startedAt: new Date().toISOString()
+    };
+
+    expect(invocation.guidance?.recoverable).toBe(true);
+    expect(invocation.result).toMatchObject({
+      status: "needs_precondition",
+      guidance: {
+        kind: "precondition",
+        nextTools: [
+          {
+            toolName: "shuffle.workflow.get"
+          }
+        ]
+      }
+    });
   });
 });
