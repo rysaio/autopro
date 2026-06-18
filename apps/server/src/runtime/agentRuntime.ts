@@ -93,7 +93,14 @@ export class AgentRuntime {
               `${record.invocation.displayName} ${record.invocation.status} under ${effectivePermissionMode} mode.`,
               record.invocation.status === "denied" || record.invocation.status === "pending_approval" ? "warn" : "info"
             );
-            const resultAudit = event("tool_result", "Tool result", `${record.invocation.displayName} ${record.invocation.status}.`);
+            const resultAudit = event(
+              "tool_result",
+              "Tool result",
+              record.invocation.guidance
+                ? `${record.invocation.displayName} returned recoverable guidance: ${record.invocation.guidance.message}`
+                : `${record.invocation.displayName} ${record.invocation.status}.`,
+              record.invocation.guidance ? "warn" : "info"
+            );
             audit.push(requestedAudit, policyAudit, resultAudit);
             emit({ type: "audit", audit: requestedAudit });
             emit({ type: "audit", audit: policyAudit });

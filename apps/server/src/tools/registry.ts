@@ -4,6 +4,7 @@ import type { ModelToolCall } from "../providers/types.js";
 import { approvalResult, ApprovalStore } from "../runtime/approvalStore.js";
 import { skillPacksFor } from "../skills/catalog.js";
 import { createActionTools } from "./actionTools.js";
+import { isRecoverableToolResult } from "./guidance.js";
 import { validateToolInput } from "./inputValidation.js";
 import { createSecOpsTools } from "./secopsTools.js";
 import type { SecOpsTool, ToolContext, ToolExecutionRecord } from "./types.js";
@@ -138,6 +139,16 @@ export class ToolRegistry {
     }
     try {
       const result = await tool.execute(parsedArgs, context);
+      if (isRecoverableToolResult(result.output)) {
+        return {
+          invocation: {
+            ...invocation(tool, callId, parsedArgs, "failed", startedAt, result.output),
+            error: "Recoverable tool guidance returned",
+            guidance: result.output.guidance
+          },
+          artifacts: result.artifacts ?? []
+        };
+      }
       return {
         invocation: invocation(tool, callId, parsedArgs, "executed", startedAt, result.output),
         artifacts: result.artifacts ?? []

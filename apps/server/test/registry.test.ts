@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ToolGuidance, ToolInvocation } from "@secops-agent/shared";
+import type { EvidenceArtifact, SkillManifest, ToolGuidance, ToolInvocation } from "@secops-agent/shared";
 import { ToolRegistry } from "../src/tools/registry.js";
+import type { ModelTool } from "../src/providers/types.js";
+import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/types.js";
 
 const context = {
   runId: "registry-test",
@@ -155,4 +157,98 @@ describe("ToolRegistry", () => {
       }
     });
   });
+
+  it("maps recoverable tool guidance to a compatible failed invocation", async () => {
+    const guidance: ToolGuidance = {
+      kind: "precondition",
+      message: "Call prep.lookup before action.execute.",
+      nextTools: [
+        {
+          toolName: "prep.lookup",
+          reason: "Collect required state before execution.",
+          suggestedArgs: { id: "target-1" }
+        }
+      ],
+      requiredState: ["prep.ready:target-1"],
+      recoverable: true
+    };
+    const artifact: EvidenceArtifact = {
+      id: "artifact-guidance",
+      title: "Guidance artifact",
+      kind: "runtime",
+      summary: "Recoverable guidance was produced.",
+      data: { guidance },
+      createdAt: new Date().toISOString()
+    };
+    const registry = new ToolRegistry([
+      new TestTool(
+        "test_guided_action",
+        testManifest("test.guided.action", "Guided Action"),
+        async () => ({
+          output: {
+            status: "needs_precondition",
+            guidance
+          },
+          artifacts: [artifact]
+        })
+      )
+    ]);
+
+    const record = await registry.executeApiTool("test_guided_action", "guided-call", {}, {
+      ...context,
+      permissionMode: "auto"
+    });
+
+    expect(record.invocation.status).toBe("failed");
+    expect(record.invocation.error).toBe("Recoverable tool guidance returned");
+    expect(record.invocation.guidance).toEqual(guidance);
+    expect(record.invocation.result).toEqual({
+      status: "needs_precondition",
+      guidance
+    });
+    expect(record.artifacts).toEqual([artifact]);
+  });
 });
+
+class TestTool implements SecOpsTool {
+  constructor(
+    readonly apiName: string,
+    readonly manifest: SkillManifest,
+    private readonly handler: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolExecutionResult>
+  ) {}
+
+  toModelTool(): ModelTool {
+    return {
+      type: "function",
+      function: {
+        name: this.apiName,
+        description: this.manifest.description,
+        parameters: this.manifest.inputSchema
+      }
+    };
+  }
+
+  execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolExecutionResult> {
+    return this.handler(args, context);
+  }
+}
+
+function testManifest(id: string, name: string): SkillManifest {
+  return {
+    id,
+    skillPackId: "test-pack",
+    name,
+    description: "Test tool.",
+    toolClass: "perception",
+    risk: "low",
+    defaultPermission: "auto",
+    tags: ["test"],
+    mcpCompatible: true,
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false
+    }
+  };
+}
