@@ -13,6 +13,7 @@ export interface ToolContext {
   actionLevel: AutomationLevel;
   sandboxRoot: string;
   workspaceRoot: string;
+  sessionId?: string;
   approvedToolCallIds?: string[];
   stateMarkers?: string[];
 }

@@ -17,6 +17,14 @@ export interface StoredApproval {
   expiresAt?: string;
 }
 
+export interface PendingApprovalStore {
+  add(record: StoredApproval): Promise<PendingApproval>;
+  list(): Promise<PendingApproval[]>;
+  get(id: string): Promise<StoredApproval | undefined>;
+  take(id: string): Promise<StoredApproval | undefined>;
+  deny(id: string): Promise<ApprovalDecisionResult | undefined>;
+}
+
 interface ApprovalStoreSnapshot {
   version: 1;
   updatedAt: string;
@@ -37,33 +45,33 @@ interface StoredPendingApprovalV1 {
 
 const DEFAULT_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 
-export class ApprovalStore {
+export class ApprovalStore implements PendingApprovalStore {
   private readonly pending = new Map<string, StoredApproval>();
 
   constructor(private readonly filePath?: string) {
     this.load();
   }
 
-  add(record: StoredApproval): PendingApproval {
+  async add(record: StoredApproval): Promise<PendingApproval> {
     const normalized = normalizeStoredApproval(record);
     this.pending.set(normalized.invocation.id, cloneStoredApproval(normalized));
     this.persist();
     return toPendingApproval(normalized);
   }
 
-  list(): PendingApproval[] {
+  async list(): Promise<PendingApproval[]> {
     this.pruneExpired();
     return [...this.pending.values()].map(toPendingApproval);
   }
 
-  get(id: string): StoredApproval | undefined {
+  async get(id: string): Promise<StoredApproval | undefined> {
     this.pruneExpired();
     const record = this.pending.get(id);
     return record ? cloneStoredApproval(record) : undefined;
   }
 
-  take(id: string): StoredApproval | undefined {
-    const record = this.get(id);
+  async take(id: string): Promise<StoredApproval | undefined> {
+    const record = await this.get(id);
     if (record) {
       this.pending.delete(id);
       this.persist();
@@ -71,25 +79,12 @@ export class ApprovalStore {
     return record;
   }
 
-  deny(id: string): ApprovalDecisionResult | undefined {
-    const record = this.take(id);
+  async deny(id: string): Promise<ApprovalDecisionResult | undefined> {
+    const record = await this.take(id);
     if (!record) {
       return undefined;
     }
-    const deniedInvocation: ToolInvocation = {
-      ...record.invocation,
-      status: "denied",
-      error: "Tool execution denied by analyst approval decision",
-      completedAt: new Date().toISOString()
-    };
-    return {
-      decision: "denied",
-      runId: record.context.runId,
-      invocation: deniedInvocation,
-      artifacts: [],
-      audit: approvalAudit(record.context.runId, deniedInvocation, "denied"),
-      messages: approvalMessages(deniedInvocation, "denied")
-    };
+    return deniedApprovalResult(record);
   }
 
   private load(): void {
@@ -142,10 +137,11 @@ export class ApprovalStore {
   }
 }
 
-export function approvalResult(record: ToolExecutionRecord, runId: string): ApprovalDecisionResult {
+export function approvalResult(record: ToolExecutionRecord, runId: string, sessionId?: string): ApprovalDecisionResult {
   return {
     decision: "approved",
     runId,
+    ...(sessionId ? { sessionId } : {}),
     invocation: record.invocation,
     artifacts: record.artifacts,
     audit: approvalAudit(runId, record.invocation, "approved"),
@@ -153,7 +149,7 @@ export function approvalResult(record: ToolExecutionRecord, runId: string): Appr
   };
 }
 
-function toPendingApproval(record: StoredApproval): PendingApproval {
+export function toPendingApproval(record: StoredApproval): PendingApproval {
   return {
     id: record.invocation.id,
     runId: record.context.runId,
@@ -167,7 +163,7 @@ function toPendingApproval(record: StoredApproval): PendingApproval {
   };
 }
 
-function cloneStoredApproval(record: StoredApproval): StoredApproval {
+export function cloneStoredApproval(record: StoredApproval): StoredApproval {
   const context: ToolContext = { ...record.context };
   if (record.context.approvedToolCallIds) {
     context.approvedToolCallIds = [...record.context.approvedToolCallIds];
@@ -244,7 +240,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function normalizeStoredApproval(record: StoredApproval): StoredApproval {
+export function normalizeStoredApproval(record: StoredApproval): StoredApproval {
   const cloned = cloneStoredApproval({
     ...record,
     expiresAt: record.expiresAt ?? expiresAtFor(record.invocation.startedAt)
@@ -301,7 +297,7 @@ function expiresAtFor(startedAt: string): string {
   return new Date(base + DEFAULT_APPROVAL_TTL_MS).toISOString();
 }
 
-function isExpired(record: StoredApproval): boolean {
+export function isExpired(record: StoredApproval): boolean {
   if (!record.expiresAt) {
     return true;
   }
@@ -333,6 +329,24 @@ function approvalAudit(
       createdAt: new Date().toISOString()
     }
   ];
+}
+
+export function deniedApprovalResult(record: StoredApproval): ApprovalDecisionResult {
+  const deniedInvocation: ToolInvocation = {
+    ...record.invocation,
+    status: "denied",
+    error: "Tool execution denied by analyst approval decision",
+    completedAt: new Date().toISOString()
+  };
+  return {
+    decision: "denied",
+    runId: record.context.runId,
+    ...(record.context.sessionId ? { sessionId: record.context.sessionId } : {}),
+    invocation: deniedInvocation,
+    artifacts: [],
+    audit: approvalAudit(record.context.runId, deniedInvocation, "denied"),
+    messages: approvalMessages(deniedInvocation, "denied")
+  };
 }
 
 function approvalMessages(

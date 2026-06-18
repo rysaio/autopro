@@ -82,7 +82,7 @@ describe("ToolRegistry", () => {
 
     expect(record.invocation.status).toBe("failed");
     expect(record.invocation.error).toContain("Missing required argument");
-    expect(registry.pendingApprovals()).toHaveLength(0);
+    await expect(registry.pendingApprovals()).resolves.toHaveLength(0);
   });
 
   it("rejects unexpected properties and invalid enum values at the registry boundary", async () => {

@@ -102,6 +102,7 @@ export interface PendingApproval {
 export interface ApprovalDecisionResult {
   decision: "approved" | "denied";
   runId: string;
+  sessionId?: string;
   invocation: ToolInvocation;
   artifacts: EvidenceArtifact[];
   audit: AuditEvent[];
@@ -165,6 +166,10 @@ export interface ProviderStatus {
   apiTokenRequired: boolean;
   actionLevel: AutomationLevel;
   sandboxRoot: string;
+  durableSessionStore: {
+    mode: "postgres" | "disabled";
+    configured: boolean;
+  };
   capabilities: {
     tools: boolean;
     streaming: boolean;

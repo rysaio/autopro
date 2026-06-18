@@ -1,7 +1,7 @@
 import { jsonSchema, type ToolSet } from "ai";
 import type { SkillManifest, ToolInvocation } from "@secops-agent/shared";
 import type { ModelToolCall } from "../providers/types.js";
-import { approvalResult, ApprovalStore } from "../runtime/approvalStore.js";
+import { approvalResult, ApprovalStore, type PendingApprovalStore } from "../runtime/approvalStore.js";
 import { skillPacksFor } from "../skills/catalog.js";
 import { createActionTools } from "./actionTools.js";
 import { isRecoverableToolResult } from "./guidance.js";
@@ -16,7 +16,7 @@ export class ToolRegistry {
 
   constructor(
     tools: SecOpsTool[] = [...createSecOpsTools(), ...createActionTools(), ...createWazuhTools()],
-    private readonly approvals = new ApprovalStore()
+    private readonly approvals: PendingApprovalStore = new ApprovalStore()
   ) {
     for (const tool of tools) {
       if (this.byApiName.has(tool.apiName)) {
@@ -122,7 +122,7 @@ export class ToolRegistry {
     if (policy.status !== "executed") {
       const pendingInvocation = invocation(tool, callId, parsedArgs, policy.status, startedAt);
       if (policy.status === "pending_approval") {
-        this.approvals.add({
+        await this.approvals.add({
           apiName,
           args: parsedArgs,
           context,
@@ -172,12 +172,12 @@ export class ToolRegistry {
     return this.executeApiTool(tool.apiName, crypto.randomUUID(), args, context);
   }
 
-  pendingApprovals() {
+  async pendingApprovals() {
     return this.approvals.list();
   }
 
   async approveToolCall(id: string, currentPolicy?: Pick<ToolContext, "actionLevel" | "sandboxRoot" | "workspaceRoot">) {
-    const pending = this.approvals.take(id);
+    const pending = await this.approvals.take(id);
     if (!pending) {
       return undefined;
     }
@@ -193,11 +193,12 @@ export class ToolRegistry {
           approvedToolCallIds: [pending.invocation.id]
         }
       ),
-      pending.context.runId
+      pending.context.runId,
+      pending.context.sessionId
     );
   }
 
-  denyToolCall(id: string) {
+  async denyToolCall(id: string) {
     return this.approvals.deny(id);
   }
 

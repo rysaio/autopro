@@ -3,16 +3,27 @@ import { Pool, type PoolConfig, type QueryResultRow } from "pg";
 import type {
   AgentRun,
   AgentRunEvent,
+  ApprovalDecisionResult,
   AuditEvent,
   ChatMessage,
   EvidenceArtifact,
+  PendingApproval,
   ToolGuidance,
   ToolInvocation
 } from "@secops-agent/shared";
+import {
+  cloneStoredApproval,
+  deniedApprovalResult,
+  isExpired,
+  normalizeStoredApproval,
+  toPendingApproval,
+  type PendingApprovalStore,
+  type StoredApproval
+} from "./approvalStore.js";
 import { migratePostgresSessionStore, withTransaction } from "./postgresMigrations.js";
 import type { SessionStateStore, StateMarker } from "./sessionStateStore.js";
 
-export class PostgresSessionStore implements SessionStateStore {
+export class PostgresSessionStore implements SessionStateStore, PendingApprovalStore {
   readonly pool: Pool;
 
   constructor(input: string | Pool | PoolConfig) {
@@ -200,6 +211,106 @@ export class PostgresSessionStore implements SessionStateStore {
       stateMarkers: await this.listStateMarkers(sessionId)
     };
   }
+
+  async add(record: StoredApproval): Promise<PendingApproval> {
+    const normalized = normalizeStoredApproval(record);
+    const pending = toPendingApproval(normalized);
+    if (normalized.context.sessionId) {
+      await this.pool.query(
+        `INSERT INTO secops_sessions (id, created_at, updated_at)
+         VALUES ($1, $2, $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [normalized.context.sessionId, pending.requestedAt]
+      );
+    }
+    await this.pool.query(
+      `INSERT INTO secops_pending_approvals
+        (id, session_id, run_id, approval, invocation, context, status, requested_at, expires_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, 'pending', $7, $8)
+       ON CONFLICT (id) DO UPDATE
+       SET approval = EXCLUDED.approval,
+           invocation = EXCLUDED.invocation,
+           context = EXCLUDED.context,
+           status = 'pending',
+           requested_at = EXCLUDED.requested_at,
+           expires_at = EXCLUDED.expires_at,
+           decided_at = NULL`,
+      [
+        normalized.invocation.id,
+        normalized.context.sessionId ?? null,
+        normalized.context.runId,
+        JSON.stringify({
+          apiName: normalized.apiName,
+          args: normalized.args,
+          expiresAt: pending.expiresAt
+        }),
+        JSON.stringify(normalized.invocation),
+        JSON.stringify(normalized.context),
+        pending.requestedAt,
+        pending.expiresAt
+      ]
+    );
+    return pending;
+  }
+
+  async list(): Promise<PendingApproval[]> {
+    const rows = await this.pendingApprovalRows();
+    const pending: PendingApproval[] = [];
+    for (const row of rows) {
+      const record = storedApprovalFromRow(row);
+      if (record && !isExpired(record)) {
+        pending.push(toPendingApproval(record));
+      }
+    }
+    return pending;
+  }
+
+  async get(id: string): Promise<StoredApproval | undefined> {
+    const rows = await this.pendingApprovalRows(id);
+    const record = rows[0] ? storedApprovalFromRow(rows[0]) : undefined;
+    return record && !isExpired(record) ? cloneStoredApproval(record) : undefined;
+  }
+
+  async take(id: string): Promise<StoredApproval | undefined> {
+    const record = await this.get(id);
+    if (!record) {
+      return undefined;
+    }
+    await this.pool.query(
+      `UPDATE secops_pending_approvals
+       SET status = 'approved', decided_at = now()
+       WHERE id = $1 AND status = 'pending'`,
+      [id]
+    );
+    return record;
+  }
+
+  async deny(id: string): Promise<ApprovalDecisionResult | undefined> {
+    const record = await this.get(id);
+    if (!record) {
+      return undefined;
+    }
+    await this.pool.query(
+      `UPDATE secops_pending_approvals
+       SET status = 'denied', decided_at = now()
+       WHERE id = $1 AND status = 'pending'`,
+      [id]
+    );
+    return deniedApprovalResult(record);
+  }
+
+  private async pendingApprovalRows(id?: string): Promise<PendingApprovalRow[]> {
+    const result = await this.pool.query<PendingApprovalRow>(
+      `SELECT id, run_id, approval, invocation, context, expires_at
+       FROM secops_pending_approvals
+       WHERE status = 'pending'
+         AND expires_at > now()
+         AND ($1::text IS NULL OR id = $1)
+       ORDER BY requested_at ASC`,
+      [id ?? null]
+    );
+    return result.rows;
+  }
 }
 
 export interface RestoredSession {
@@ -237,6 +348,36 @@ interface StateMarkerRow extends QueryResultRow {
 
 type JsonPayloadRow<Key extends string> = QueryResultRow & Record<Key, unknown>;
 
+interface PendingApprovalRow extends QueryResultRow {
+  id: string;
+  run_id: string;
+  approval: {
+    apiName?: unknown;
+    args?: unknown;
+    expiresAt?: unknown;
+  };
+  invocation: ToolInvocation;
+  context: StoredApproval["context"];
+  expires_at: Date | string;
+}
+
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function storedApprovalFromRow(row: PendingApprovalRow): StoredApproval | undefined {
+  if (typeof row.approval.apiName !== "string" || !isRecord(row.approval.args)) {
+    return undefined;
+  }
+  return {
+    apiName: row.approval.apiName,
+    args: row.approval.args,
+    context: row.context,
+    invocation: row.invocation,
+    expiresAt: typeof row.approval.expiresAt === "string" ? row.approval.expiresAt : toIso(row.expires_at)
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

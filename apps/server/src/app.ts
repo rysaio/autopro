@@ -16,10 +16,13 @@ import { createAiSdkModel } from "./providers/aiSdkModelFactory.js";
 import { AgentRuntime } from "./runtime/agentRuntime.js";
 import { AuditLog } from "./runtime/auditLog.js";
 import { ApprovalStore } from "./runtime/approvalStore.js";
+import { PostgresSessionStore } from "./runtime/postgresSessionStore.js";
 import { isAutomationLevel, RuntimeSettingsStore } from "./runtime/runtimeSettings.js";
+import { NoopSessionStateStore, type SessionStateStore } from "./runtime/sessionStateStore.js";
 import { createSecOpsMcpServer, mcpContext, mcpToolSummaries } from "./mcp/secopsMcpServer.js";
 import { registerStreamableMcpRoutes } from "./mcp/streamableHttp.js";
 import { ToolRegistry } from "./tools/registry.js";
+import type { ToolContext } from "./tools/types.js";
 
 export interface BuildServerOptions {
   createModel?: (config: AppConfig, request: AgentRunRequest) => LanguageModel;
@@ -27,7 +30,9 @@ export interface BuildServerOptions {
 
 export function buildServer(config: AppConfig, options: BuildServerOptions = {}) {
   const app = Fastify({ logger: true });
-  const registry = new ToolRegistry(undefined, new ApprovalStore(config.approvalStorePath));
+  const durableSessionStore = config.databaseUrl ? new PostgresSessionStore(config.databaseUrl) : undefined;
+  const sessionStateStore: SessionStateStore = durableSessionStore ?? new NoopSessionStateStore();
+  const registry = new ToolRegistry(undefined, durableSessionStore ?? new ApprovalStore(config.approvalStorePath));
   const auditLog = new AuditLog(config.auditLogPath);
   const runtimeSettings = new RuntimeSettingsStore(config.runtimeConfigPath, {
     actionLevel: config.actionLevel
@@ -54,6 +59,12 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       callback(null, !normalized || isAllowed(normalized, config.allowedOrigins));
     }
   });
+  app.addHook("onReady", async () => {
+    await durableSessionStore?.migrate();
+  });
+  app.addHook("onClose", async () => {
+    await durableSessionStore?.close();
+  });
   registerStreamableMcpRoutes(app, registry, config, () => runtimeSettings.get());
 
   app.get("/api/health", async (): Promise<ProviderStatus> => {
@@ -65,6 +76,10 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       apiTokenRequired: Boolean(config.apiToken),
       actionLevel: runtimeSettings.get().actionLevel,
       sandboxRoot: config.sandboxRoot,
+      durableSessionStore: {
+        mode: config.durableSessionMode,
+        configured: Boolean(config.databaseUrl)
+      },
       capabilities: {
         tools: configured,
         streaming: false,
@@ -104,7 +119,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   }));
 
   app.get("/api/approvals", async () => ({
-    approvals: registry.pendingApprovals()
+    approvals: await registry.pendingApprovals()
   }));
 
   app.get("/api/audit/events", async (request) => {
@@ -121,17 +136,17 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!result) {
       return reply.code(404).send({ error: `No pending approval found for ${params.id}` });
     }
-    appendApprovalEvents(auditLog, result);
+    await appendApprovalEvents(auditLog, sessionStateStore, result);
     return result;
   });
 
   app.post("/api/approvals/:id/deny", async (request, reply) => {
     const params = request.params as { id: string };
-    const result = registry.denyToolCall(params.id);
+    const result = await registry.denyToolCall(params.id);
     if (!result) {
       return reply.code(404).send({ error: `No pending approval found for ${params.id}` });
     }
-    appendApprovalEvents(auditLog, result);
+    await appendApprovalEvents(auditLog, sessionStateStore, result);
     return result;
   });
 
@@ -142,12 +157,15 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     const permissionMode = body.permissionMode === "deny" || body.permissionMode === "ask" || body.permissionMode === "auto"
       ? body.permissionMode
       : "auto";
-    const context = mcpContext({
+    const contextInput: Parameters<typeof mcpContext>[0] = {
       permissionMode,
       actionLevel: runtimeSettings.get().actionLevel,
       sandboxRoot: config.sandboxRoot,
       workspaceRoot: config.workspaceRoot
-    });
+    };
+    const context = mcpContext(typeof body.sessionId === "string" && body.sessionId.length > 0
+      ? { ...contextInput, sessionId: body.sessionId }
+      : contextInput);
     createSecOpsMcpServer(registry, context);
     return registry.executeApiTool(params.name, crypto.randomUUID(), args, context);
   });
@@ -155,13 +173,16 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   app.post("/api/tools/:id/invoke", async (request) => {
     const params = request.params as { id: string };
     const body = coerceRecord(request.body);
-    return registry.invokeManifest(params.id, body, {
+    const context: ToolContext = {
       runId: crypto.randomUUID(),
       permissionMode: "auto",
       actionLevel: runtimeSettings.get().actionLevel,
       sandboxRoot: config.sandboxRoot,
       workspaceRoot: config.workspaceRoot
-    });
+    };
+    return registry.invokeManifest(params.id, body, typeof body.sessionId === "string" && body.sessionId.length > 0
+      ? { ...context, sessionId: body.sessionId }
+      : context);
   });
 
   app.post("/api/agent/run", async (request, reply): Promise<unknown> => {
@@ -174,7 +195,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (missing.length) {
       return reply.code(503).send({ error: `Model provider is not configured. Missing: ${missing.join(", ")}.` });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options);
+    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore);
     return runtime.run(runRequest, (event) => auditLog.append(event));
   });
 
@@ -188,7 +209,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (missing.length) {
       return reply.code(503).send({ error: `Model provider is not configured. Missing: ${missing.join(", ")}.` });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options);
+    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore);
     reply.hijack();
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -219,7 +240,8 @@ function createRuntime(
   settings: RuntimeSettings,
   registry: ToolRegistry,
   runRequest: AgentRunRequest,
-  options: BuildServerOptions
+  options: BuildServerOptions,
+  sessionStateStore: SessionStateStore
 ) {
   return new AgentRuntime({
     model: options.createModel?.(config, runRequest) ?? createAiSdkModel(config),
@@ -228,7 +250,8 @@ function createRuntime(
     providerLabel: config.provider,
     actionLevel: settings.actionLevel,
     sandboxRoot: config.sandboxRoot,
-    workspaceRoot: config.workspaceRoot
+    workspaceRoot: config.workspaceRoot,
+    sessionStateStore
   });
 }
 
@@ -285,18 +308,31 @@ function isAuthorized(authorization: string | undefined, expectedToken: string):
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-function appendApprovalEvents(auditLog: AuditLog, result: ApprovalDecisionResult): void {
+async function appendApprovalEvents(auditLog: AuditLog, sessionStateStore: SessionStateStore, result: ApprovalDecisionResult): Promise<void> {
   for (const audit of result.audit) {
-    auditLog.append(toApprovalRunEvent(result.runId, audit));
+    const event = toApprovalRunEvent(result.runId, audit);
+    auditLog.append(event);
+    if (result.sessionId) {
+      await sessionStateStore.recordAuditEvent(result.sessionId, result.runId, audit);
+      await sessionStateStore.recordRunEvent(event);
+    }
   }
   for (const message of result.messages) {
-    auditLog.append({
+    const event: AgentRunEvent = {
       id: crypto.randomUUID(),
       runId: result.runId,
       type: "message",
       createdAt: new Date().toISOString(),
       message
-    });
+    };
+    auditLog.append(event);
+    if (result.sessionId) {
+      await sessionStateStore.appendMessage(result.sessionId, result.runId, message);
+      await sessionStateStore.recordRunEvent(event);
+    }
+  }
+  if (result.sessionId) {
+    await sessionStateStore.recordToolInvocation(result.sessionId, result.runId, result.invocation, result.artifacts);
   }
 }
 

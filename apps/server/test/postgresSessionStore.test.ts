@@ -164,6 +164,63 @@ describe("PostgresSessionStore", () => {
     expect(rows.rowCount).toBe(0);
   });
 
+  maybeIt("restores and consumes pending approvals from postgres", async () => {
+    database = await createPostgresTestDatabase();
+    expect(database).toBeDefined();
+    const firstStore = new PostgresSessionStore(database!.connectionString);
+    stores.push(firstStore);
+    await firstStore.migrate();
+    const pendingInvocation: ToolInvocation = {
+      id: "tool-call-approval",
+      toolName: "case.note.write",
+      displayName: "Write Case Note",
+      status: "pending_approval",
+      risk: "medium",
+      arguments: { caseId: "INC-PG-APPROVAL" },
+      error: "Action tool requires explicit analyst approval",
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString()
+    };
+
+    await firstStore.add({
+      apiName: "secops_case_note_write",
+      args: { caseId: "INC-PG-APPROVAL" },
+      context: {
+        runId: "run-pg-approval",
+        sessionId: "session-pg-approval",
+        permissionMode: "ask",
+        actionLevel: "sandbox",
+        sandboxRoot: "runtime/postgres-approval",
+        workspaceRoot: "."
+      },
+      invocation: pendingInvocation
+    });
+
+    const secondStore = new PostgresSessionStore(database!.connectionString);
+    stores.push(secondStore);
+    await expect(secondStore.list()).resolves.toMatchObject([
+      {
+        id: "tool-call-approval",
+        runId: "run-pg-approval",
+        apiName: "secops_case_note_write",
+        arguments: { caseId: "INC-PG-APPROVAL" }
+      }
+    ]);
+    const restored = await secondStore.take("tool-call-approval");
+    expect(restored).toMatchObject({
+      apiName: "secops_case_note_write",
+      context: {
+        runId: "run-pg-approval",
+        sessionId: "session-pg-approval"
+      },
+      invocation: {
+        id: "tool-call-approval",
+        status: "pending_approval"
+      }
+    });
+    await expect(secondStore.list()).resolves.toHaveLength(0);
+  });
+
   it("skips real Postgres checks when SECOPS_TEST_DATABASE_URL is not configured", () => {
     if (process.env.SECOPS_TEST_DATABASE_URL?.trim()) {
       return;

@@ -92,18 +92,23 @@ export function mcpInputSchemaForManifest(manifest: SkillManifest): Record<strin
 
 export function mcpContext(input: {
   runId?: string;
+  sessionId?: string;
   permissionMode?: PermissionMode;
   actionLevel: ToolContext["actionLevel"];
   sandboxRoot: string;
   workspaceRoot: string;
 }): ToolContext {
-  return {
+  const context: ToolContext = {
     runId: input.runId ?? crypto.randomUUID(),
     permissionMode: input.permissionMode ?? "auto",
     actionLevel: input.actionLevel,
     sandboxRoot: input.sandboxRoot,
     workspaceRoot: input.workspaceRoot
   };
+  if (input.sessionId) {
+    context.sessionId = input.sessionId;
+  }
+  return context;
 }
 
 function zodForProperty(manifest: SkillManifest, name: string, property: Record<string, unknown>): z.ZodType {

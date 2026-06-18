@@ -64,6 +64,7 @@ export class AgentRuntime {
       actionLevel: this.options.actionLevel,
       sandboxRoot: this.options.sandboxRoot,
       workspaceRoot: this.options.workspaceRoot,
+      sessionId,
       stateMarkers: storedMarkers.map((marker) => marker.key)
     });
     const emit = (payload: Omit<AgentRunEvent, "id" | "runId" | "createdAt">) => {
