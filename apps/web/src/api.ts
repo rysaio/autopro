@@ -3,6 +3,8 @@ import type {
   AgentRun,
   AgentRunEvent,
   AgentRunRequest,
+  AgentSessionDetail,
+  AgentSessionSummary,
   AutomationLevel,
   EvidenceArtifact,
   PendingApproval,
@@ -155,11 +157,13 @@ export async function fetchMcpTools(): Promise<McpToolSummary[]> {
 export function callMcpTool(
   name: string,
   args: Record<string, unknown>,
-  permissionMode: PermissionMode
+  permissionMode: PermissionMode,
+  sessionId?: string
 ): Promise<McpCallResult> {
   return postJson<McpCallResult>(`/api/mcp/tools/${name}/call`, {
     args,
-    permissionMode
+    permissionMode,
+    sessionId
   });
 }
 
@@ -171,6 +175,15 @@ export async function fetchApprovals(): Promise<PendingApproval[]> {
 export async function fetchAuditEvents(limit = 50): Promise<AgentRunEvent[]> {
   const result = await getJson<{ events: AgentRunEvent[] }>(`/api/audit/events?limit=${limit}`);
   return result.events;
+}
+
+export async function fetchSessions(limit = 50): Promise<AgentSessionSummary[]> {
+  const result = await getJson<{ sessions: AgentSessionSummary[] }>(`/api/sessions?limit=${limit}`);
+  return result.sessions;
+}
+
+export function fetchSession(id: string): Promise<AgentSessionDetail> {
+  return getJson<AgentSessionDetail>(`/api/sessions/${encodeURIComponent(id)}`);
 }
 
 export function approveToolCall(id: string): Promise<ApprovalDecisionResult> {

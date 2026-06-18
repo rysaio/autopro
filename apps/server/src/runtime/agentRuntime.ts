@@ -181,6 +181,7 @@ export class AgentRuntime {
 
     const run = {
       id: runId,
+      sessionId,
       status,
       provider: this.options.providerLabel,
       model: this.options.modelName,

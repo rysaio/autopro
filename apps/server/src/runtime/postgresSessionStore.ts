@@ -3,6 +3,8 @@ import { Pool, type PoolConfig, type QueryResultRow } from "pg";
 import type {
   AgentRun,
   AgentRunEvent,
+  AgentSessionDetail,
+  AgentSessionSummary,
   ApprovalDecisionResult,
   AuditEvent,
   ChatMessage,
@@ -198,10 +200,16 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
       `SELECT audit FROM secops_audit_events WHERE session_id = $1 ORDER BY created_at ASC`,
       [sessionId]
     );
-    return {
+    const latestMessage = messages.rows.at(-1)?.message as ChatMessage | undefined;
+    const detail: AgentSessionDetail = {
       id: sessionRow.id,
       createdAt: toIso(sessionRow.created_at),
       updatedAt: toIso(sessionRow.updated_at),
+      runCount: runs.rows.length,
+      messageCount: messages.rows.length,
+      toolInvocationCount: invocations.rows.length,
+      guidanceCount: guidance.rows.length,
+      pendingApprovalCount: await this.pendingApprovalCount(sessionId),
       runs: runs.rows.map((row) => row.run).filter((run): run is AgentRun => Boolean(run)),
       messages: messages.rows.map((row) => row.message as ChatMessage),
       toolInvocations: invocations.rows.map((row) => row.invocation as ToolInvocation),
@@ -210,6 +218,62 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
       audit: audit.rows.map((row) => row.audit as AuditEvent),
       stateMarkers: await this.listStateMarkers(sessionId)
     };
+    if (latestMessage) {
+      detail.latestMessage = latestMessage;
+    }
+    return detail;
+  }
+
+  async listSessions(limit = 50): Promise<AgentSessionSummary[]> {
+    const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
+    const result = await this.pool.query<SessionSummaryRow>(
+      `SELECT
+         s.id,
+         s.created_at,
+         s.updated_at,
+         count(DISTINCT r.id)::int AS run_count,
+         count(DISTINCT m.id)::int AS message_count,
+         count(DISTINCT ti.id)::int AS tool_invocation_count,
+         count(DISTINCT tg.id)::int AS guidance_count,
+         count(DISTINCT pa.id)::int AS pending_approval_count,
+         latest.message AS latest_message
+       FROM secops_sessions s
+       LEFT JOIN secops_runs r ON r.session_id = s.id
+       LEFT JOIN secops_messages m ON m.session_id = s.id
+       LEFT JOIN secops_tool_invocations ti ON ti.session_id = s.id
+       LEFT JOIN secops_tool_guidance tg ON tg.session_id = s.id
+       LEFT JOIN secops_pending_approvals pa
+         ON pa.session_id = s.id
+        AND pa.status = 'pending'
+        AND pa.expires_at > now()
+       LEFT JOIN LATERAL (
+         SELECT message
+         FROM secops_messages latest_messages
+         WHERE latest_messages.session_id = s.id
+         ORDER BY latest_messages.created_at DESC, latest_messages.id DESC
+         LIMIT 1
+       ) latest ON true
+       GROUP BY s.id, s.created_at, s.updated_at, latest.message
+       ORDER BY s.updated_at DESC, s.id DESC
+       LIMIT $1`,
+      [boundedLimit]
+    );
+    return result.rows.map((row) => {
+      const summary: AgentSessionSummary = {
+        id: row.id,
+        createdAt: toIso(row.created_at),
+        updatedAt: toIso(row.updated_at),
+        runCount: row.run_count,
+        messageCount: row.message_count,
+        toolInvocationCount: row.tool_invocation_count,
+        guidanceCount: row.guidance_count,
+        pendingApprovalCount: row.pending_approval_count
+      };
+      if (row.latest_message) {
+        summary.latestMessage = row.latest_message;
+      }
+      return summary;
+    });
   }
 
   async add(record: StoredApproval): Promise<PendingApproval> {
@@ -311,25 +375,35 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
     );
     return result.rows;
   }
+
+  private async pendingApprovalCount(sessionId: string): Promise<number> {
+    const result = await this.pool.query<{ count: string }>(
+      `SELECT count(*) AS count
+       FROM secops_pending_approvals
+       WHERE session_id = $1
+         AND status = 'pending'
+         AND expires_at > now()`,
+      [sessionId]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
 }
 
-export interface RestoredSession {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  runs: AgentRun[];
-  messages: ChatMessage[];
-  toolInvocations: ToolInvocation[];
-  artifacts: EvidenceArtifact[];
-  guidance: ToolGuidance[];
-  audit: AuditEvent[];
-  stateMarkers: StateMarker[];
-}
+export type RestoredSession = AgentSessionDetail;
 
 interface SessionRow extends QueryResultRow {
   id: string;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+interface SessionSummaryRow extends SessionRow {
+  run_count: number;
+  message_count: number;
+  tool_invocation_count: number;
+  guidance_count: number;
+  pending_approval_count: number;
+  latest_message: ChatMessage | null;
 }
 
 interface RunRow extends QueryResultRow {

@@ -5,6 +5,8 @@ import type { LanguageModel } from "ai";
 import type {
   AgentRunEvent,
   AgentRunRequest,
+  AgentSessionDetail,
+  AgentSessionSummary,
   ApprovalDecisionResult,
   AuditEvent,
   PermissionMode,
@@ -122,11 +124,33 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     approvals: await registry.pendingApprovals()
   }));
 
+  app.get("/api/sessions", async (request): Promise<{ sessions: AgentSessionSummary[] }> => {
+    const query = request.query as { limit?: string | number } | undefined;
+    return {
+      sessions: durableSessionStore
+        ? await durableSessionStore.listSessions(coerceLimit(query?.limit, 50))
+        : []
+    };
+  });
+
+  app.get("/api/sessions/:id", async (request, reply): Promise<AgentSessionDetail | unknown> => {
+    const params = request.params as { id: string };
+    const session = await durableSessionStore?.restoreSession(params.id);
+    if (!session) {
+      return reply.code(404).send({
+        error: durableSessionStore
+          ? `No durable session found for ${params.id}`
+          : "Durable session store is not configured"
+      });
+    }
+    return session;
+  });
+
   app.get("/api/audit/events", async (request) => {
     const query = request.query as { limit?: string | number } | undefined;
-    const limit = Number(query?.limit ?? 100);
+    const limit = coerceLimit(query?.limit, 100);
     return {
-      events: auditLog.recent(Number.isFinite(limit) ? limit : 100)
+      events: auditLog.recent(limit)
     };
   });
 
@@ -292,6 +316,14 @@ function coerceRecord(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
   }
   return {};
+}
+
+function coerceLimit(value: unknown, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.trunc(parsed), 1), 200);
 }
 
 function isAllowed(value: string, allowed: string[]): boolean {

@@ -104,9 +104,30 @@ describe("PostgresSessionStore", () => {
 
     const secondStore = new PostgresSessionStore(database!.connectionString);
     stores.push(secondStore);
+    const sessions = await secondStore.listSessions();
     const restored = await secondStore.restoreSession(sessionId);
 
+    expect(sessions).toMatchObject([
+      {
+        id: sessionId,
+        runCount: 1,
+        messageCount: 1,
+        toolInvocationCount: 1,
+        guidanceCount: 1,
+        pendingApprovalCount: 0,
+        latestMessage: message
+      }
+    ]);
     expect(restored).toBeDefined();
+    expect(restored).toMatchObject({
+      id: sessionId,
+      runCount: 1,
+      messageCount: 1,
+      toolInvocationCount: 1,
+      guidanceCount: 1,
+      pendingApprovalCount: 0,
+      latestMessage: message
+    });
     expect(restored?.runs).toMatchObject([{ id: runId, status: "completed" }]);
     expect(restored?.messages).toEqual([message]);
     expect(restored?.toolInvocations).toEqual([invocation]);

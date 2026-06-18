@@ -783,6 +783,11 @@ h3 {
   background: #f0fdfa;
 }
 
+.tool-call.guidance {
+  border-color: rgba(217, 119, 6, 0.34);
+  background: #fffbeb;
+}
+
 .tool-call.denied,
 .tool-call.failed {
   border-color: rgba(185, 28, 28, 0.24);
@@ -825,6 +830,60 @@ h3 {
   line-height: 1.45;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.guidance-panel {
+  display: grid;
+  gap: 9px;
+  margin-top: 8px;
+}
+
+.guidance-panel p {
+  color: #78350f;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.guidance-next {
+  display: grid;
+  gap: 7px;
+}
+
+.guidance-next-tool {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid rgba(217, 119, 6, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.guidance-next-tool strong {
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.guidance-next-tool span {
+  color: #6f4b11;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.guidance-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.guidance-state code {
+  padding: 3px 7px;
+  border-radius: 6px;
+  color: #713f12;
+  background: rgba(245, 158, 11, 0.16);
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .approval-panel {

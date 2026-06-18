@@ -129,6 +129,7 @@ export interface EvidenceArtifact {
 
 export interface AgentRun {
   id: string;
+  sessionId?: string;
   status: "completed" | "failed" | "needs_approval";
   provider: string;
   model: string;
@@ -138,6 +139,35 @@ export interface AgentRun {
   toolInvocations: ToolInvocation[];
   audit: AuditEvent[];
   artifacts: EvidenceArtifact[];
+}
+
+export interface AgentSessionSummary {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  runCount: number;
+  messageCount: number;
+  toolInvocationCount: number;
+  guidanceCount: number;
+  pendingApprovalCount: number;
+  latestMessage?: ChatMessage;
+}
+
+export interface AgentSessionDetail extends AgentSessionSummary {
+  runs: AgentRun[];
+  messages: ChatMessage[];
+  toolInvocations: ToolInvocation[];
+  artifacts: EvidenceArtifact[];
+  guidance: ToolGuidance[];
+  audit: AuditEvent[];
+  stateMarkers: Array<{
+    id: string;
+    sessionId: string;
+    runId: string;
+    key: string;
+    value: unknown;
+    createdAt: string;
+  }>;
 }
 
 export interface AgentRunEvent {

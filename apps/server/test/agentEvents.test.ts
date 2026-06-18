@@ -32,6 +32,7 @@ describe("agent run event stream", () => {
     expect(response.body).toContain("event: run_completed");
     expect(response.body).toContain('"status":"completed"');
     expect(response.body).toContain('"toolName":"ioc.enrich"');
+    expect(response.body).toContain('"sessionId"');
 
     await app.close();
   });

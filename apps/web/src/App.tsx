@@ -22,6 +22,8 @@ import type { FormEvent, KeyboardEvent } from "react";
 import type {
   AgentRun,
   AgentRunEvent,
+  AgentSessionDetail,
+  AgentSessionSummary,
   ApprovalDecisionResult,
   AuditEvent,
   AutomationLevel,
@@ -43,6 +45,8 @@ import {
   fetchAuditEvents,
   fetchHealth,
   fetchMcpTools,
+  fetchSession,
+  fetchSessions,
   fetchSkills,
   fetchTools,
   streamAgent,
@@ -85,6 +89,9 @@ export function App() {
   const [mcpTools, setMcpTools] = useState<McpToolSummary[]>([]);
   const [enabledTools, setEnabledTools] = useState<Set<string>>(new Set());
   const [messages, setMessages] = useState<ChatMessage[]>(seedMessages);
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => crypto.randomUUID());
+  const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
+  const [activeSession, setActiveSession] = useState<AgentSessionDetail | null>(null);
   const [lastRun, setLastRun] = useState<AgentRun | null>(null);
   const [streamAudit, setStreamAudit] = useState<AuditEvent[]>([]);
   const [streamArtifacts, setStreamArtifacts] = useState<EvidenceArtifact[]>([]);
@@ -98,6 +105,7 @@ export function App() {
   const [toolQuery, setToolQuery] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [isMcpRunning, setIsMcpRunning] = useState(false);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [isUpdatingActionLevel, setIsUpdatingActionLevel] = useState(false);
   const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,8 +114,16 @@ export function App() {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([fetchHealth(), fetchSkills(), fetchTools(), fetchMcpTools(), fetchApprovals(), fetchAuditEvents()])
-      .then(([healthResult, skillsResult, toolsResult, mcpToolsResult, approvalsResult, auditResult]) => {
+    Promise.all([
+      fetchHealth(),
+      fetchSkills(),
+      fetchTools(),
+      fetchMcpTools(),
+      fetchApprovals(),
+      fetchAuditEvents(),
+      fetchSessions()
+    ])
+      .then(([healthResult, skillsResult, toolsResult, mcpToolsResult, approvalsResult, auditResult, sessionsResult]) => {
         if (!mounted) {
           return;
         }
@@ -117,6 +133,7 @@ export function App() {
         setMcpTools(mcpToolsResult);
         setPendingApprovals(approvalsResult);
         setPersistedAudit(auditEventsFromRunEvents(auditResult));
+        setSessions(sessionsResult);
         setEnabledTools(new Set(healthResult.actionLevel === "full-access"
           ? toolsResult.map((tool) => tool.id)
           : defaultEnabledToolIds(toolsResult)));
@@ -140,10 +157,12 @@ export function App() {
     [enabledTools, fullAccessActive, tools]
   );
   const effectivePermissionMode = fullAccessActive ? "auto" : permissionMode;
-  const activeAudit = lastRun?.audit ?? streamAudit;
+  const activeAudit = lastRun?.audit ?? (streamAudit.length ? streamAudit : activeSession?.audit ?? []);
   const visibleAudit = activeAudit.length ? activeAudit : persistedAudit;
-  const activeArtifacts = lastRun?.artifacts ?? streamArtifacts;
-  const activeToolInvocations = lastRun?.toolInvocations ?? streamToolInvocations;
+  const activeArtifacts = lastRun?.artifacts ?? (streamArtifacts.length ? streamArtifacts : activeSession?.artifacts ?? []);
+  const activeToolInvocations = lastRun?.toolInvocations ?? (
+    streamToolInvocations.length ? streamToolInvocations : activeSession?.toolInvocations ?? []
+  );
   const enabledSkillCount = enabledToolList.length;
   const enabledMcpCount = mcpTools.filter((tool) => enabledToolList.includes(tool.manifest.id)).length;
   const visibleTools = useMemo(() => {
@@ -161,6 +180,45 @@ export function App() {
 
   async function refreshPersistedAudit() {
     setPersistedAudit(auditEventsFromRunEvents(await fetchAuditEvents()));
+  }
+
+  async function refreshSessions() {
+    setSessions(await fetchSessions());
+  }
+
+  async function loadSession(id: string) {
+    if (isLoadingSession) {
+      return;
+    }
+    setIsLoadingSession(true);
+    setError(null);
+    try {
+      const detail = await fetchSession(id);
+      setCurrentSessionId(detail.id);
+      setActiveSession(detail);
+      setMessages(detail.messages.length ? detail.messages : seedMessages);
+      setLastRun(detail.runs.at(-1) ?? null);
+      setStreamAudit(detail.audit);
+      setStreamArtifacts(detail.artifacts);
+      setStreamToolInvocations(detail.toolInvocations);
+      setActivePanel(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsLoadingSession(false);
+    }
+  }
+
+  function startNewSession() {
+    setCurrentSessionId(crypto.randomUUID());
+    setActiveSession(null);
+    setLastRun(null);
+    setMessages(seedMessages);
+    setStreamAudit([]);
+    setStreamArtifacts([]);
+    setStreamToolInvocations([]);
+    setMcpResult(null);
+    setActivePanel(null);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -181,6 +239,7 @@ export function App() {
     ];
     setMessages(nextMessages);
     setLastRun(null);
+    setActiveSession(null);
     setStreamAudit([]);
     setStreamArtifacts([]);
     setStreamToolInvocations([]);
@@ -191,9 +250,11 @@ export function App() {
           role: message.role,
           content: message.content
         })),
+        sessionId: currentSessionId,
         enabledTools: enabledToolList,
         permissionMode: effectivePermissionMode
       }, applyRunEvent);
+      setCurrentSessionId(run.sessionId ?? currentSessionId);
       setLastRun(run);
       setMessages(run.messages);
       setStreamAudit(run.audit);
@@ -201,6 +262,7 @@ export function App() {
       setStreamToolInvocations(run.toolInvocations);
       await refreshApprovals();
       await refreshPersistedAudit();
+      await refreshSessions();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -241,10 +303,11 @@ export function App() {
     setIsMcpRunning(true);
     setError(null);
     try {
-      const result = await callMcpTool(name, args, effectivePermissionMode);
+      const result = await callMcpTool(name, args, effectivePermissionMode, currentSessionId);
       setMcpResult(result);
       setTab("mcp");
       await refreshApprovals();
+      await refreshSessions();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -376,6 +439,7 @@ export function App() {
         ? { invocation: result.invocation, artifacts: result.artifacts }
         : current
     ));
+    void refreshSessions();
   }
 
   function togglePanel(panel: WorkbenchPanel) {
@@ -404,14 +468,30 @@ export function App() {
             <span>Conversations</span>
           </div>
           <button
-            className={!activePanel ? "session-row active" : "session-row"}
-            onClick={() => setActivePanel(null)}
+            className={!activePanel && !activeSession ? "session-row active" : "session-row"}
+            onClick={startNewSession}
             type="button"
           >
-            <strong>Current investigation</strong>
+            <strong>New investigation</strong>
             <small>{messages.length} messages · {activeToolInvocations.length} tool calls</small>
           </button>
-          <p className="sidebar-empty">No saved conversations.</p>
+          {sessions.length ? sessions.map((session) => (
+            <button
+              className={currentSessionId === session.id && activeSession ? "session-row active" : "session-row"}
+              disabled={isLoadingSession}
+              key={session.id}
+              onClick={() => loadSession(session.id)}
+              type="button"
+            >
+              <strong>{sessionTitle(session)}</strong>
+              <small>
+                {session.messageCount} messages · {session.toolInvocationCount} tool calls
+                {session.guidanceCount ? ` · ${session.guidanceCount} guidance` : ""}
+              </small>
+            </button>
+          )) : (
+            <p className="sidebar-empty">No saved conversations.</p>
+          )}
         </div>
 
         <div className="nav-stack" aria-label="Workspace tools">
@@ -477,6 +557,7 @@ export function App() {
             <span>{health?.configured ? "configured" : "setup required"}</span>
             <span>{health?.capabilities.tools ? "tools on" : "tools off"}</span>
             <span>{health?.actionLevel ?? "sandbox"}</span>
+            <span>{health?.durableSessionStore.configured ? "postgres sessions" : "local session"}</span>
           </div>
         </div>
       </aside>
@@ -920,6 +1001,11 @@ function mergeMessages(current: ChatMessage[], nextMessages: ChatMessage[]): Cha
   ];
 }
 
+function sessionTitle(session: AgentSessionSummary): string {
+  const latest = session.latestMessage?.content.trim();
+  return latest ? compact(latest) : `Session ${session.id.slice(0, 8)}`;
+}
+
 function ToolCallCard({
   invocation,
   isResolving,
@@ -932,15 +1018,16 @@ function ToolCallCard({
   onDeny: () => void;
 }) {
   const pending = invocation.status === "pending_approval";
+  const guidance = invocation.guidance;
   return (
-    <div className={`tool-call ${pending ? "pending" : invocation.status}`} key={invocation.id}>
+    <div className={`tool-call ${guidance ? "guidance" : pending ? "pending" : invocation.status}`} key={invocation.id}>
       <div className="tool-call-icon">
-        <LockKeyhole size={16} aria-hidden="true" />
+        {guidance ? <AlertTriangle size={16} aria-hidden="true" /> : <LockKeyhole size={16} aria-hidden="true" />}
       </div>
       <div>
         <div className="tool-call-title">
           <strong>{invocation.displayName}</strong>
-          <span>{invocation.status}</span>
+          <span>{guidance ? "guidance" : invocation.status}</span>
         </div>
         {pending ? (
           <div className="approval-panel">
@@ -955,6 +1042,28 @@ function ToolCallCard({
                 <span>Deny</span>
               </button>
             </div>
+          </div>
+        ) : guidance ? (
+          <div className="guidance-panel">
+            <p>{guidance.message}</p>
+            {guidance.nextTools?.length ? (
+              <div className="guidance-next">
+                {guidance.nextTools.map((tool) => (
+                  <div className="guidance-next-tool" key={`${invocation.id}-${tool.toolName}`}>
+                    <strong>{tool.toolName}</strong>
+                    <span>{tool.reason}</span>
+                    {tool.suggestedArgs ? <pre>{JSON.stringify(tool.suggestedArgs, null, 2)}</pre> : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {guidance.requiredState?.length ? (
+              <div className="guidance-state">
+                {guidance.requiredState.map((state) => (
+                  <code key={state}>{state}</code>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : (
           <pre>{JSON.stringify(invocation.result ?? invocation.error, null, 2)}</pre>
@@ -1041,7 +1150,9 @@ function buildRunActivity(input: {
       id: `tool-${invocation.id}`,
       at: invocation.completedAt ?? invocation.startedAt,
       title: invocation.displayName,
-      detail: `${invocation.status}: ${compact(JSON.stringify(invocation.result ?? invocation.error ?? invocation.arguments))}`,
+      detail: invocation.guidance
+        ? `guidance: ${compact(invocation.guidance.message)}`
+        : `${invocation.status}: ${compact(JSON.stringify(invocation.result ?? invocation.error ?? invocation.arguments))}`,
       kind: invocation.toolName,
       severity: severityForInvocation(invocation)
     })),
@@ -1073,6 +1184,9 @@ function buildRunActivity(input: {
 }
 
 function severityForInvocation(invocation: ToolInvocation): ActivitySeverity {
+  if (invocation.guidance) {
+    return "warn";
+  }
   if (invocation.status === "failed" || invocation.status === "denied") {
     return "error";
   }
