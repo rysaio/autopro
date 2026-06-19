@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import { buildServer } from "../src/app.js";
 import { scriptedModelForRequest, testConfig } from "./fixtures/testConfig.js";
 import { ToolRegistry } from "../src/tools/registry.js";
+import { createPostgresTestDatabase } from "./fixtures/postgres.js";
+
+const maybePostgresIt = process.env.SECOPS_TEST_DATABASE_URL?.trim() ? it : it.skip;
 
 describe("approval flow", () => {
   it("keeps ask-mode action calls pending until explicitly approved", async () => {
@@ -223,6 +226,78 @@ describe("approval flow", () => {
     await secondApp.close();
     await rm(sandboxRoot, { recursive: true, force: true });
     await rm(path.dirname(approvalStorePath), { recursive: true, force: true });
+  });
+
+  maybePostgresIt("persists pending approvals across app restarts through postgres", async () => {
+    const database = await createPostgresTestDatabase();
+    expect(database).toBeDefined();
+    const sandboxRoot = path.resolve("runtime/approval-postgres-sandbox");
+    let firstApp: ReturnType<typeof buildServer> | undefined;
+    let secondApp: ReturnType<typeof buildServer> | undefined;
+    await rm(sandboxRoot, { recursive: true, force: true });
+
+    try {
+      firstApp = buildServer(testConfig({
+        SECOPS_ACTION_LEVEL: "sandbox",
+        SECOPS_SANDBOX_ROOT: sandboxRoot,
+        SECOPS_DATABASE_URL: database!.connectionString
+      }));
+
+      const pendingResponse = await firstApp.inject({
+        method: "POST",
+        url: "/api/mcp/tools/secops_case_note_write/call",
+        payload: {
+          permissionMode: "ask",
+          args: {
+            caseId: "INC-POSTGRES-APPROVAL",
+            title: "Postgres persisted approval",
+            body: "This note should survive an app restart in postgres."
+          }
+        }
+      });
+      const pending = pendingResponse.json();
+      expect(pending.invocation.status).toBe("pending_approval");
+      await firstApp.close();
+      firstApp = undefined;
+
+      secondApp = buildServer(testConfig({
+        SECOPS_ACTION_LEVEL: "sandbox",
+        SECOPS_SANDBOX_ROOT: sandboxRoot,
+        SECOPS_DATABASE_URL: database!.connectionString
+      }));
+      const listResponse = await secondApp.inject({
+        method: "GET",
+        url: "/api/approvals"
+      });
+      expect(listResponse.json().approvals).toMatchObject([
+        {
+          id: pending.invocation.id,
+          apiName: "secops_case_note_write",
+          arguments: {
+            caseId: "INC-POSTGRES-APPROVAL"
+          }
+        }
+      ]);
+
+      const approvalResponse = await secondApp.inject({
+        method: "POST",
+        url: `/api/approvals/${pending.invocation.id}/approve`
+      });
+      expect(approvalResponse.statusCode).toBe(200);
+      expect(approvalResponse.json().invocation.status).toBe("executed");
+      expect(await caseFileCount(sandboxRoot, "INC-POSTGRES-APPROVAL")).toBe(1);
+      await expect(secondApp.inject({
+        method: "GET",
+        url: "/api/approvals"
+      }).then((response) => response.json().approvals)).resolves.toHaveLength(0);
+      await secondApp.close();
+      secondApp = undefined;
+    } finally {
+      await firstApp?.close();
+      await secondApp?.close();
+      await database?.cleanup();
+      await rm(sandboxRoot, { recursive: true, force: true });
+    }
   });
 
   it("executes full-access tools immediately in full-access mode", async () => {

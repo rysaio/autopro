@@ -1,7 +1,7 @@
 # Agent Control Boundary Summary
 
 Date: 2026-06-19
-Status: implementation slices complete; real Postgres and manual Web verification still required for final acceptance
+Status: implementation slices complete; browser visual QA still required for final acceptance
 
 ## Implemented
 
@@ -12,6 +12,8 @@ Status: implementation slices complete; real Postgres and manual Web verificatio
 - Wired Postgres-backed approvals and health reporting through the Fastify app when `SECOPS_DATABASE_URL` is configured.
 - Added `GET /api/sessions` and `GET /api/sessions/:id` so the Web console can read durable session state from the server.
 - Updated the Web console to list durable sessions and render recoverable guidance separately from hard failure, denial, and pending approval states.
+- Added a project-owned Compose Postgres service and `npm run test:postgres` so real database verification is instantiated by the app repo instead of depending on an externally prepared URL.
+- Added app-level Postgres approval recovery coverage: a pending action is created through Fastify, survives app restart through `SECOPS_DATABASE_URL`, then approves and clears from Postgres.
 
 ## Boundary Decisions
 
@@ -22,19 +24,19 @@ Status: implementation slices complete; real Postgres and manual Web verificatio
 
 ## Verification
 
-- `npm run test -w apps/server` -> passed, 44 tests passed and 4 Postgres tests skipped because `SECOPS_TEST_DATABASE_URL` was not configured.
+- `npm run test -w apps/server` -> passed, 44 tests passed and 5 Postgres tests skipped because `SECOPS_TEST_DATABASE_URL` was not configured.
+- `npm run test:postgres` -> passed against the project-owned Compose Postgres instance, 17 tests passed across `postgresSessionStore.test.ts`, `agentRequest.test.ts`, and `approval.test.ts`.
 - `npm run test -w plugins/shuffle-secops` -> passed, 18 tests passed.
 - `npm run test -w plugins/wazuh-secops` -> passed, 20 tests passed.
+- `npm run test -w apps/web` -> passed. This includes SSR rendering checks that prove guidance, denied, hard failure, and pending approval tool cards render distinct text/actions.
 - `npm run typecheck` -> passed across shared, Wazuh plugin, Shuffle plugin, server, and web.
 
 ## Unverified / Required Evidence
 
-- Real Postgres integration remains required with `SECOPS_TEST_DATABASE_URL` to prove durable recovery against a live database.
-- Manual Web console check remains required for distinct guidance, denied, failed, and pending approval rendering.
+- In-app Browser visual QA for `http://127.0.0.1:5317` was blocked by browser policy. SSR rendering tests now cover the UI semantics, but pixel/layout QA in a permitted browser remains unverified.
 - Live Wazuh and Shuffle smoke checks still require real service credentials.
 
 ## Next Tasks
 
-- Run the skipped Postgres integration suite with a real test database.
-- Start the Web console and manually produce guidance, denial, hard failure, and pending approval states.
+- Run browser visual QA for the Web console in an environment that permits localhost navigation.
 - Add a thin app-server Shuffle adapter only if the main console should expose Shuffle tools directly.

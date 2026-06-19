@@ -19,14 +19,14 @@
 - Wazuh 插件已抽出为 `plugins/wazuh-secops`：包含 npm 包、MCP stdio、Codex manifest、Agent Skills、只读网络/横向分析工具和受控 Active Response。
 - Shuffle 插件已抽出为 `plugins/shuffle-secops`：包含 npm 包、MCP stdio、Codex manifest、Agent Skills、工作流/执行/Webhook/Wazuh 转发/Shuffle MCP 工具。
 - Agent 控制边界已成型：工具可返回结构化 recoverable guidance，模型可自我修正调用顺序；host 仍拥有 PolicyGate、审批、审计和运行状态记录。
-- Postgres 已纳入首次实现范围并落地为 durable session source of truth：会话、run、消息、工具调用、guidance、artifact、audit、state marker、pending approval 可由 `SECOPS_DATABASE_URL` 持久化和恢复。
+- Postgres 已纳入首次实现范围并落地为 durable session source of truth：会话、run、消息、工具调用、guidance、artifact、audit、state marker、pending approval 可由 `SECOPS_DATABASE_URL` 持久化和恢复；项目自带 Compose 测试实例。
 - Wazuh 已接入主应用，Shuffle 目前是独立插件包；主应用里的 Shuffle 薄适配仍是后续任务。
 
 ## 下一步任务
 
 1. 若目标是让 Web 控制台直接使用 Shuffle：在 `apps/server` 增加 `@secops-agent/shuffle-secops` 薄适配，保持审批、审计、UI 归主应用所有。
 2. 用真实环境做 live smoke：Wazuh 需要真实 API/Indexer；Shuffle 需要 `SHUFFLE_API_URL` 和 `SHUFFLE_API_KEY`。
-3. 为完成 Agent 控制边界验收，提供 `SECOPS_TEST_DATABASE_URL` 跑真实 Postgres 集成测试，并做 Web 控制台手动状态检查。
+3. 为完成 Agent 控制边界验收，运行 `npm run test:postgres` 跑项目自带真实 Postgres 集成测试，并做 Web 控制台手动状态检查。
 4. 保持边界：领域工具逻辑留在 `plugins/*`，主应用只做 host policy、审批、审计和 UI。
 
 ## 目录地图
@@ -58,11 +58,18 @@ npm run dev
 npm run stop:dev
 ```
 
+拉起项目自带 Postgres 测试库：
+
+```powershell
+npm run db:test:up
+npm run test:postgres
+```
+
 ## 配置提示
 
 - 模型配置看 `.env.example` 或 `secops.config.example.json`。
-- `SECOPS_DATABASE_URL` 开启 Postgres durable sessions；未设置时本地 JSONL/JSON 只作为开发降级 trace，不是可恢复 source of truth。
-- `SECOPS_TEST_DATABASE_URL` 用于真实 Postgres 集成测试；没有它时相关测试会显式 skip。
+- `SECOPS_DATABASE_URL` 开启 Postgres durable sessions；`.env.example` 默认指向项目 Compose 的 `localhost:55432` 测试实例。
+- `SECOPS_TEST_DATABASE_URL` 用于真实 Postgres 集成测试；未设置时 `npm run test:postgres` 会使用项目 Compose 默认连接串，直接跑真实数据库。
 - Wazuh live 配置看 `plugins/wazuh-secops/README.md`。
 - Shuffle live 配置看 `plugins/shuffle-secops/README.md`。
 - 不要把凭证写进 URL；使用专门的 key/user/password 环境变量。
@@ -77,6 +84,7 @@ npm run test -w plugins/shuffle-secops
 npm run build -w plugins/shuffle-secops
 npm run smoke:shuffle -w plugins/shuffle-secops
 npm run test -w apps/server
+npm run test:postgres
 npm run typecheck
 npm run build -w apps/server
 ```

@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "127.0.0.1:55432:5432"
+    environment:
+      POSTGRES_USER: secops_agent
+      POSTGRES_PASSWORD: secops_agent
+      POSTGRES_DB: secops_agent_test
+    command:
+      - postgres
+      - -c
+      - max_connections=50
+      - -c
+      - idle_in_transaction_session_timeout=30000
+      - -c
+      - idle_session_timeout=600000
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secops_agent -d secops_agent_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - secops-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  secops-postgres-data:

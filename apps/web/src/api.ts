@@ -16,11 +16,12 @@ import type {
   ToolInvocation
 } from "@secops-agent/shared";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
-const API_TOKEN = import.meta.env.VITE_API_TOKEN || localStorage.getItem("secops.apiToken") || "";
+const viteEnv = import.meta.env ?? {};
+const API_BASE = viteEnv.VITE_API_BASE_URL || "";
+const API_TOKEN = viteEnv.VITE_API_TOKEN || storageApiToken() || "";
 const DEFAULT_AGENT_STREAM_TIMEOUT_MS = 5 * 60 * 1000;
 const AGENT_STREAM_TIMEOUT_MS = parseTimeoutMs(
-  import.meta.env.VITE_AGENT_STREAM_TIMEOUT_MS,
+  viteEnv.VITE_AGENT_STREAM_TIMEOUT_MS,
   DEFAULT_AGENT_STREAM_TIMEOUT_MS
 );
 
@@ -196,6 +197,10 @@ export function denyToolCall(id: string): Promise<ApprovalDecisionResult> {
 
 function authHeaders(): Record<string, string> {
   return API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {};
+}
+
+function storageApiToken(): string | undefined {
+  return typeof localStorage === "undefined" ? undefined : localStorage.getItem("secops.apiToken") ?? undefined;
 }
 
 function parseTimeoutMs(value: string | undefined, fallback: number): number {

@@ -1006,7 +1006,7 @@ function sessionTitle(session: AgentSessionSummary): string {
   return latest ? compact(latest) : `Session ${session.id.slice(0, 8)}`;
 }
 
-function ToolCallCard({
+export function ToolCallCard({
   invocation,
   isResolving,
   onApprove,

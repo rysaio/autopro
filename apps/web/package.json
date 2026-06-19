@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run typecheck"
+    "test": "tsx src/App.test.tsx && npm run typecheck"
   },
   "dependencies": {
     "@secops-agent/shared": "file:../../packages/shared",
