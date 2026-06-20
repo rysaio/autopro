@@ -279,41 +279,49 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
   async add(record: StoredApproval): Promise<PendingApproval> {
     const normalized = normalizeStoredApproval(record);
     const pending = toPendingApproval(normalized);
-    if (normalized.context.sessionId) {
-      await this.pool.query(
-        `INSERT INTO secops_sessions (id, created_at, updated_at)
-         VALUES ($1, $2, $2)
-         ON CONFLICT (id) DO NOTHING`,
-        [normalized.context.sessionId, pending.requestedAt]
+    await withTransaction(this.pool, async (client) => {
+      if (normalized.context.sessionId) {
+        await client.query(
+          `INSERT INTO secops_sessions (id, created_at, updated_at)
+           VALUES ($1, $2, $2)
+           ON CONFLICT (id) DO UPDATE SET updated_at = EXCLUDED.updated_at`,
+          [normalized.context.sessionId, pending.requestedAt]
+        );
+        await client.query(
+          `INSERT INTO secops_runs (id, session_id, status, started_at)
+           VALUES ($1, $2, 'needs_approval', $3)
+           ON CONFLICT (id) DO NOTHING`,
+          [normalized.context.runId, normalized.context.sessionId, pending.requestedAt]
+        );
+      }
+      await client.query(
+        `INSERT INTO secops_pending_approvals
+          (id, session_id, run_id, approval, invocation, context, status, requested_at, expires_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, 'pending', $7, $8)
+         ON CONFLICT (id) DO UPDATE
+         SET approval = EXCLUDED.approval,
+             invocation = EXCLUDED.invocation,
+             context = EXCLUDED.context,
+             status = 'pending',
+             requested_at = EXCLUDED.requested_at,
+             expires_at = EXCLUDED.expires_at,
+             decided_at = NULL`,
+        [
+          normalized.invocation.id,
+          normalized.context.sessionId ?? null,
+          normalized.context.runId,
+          JSON.stringify({
+            apiName: normalized.apiName,
+            args: normalized.args,
+            expiresAt: pending.expiresAt
+          }),
+          JSON.stringify(normalized.invocation),
+          JSON.stringify(normalized.context),
+          pending.requestedAt,
+          pending.expiresAt
+        ]
       );
-    }
-    await this.pool.query(
-      `INSERT INTO secops_pending_approvals
-        (id, session_id, run_id, approval, invocation, context, status, requested_at, expires_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, 'pending', $7, $8)
-       ON CONFLICT (id) DO UPDATE
-       SET approval = EXCLUDED.approval,
-           invocation = EXCLUDED.invocation,
-           context = EXCLUDED.context,
-           status = 'pending',
-           requested_at = EXCLUDED.requested_at,
-           expires_at = EXCLUDED.expires_at,
-           decided_at = NULL`,
-      [
-        normalized.invocation.id,
-        normalized.context.sessionId ?? null,
-        normalized.context.runId,
-        JSON.stringify({
-          apiName: normalized.apiName,
-          args: normalized.args,
-          expiresAt: pending.expiresAt
-        }),
-        JSON.stringify(normalized.invocation),
-        JSON.stringify(normalized.context),
-        pending.requestedAt,
-        pending.expiresAt
-      ]
-    );
+    });
     return pending;
   }
 
@@ -336,31 +344,29 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
   }
 
   async take(id: string): Promise<StoredApproval | undefined> {
-    const record = await this.get(id);
-    if (!record) {
-      return undefined;
-    }
-    await this.pool.query(
-      `UPDATE secops_pending_approvals
-       SET status = 'approved', decided_at = now()
-       WHERE id = $1 AND status = 'pending'`,
-      [id]
-    );
-    return record;
+    return this.consumePendingApproval(id, "approved");
   }
 
   async deny(id: string): Promise<ApprovalDecisionResult | undefined> {
-    const record = await this.get(id);
+    const record = await this.consumePendingApproval(id, "denied");
     if (!record) {
       return undefined;
     }
-    await this.pool.query(
-      `UPDATE secops_pending_approvals
-       SET status = 'denied', decided_at = now()
-       WHERE id = $1 AND status = 'pending'`,
-      [id]
-    );
     return deniedApprovalResult(record);
+  }
+
+  private async consumePendingApproval(id: string, status: "approved" | "denied"): Promise<StoredApproval | undefined> {
+    const result = await this.pool.query<PendingApprovalRow>(
+      `UPDATE secops_pending_approvals
+       SET status = $2, decided_at = now()
+       WHERE id = $1
+         AND status = 'pending'
+         AND expires_at > now()
+       RETURNING id, run_id, approval, invocation, context, expires_at`,
+      [id, status]
+    );
+    const record = result.rows[0] ? storedApprovalFromRow(result.rows[0]) : undefined;
+    return record && !isExpired(record) ? cloneStoredApproval(record) : undefined;
   }
 
   private async pendingApprovalRows(id?: string): Promise<PendingApprovalRow[]> {

@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildServer } from "../src/app.js";
 import { scriptedModelForRequest, testConfig } from "./fixtures/testConfig.js";
+import { ApprovalStore, type StoredApproval } from "../src/runtime/approvalStore.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import { createPostgresTestDatabase } from "./fixtures/postgres.js";
 
@@ -300,6 +301,77 @@ describe("approval flow", () => {
     }
   });
 
+  maybePostgresIt("approves postgres-backed MCP calls that carry a session id", async () => {
+    const database = await createPostgresTestDatabase();
+    expect(database).toBeDefined();
+    const sandboxRoot = path.resolve("runtime/approval-postgres-session-sandbox");
+    let app: ReturnType<typeof buildServer> | undefined;
+    await rm(sandboxRoot, { recursive: true, force: true });
+
+    try {
+      app = buildServer(testConfig({
+        SECOPS_ACTION_LEVEL: "sandbox",
+        SECOPS_SANDBOX_ROOT: sandboxRoot,
+        SECOPS_DATABASE_URL: database!.connectionString
+      }));
+      const sessionId = "session-postgres-mcp-approval";
+      const pendingResponse = await app.inject({
+        method: "POST",
+        url: "/api/mcp/tools/secops_case_note_write/call",
+        payload: {
+          permissionMode: "ask",
+          sessionId,
+          args: {
+            caseId: "INC-POSTGRES-SESSION-APPROVAL",
+            title: "Postgres session approval",
+            body: "This approval is tied to a durable session."
+          }
+        }
+      });
+      const pending = pendingResponse.json();
+      expect(pendingResponse.statusCode).toBe(200);
+      expect(pending.invocation.status).toBe("pending_approval");
+
+      const approvalResponse = await app.inject({
+        method: "POST",
+        url: `/api/approvals/${pending.invocation.id}/approve`
+      });
+
+      expect(approvalResponse.statusCode).toBe(200);
+      expect(approvalResponse.json().invocation.status).toBe("executed");
+      expect(await caseFileCount(sandboxRoot, "INC-POSTGRES-SESSION-APPROVAL")).toBe(1);
+
+      const sessionResponse = await app.inject({
+        method: "GET",
+        url: `/api/sessions/${sessionId}`
+      });
+      expect(sessionResponse.statusCode).toBe(200);
+      expect(sessionResponse.json()).toMatchObject({
+        id: sessionId,
+        messageCount: 2,
+        toolInvocationCount: 1,
+        pendingApprovalCount: 0
+      });
+    } finally {
+      await app?.close();
+      await database?.cleanup();
+      await rm(sandboxRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("consumes file-backed pending approvals at most once", async () => {
+    const store = new ApprovalStore();
+    await store.add(storedApproval("approval-take-once"));
+
+    const results = await Promise.all([
+      store.take("approval-take-once"),
+      store.take("approval-take-once")
+    ]);
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+    await expect(store.list()).resolves.toHaveLength(0);
+  });
+
   it("executes full-access tools immediately in full-access mode", async () => {
     const sandboxRoot = path.resolve("runtime/approval-policy-full-access-sandbox");
     const approvalStorePath = path.resolve("runtime/approval-policy-full-access-store/pending.json");
@@ -452,4 +524,35 @@ async function caseFileCount(sandboxRoot: string, caseId: string): Promise<numbe
   } catch {
     return 0;
   }
+}
+
+function storedApproval(id: string): StoredApproval {
+  return {
+    apiName: "secops_case_note_write",
+    args: {
+      caseId: "INC-TAKE-ONCE",
+      title: "Take once",
+      body: "Only one consumer may receive this approval."
+    },
+    context: {
+      runId: "run-take-once",
+      permissionMode: "ask",
+      actionLevel: "sandbox",
+      sandboxRoot: "runtime/approval-take-once-sandbox",
+      workspaceRoot: "."
+    },
+    invocation: {
+      id,
+      toolName: "case.note.write",
+      displayName: "Write Case Note",
+      status: "pending_approval",
+      risk: "medium",
+      arguments: {
+        caseId: "INC-TAKE-ONCE"
+      },
+      error: "Action tool requires explicit analyst approval",
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString()
+    }
+  };
 }

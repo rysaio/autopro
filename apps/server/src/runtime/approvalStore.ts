@@ -71,12 +71,14 @@ export class ApprovalStore implements PendingApprovalStore {
   }
 
   async take(id: string): Promise<StoredApproval | undefined> {
-    const record = await this.get(id);
-    if (record) {
-      this.pending.delete(id);
-      this.persist();
+    this.pruneExpired();
+    const record = this.pending.get(id);
+    if (!record) {
+      return undefined;
     }
-    return record;
+    this.pending.delete(id);
+    this.persist();
+    return cloneStoredApproval(record);
   }
 
   async deny(id: string): Promise<ApprovalDecisionResult | undefined> {
