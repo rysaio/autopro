@@ -1,0 +1,28 @@
+{
+  "name": "shuffle-secops",
+  "version": "0.1.0",
+  "description": "Reusable Shuffle SOAR skills and package core for workflow operations, Wazuh alert automation, and MCP bridging.",
+  "author": {
+    "name": "SecOps Agent"
+  },
+  "license": "MIT",
+  "keywords": ["shuffle", "soar", "secops", "mcp", "wazuh"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Shuffle SecOps",
+    "shortDescription": "Shuffle SOAR workflow and webhook operations skills.",
+    "longDescription": "Portable Shuffle SOAR skills and reusable package core for agent-driven workflow inspection, controlled execution, Wazuh alert forwarding, and Shuffle built-in MCP bridging.",
+    "developerName": "SecOps Agent",
+    "category": "Security",
+    "capabilities": ["Skills", "MCP"],
+    "defaultPrompt": [
+      "Inspect available Shuffle workflows.",
+      "Execute a Shuffle workflow with approval.",
+      "Forward a Wazuh alert payload to a Shuffle webhook.",
+      "Call Shuffle's built-in MCP API.",
+      "Check Shuffle SOAR API readiness."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

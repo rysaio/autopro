@@ -1,0 +1,209 @@
+export type MessageRole = "system" | "user" | "assistant" | "tool";
+
+export type PermissionMode = "auto" | "ask" | "deny";
+
+export type ToolRisk = "low" | "medium" | "high";
+
+export type ToolClass = "perception" | "reasoning" | "evidence" | "action";
+
+export type AutomationLevel = "observe" | "sandbox" | "full-access";
+
+export type ToolGuidanceKind = "precondition" | "missing_context" | "policy" | "validation";
+
+export interface ToolGuidanceNextTool {
+  toolName: string;
+  reason: string;
+  suggestedArgs?: Record<string, unknown>;
+}
+
+export interface ToolGuidance {
+  kind: ToolGuidanceKind;
+  message: string;
+  nextTools?: ToolGuidanceNextTool[];
+  requiredState?: string[];
+  recoverable: boolean;
+}
+
+export interface RecoverableToolResult {
+  status: "needs_precondition" | "needs_context";
+  guidance: ToolGuidance;
+}
+
+export interface RuntimeSettings {
+  actionLevel: AutomationLevel;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: MessageRole;
+  content: string;
+  createdAt: string;
+  name?: string;
+  toolCallId?: string;
+}
+
+export interface ToolSchema {
+  [key: string]: unknown;
+  type: "object";
+  properties: Record<string, unknown>;
+  required?: string[];
+  additionalProperties?: boolean;
+}
+
+export interface SkillManifest {
+  id: string;
+  skillPackId: string;
+  name: string;
+  description: string;
+  toolClass: ToolClass;
+  risk: ToolRisk;
+  defaultPermission: PermissionMode;
+  inputSchema: ToolSchema;
+  tags: string[];
+  mcpCompatible: boolean;
+}
+
+export interface SkillPackManifest {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  tags: string[];
+  tools: string[];
+  mcpCompatible: boolean;
+}
+
+export interface ToolInvocation {
+  id: string;
+  toolName: string;
+  displayName: string;
+  status: "approved" | "denied" | "executed" | "failed" | "pending_approval";
+  risk: ToolRisk;
+  arguments: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+  guidance?: ToolGuidance;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface PendingApproval {
+  id: string;
+  runId: string;
+  toolName: string;
+  apiName: string;
+  displayName: string;
+  risk: ToolRisk;
+  arguments: Record<string, unknown>;
+  requestedAt: string;
+  expiresAt: string;
+}
+
+export interface ApprovalDecisionResult {
+  decision: "approved" | "denied";
+  runId: string;
+  sessionId?: string;
+  invocation: ToolInvocation;
+  artifacts: EvidenceArtifact[];
+  audit: AuditEvent[];
+  messages: ChatMessage[];
+}
+
+export interface AuditEvent {
+  id: string;
+  type: "model_request" | "model_response" | "tool_requested" | "tool_result" | "policy_decision";
+  label: string;
+  detail: string;
+  createdAt: string;
+  severity: "info" | "warn" | "error";
+}
+
+export interface EvidenceArtifact {
+  id: string;
+  title: string;
+  kind: "ioc" | "detection" | "asset" | "case_note" | "runtime";
+  summary: string;
+  data: unknown;
+  createdAt: string;
+}
+
+export interface AgentRun {
+  id: string;
+  sessionId?: string;
+  status: "completed" | "failed" | "needs_approval";
+  provider: string;
+  model: string;
+  startedAt: string;
+  completedAt: string;
+  messages: ChatMessage[];
+  toolInvocations: ToolInvocation[];
+  audit: AuditEvent[];
+  artifacts: EvidenceArtifact[];
+}
+
+export interface AgentSessionSummary {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  runCount: number;
+  messageCount: number;
+  toolInvocationCount: number;
+  guidanceCount: number;
+  pendingApprovalCount: number;
+  latestMessage?: ChatMessage;
+}
+
+export interface AgentSessionDetail extends AgentSessionSummary {
+  runs: AgentRun[];
+  messages: ChatMessage[];
+  toolInvocations: ToolInvocation[];
+  artifacts: EvidenceArtifact[];
+  guidance: ToolGuidance[];
+  audit: AuditEvent[];
+  stateMarkers: Array<{
+    id: string;
+    sessionId: string;
+    runId: string;
+    key: string;
+    value: unknown;
+    createdAt: string;
+  }>;
+}
+
+export interface AgentRunEvent {
+  id: string;
+  runId: string;
+  type: "run_started" | "audit" | "tool" | "artifact" | "message" | "run_completed";
+  createdAt: string;
+  audit?: AuditEvent;
+  invocation?: ToolInvocation;
+  artifact?: EvidenceArtifact;
+  message?: ChatMessage;
+  run?: AgentRun;
+}
+
+export interface AgentRunRequest {
+  messages: Array<Pick<ChatMessage, "role" | "content">>;
+  sessionId?: string;
+  enabledTools?: string[];
+  permissionMode?: PermissionMode;
+}
+
+export interface ProviderStatus {
+  provider: string;
+  model: string;
+  configured: boolean;
+  apiTokenRequired: boolean;
+  actionLevel: AutomationLevel;
+  sandboxRoot: string;
+  durableSessionStore: {
+    mode: "postgres" | "disabled";
+    configured: boolean;
+  };
+  capabilities: {
+    tools: boolean;
+    streaming: boolean;
+    toolStreaming: boolean;
+  };
+  baseUrl?: string;
+}

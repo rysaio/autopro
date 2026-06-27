@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "wazuh-secops": {
+      "command": "node",
+      "args": ["./dist/bin/wazuh-mcp.js"]
+    }
+  }
+}

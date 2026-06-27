@@ -1,0 +1,28 @@
+{
+  "name": "wazuh-secops",
+  "version": "0.1.0",
+  "description": "Reusable Wazuh SecOps skills and package core for Linux host monitoring, lateral analysis, and controlled Active Response.",
+  "author": {
+    "name": "SecOps Agent"
+  },
+  "license": "MIT",
+  "keywords": ["wazuh", "secops", "mcp", "linux", "active-response"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Wazuh SecOps",
+    "shortDescription": "Wazuh Linux monitoring and security operations skills.",
+    "longDescription": "Portable Wazuh skills and reusable package core for agent-driven Linux host monitoring, lateral movement analysis, and approval-bound Active Response operations.",
+    "developerName": "SecOps Agent",
+    "category": "Security",
+    "capabilities": ["Skills", "MCP"],
+    "defaultPrompt": [
+      "Inspect a Wazuh Linux agent's network posture.",
+      "Map exposed services across Wazuh-managed Linux hosts.",
+      "Triage recent Wazuh rule hits and alert activity.",
+      "Analyze possible lateral movement with Wazuh.",
+      "Prepare a Wazuh IP block with approval."
+    ],
+    "brandColor": "#2563EB"
+  }
+}
