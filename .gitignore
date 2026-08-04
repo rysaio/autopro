@@ -19,6 +19,12 @@ runnable/app/runtime/
 # Packaged release output (build-runnable.mjs output; sources live under src/)
 runnable/
 
+# Redundant copies of the src/ workspaces — the whole dev/build/run flow
+# operates inside src/ (only package.json lives there). Keep src/apps, src/packages, src/scripts.
+/apps/
+/packages/
+/scripts/
+
 # Logs
 *.log
 npm-debug.log*
