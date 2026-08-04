@@ -7,8 +7,13 @@ build/
 out/
 coverage/
 
-# Runtime data (PostgreSQL data dirs, audit logs, test run artifacts)
-runtime/
+# Runtime data dirs (per-package generated data — audit logs, test artifacts,
+# PGlite data. NOT the **/src/runtime code dirs like src/server/src/runtime/)
+apps/server/runtime/
+src/runtime/
+src/server/runtime/
+src/apps/server/runtime/
+runnable/app/runtime/
 .vite-cache/
 
 # Packaged release output (build-runnable.mjs output; sources live under src/)
