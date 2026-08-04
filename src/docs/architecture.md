@@ -1,0 +1,132 @@
+# Architecture
+
+## Runtime Shape
+
+```mermaid
+flowchart LR
+  User["Analyst"] --> Web["React console"]
+  Web --> API["Fastify API"]
+  API --> Events["Agent event stream"]
+  API --> Runtime["Agent runtime loop"]
+  Runtime --> SDK["AI SDK generateText / stepCountIs"]
+  SDK --> Provider["Qwen OpenAI-compatible provider"]
+  Runtime --> Registry["Skill/tool registry"]
+  Registry --> Approvals["Approval store"]
+  Registry --> MCP["MCP SDK facade and Streamable HTTP endpoint"]
+  Registry --> Skills["SecOps skills and action tools"]
+  Runtime --> Store["Embedded PGlite session state store"]
+  Store --> Audit["Audit and evidence records"]
+```
+
+## Boundary
+
+The runtime owns conversation flow, permission context, and audit records. AI
+SDK owns the model/tool loop. Skills own domain capability. The approval store
+owns pending side-effecting calls. The MCP layer exposes both a web-console
+inspection facade and a real SDK Streamable HTTP endpoint at `/api/mcp`.
+Providers own remote model protocol details. The frontend renders state and
+sends analyst intent, but it does not decide the agent's reasoning path or
+replay tool arguments for approval.
+
+`POST /api/agent/events` wraps the same `AgentRuntime` used by
+`POST /api/agent/run`, but streams lifecycle events over `text/event-stream`.
+The runtime still uses AI SDK `generateText`; events are emitted from the
+runtime's model request, tool execution, audit, artifact, message, and final run
+checkpoints. This keeps the agent loop SDK-owned while giving the console a
+coding-agent style progress feed.
+
+Durable sessions run on an embedded PGlite store (no external database or
+Docker). When enabled — the default; data lives under `SECOPS_DATA_DIR`, with
+`memory://` for an in-memory store and `SECOPS_DURABLE_SESSIONS=off` to disable
+— it is the durable source of truth for sessions, runs, messages, tool
+invocations, recoverable guidance, artifacts, state markers, pending approvals,
+and audit events. The local JSONL audit log at `SECOPS_AUDIT_LOG_PATH` remains a
+development/export trace and can be read through `GET /api/audit/events`; it is
+not the recovery authority.
+
+Durable sessions are exposed through `GET /api/sessions` and
+`GET /api/sessions/:id`. If durable sessions are disabled, these routes return an
+empty list or an explicit unavailable/not-found response instead of pretending
+frontend memory is recoverable state.
+
+Recoverable guidance is a tool result, not a pre-model workflow engine. The
+runtime exposes available tools, the registry validates input and host policy,
+and the interface/plugin checks its own business preconditions. If a call is
+valid but out of sequence, the tool returns structured guidance such as the
+next tool to call and required state marker; the UI renders that separately
+from hard failures and policy denials.
+
+## Tool Safety Classes
+
+- `perception`: read or summarize local/sample facts.
+- `reasoning`: transform observations into hypotheses or recommendations.
+- `evidence`: package results for analyst review.
+- `action`: side-effecting tools; controlled by `SECOPS_ACTION_LEVEL`.
+
+The initial implementation includes controlled side effects:
+
+- sandbox file writes for case notes
+- preset local inspection commands
+- a full-access exec tool that only runs when `SECOPS_ACTION_LEVEL=full-access`
+
+`permissionMode=ask` turns every action tool into a pending approval. The
+registry records the original API name, arguments, run context, and invocation
+ID in memory. `approve` executes that saved call once with the same ID. `deny`
+consumes the pending call without invoking the handler. `observe` and the
+full-access action-level gate still take precedence over approval.
+
+External MCP transport requests default to `permissionMode=ask`. This keeps the
+real MCP endpoint useful for read-only tools while forcing side-effecting tools
+through the same approval store used by the web console.
+
+The API binds to `127.0.0.1` by default and enforces exact Host/Origin
+allowlists before API or MCP handlers run. Remote exposure requires explicitly
+setting `SECOPS_BIND_HOST` plus `SECOPS_ALLOWED_HOSTS` and
+`SECOPS_ALLOWED_ORIGINS`.
+
+## Development
+
+### Build Order
+
+`shared` must build first (generates declarations used by all other workspaces).
+Plugins (`wazuh-secops`, `shuffle-secops`) build next in any order. `server`
+builds after plugins because it imports them via workspace `file:` links. `web`
+builds last. The root `npm run build` script chains this sequentially.
+
+`packages/shared` has no test suite — correctness is enforced by the downstream
+builds that consume its types. After changing types in `shared`, rebuild
+everything downstream.
+
+### Testing
+
+Tests use `vitest` with `describe`/`it` blocks. Test fixtures in
+`apps/server/test/fixtures/` include `scriptedModel.ts` (a mock AI model that
+returns scripted tool calls) and `testConfig.ts`.
+
+| Workspace | How to test |
+|---|---|
+| `apps/server` | `npx vitest run` (15+ test files in `test/`) |
+| `apps/web` | typecheck + `tsx src/App.test.tsx` |
+| `plugins/wazuh-secops` | `npx vitest run` (6 test files; mock API client via `vi.mock()`) |
+| `plugins/shuffle-secops` | `npx vitest run` (4 test files) |
+| `packages/shared` | typecheck only |
+
+Run a single test from its workspace directory:
+`cd src/apps/server && npx vitest run test/path/to/test.test.ts`
+
+Durable-session tests run against the embedded PGlite store in-process, so no
+external database or Docker is required.
+
+### Adding a Plugin Tool
+
+Both plugins follow the same pattern:
+
+- `src/core/*Client.ts` — HTTP client for the external service API.
+- `src/tools/registry.ts` — tool definitions (manifest + handler + model description).
+- `src/tools/types.ts` — `PluginTool` interface: `manifest`, `apiName`, `toModelTool()`, `execute()`.
+- `src/adapters/mcpServer.ts` — standalone MCP stdio server adapter.
+- `src/bin/*-mcp.ts` — CLI entry for MCP stdio mode.
+
+Server-side adapters (`apps/server/src/tools/wazuhTools.ts`, `shuffleTools.ts`)
+wrap plugin tools into the server's `SecOpsTool` interface, bridging the plugin
+world to the server's policy/registry/audit pipeline.

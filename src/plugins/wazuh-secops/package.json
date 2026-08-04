@@ -1,0 +1,50 @@
+{
+  "name": "@secops-agent/wazuh-secops",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Reusable Wazuh SecOps MCP tools, workflow helpers, and portable Agent Skills.",
+  "license": "MIT",
+  "keywords": [
+    "wazuh",
+    "secops",
+    "mcp",
+    "agent-skills",
+    "linux",
+    "opensearch"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "wazuh-secops-mcp": "./dist/bin/wazuh-mcp.js",
+    "wazuh-secops-smoke": "./dist/bin/wazuh-smoke.js"
+  },
+  "files": [
+    "dist/",
+    "skills/",
+    ".codex-plugin/",
+    ".mcp.json",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "smoke:wazuh": "tsx src/bin/wazuh-smoke.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.13"
+  }
+}

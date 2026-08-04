@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "shuffle-secops": {
+      "command": "node",
+      "args": ["./dist/bin/shuffle-mcp.js"]
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "@secops-agent/shuffle-secops",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Reusable Shuffle SOAR MCP tools, workflow helpers, webhook operations, and portable Agent Skills.",
+  "license": "MIT",
+  "keywords": [
+    "shuffle",
+    "soar",
+    "secops",
+    "mcp",
+    "agent-skills",
+    "wazuh"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "shuffle-secops-tool": "./dist/bin/shuffle-tool.js",
+    "shuffle-secops-mcp": "./dist/bin/shuffle-mcp.js",
+    "shuffle-secops-smoke": "./dist/bin/shuffle-smoke.js"
+  },
+  "files": [
+    "dist/",
+    "skills/",
+    ".codex-plugin/",
+    ".mcp.json",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "smoke:shuffle": "tsx src/bin/shuffle-smoke.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.13"
+  }
+}

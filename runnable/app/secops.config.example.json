@@ -1,0 +1,8 @@
+{
+  "model": {
+    "provider": "qwen",
+    "name": "qwen3.6-max-preview",
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "apiKeyEnv": "DASHSCOPE_API_KEY"
+  }
+}
