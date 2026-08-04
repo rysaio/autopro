@@ -11,6 +11,9 @@ coverage/
 runtime/
 .vite-cache/
 
+# Packaged release output (build-runnable.mjs output; sources live under src/)
+runnable/
+
 # Logs
 *.log
 npm-debug.log*
