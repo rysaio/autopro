@@ -148,6 +148,25 @@ console.log("[install] installing production dependencies...");
 execSync("npm ci --omit=dev --no-audit --no-fund", { cwd: appDir, stdio: "inherit" });
 console.log("[install] production dependencies ready");
 
+// 13. Install compiled workspace packages into the release. TypeScript emits
+// package imports rather than bundling them, so a standalone runnable must not
+// rely on a parent workspace node_modules directory for resolution.
+const workspacePackages = [
+  path.join("packages", "shared"),
+  path.join("plugins", "wazuh-secops"),
+  path.join("plugins", "shuffle-secops")
+];
+for (const relativePackageDir of workspacePackages) {
+  const sourceDir = path.join(root, relativePackageDir);
+  const packageJson = JSON.parse(readFileSync(path.join(sourceDir, "package.json"), "utf8"));
+  const packageNameParts = packageJson.name.split("/");
+  const targetDir = path.join(appDir, "node_modules", ...packageNameParts);
+  mkdirSync(targetDir, { recursive: true });
+  cpSync(path.join(sourceDir, "dist"), path.join(targetDir, "dist"), { recursive: true });
+  cpSync(path.join(sourceDir, "package.json"), path.join(targetDir, "package.json"));
+  console.log(`[copy] workspace runtime package ${packageJson.name}`);
+}
+
 console.log(`\n=== 构建完成 ===`);
 console.log(`可运行包: ${runnableDir}`);
 console.log(`启动: 双击 runnable/start.bat`);
