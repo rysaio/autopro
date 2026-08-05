@@ -35,7 +35,8 @@ if (!approvedReplay && (context.permissionMode === "ask" || tool.manifest.defaul
 2. **`decidePolicy` 重构**：不再读 `defaultPermission`，按全局权限模式（请求级
    `permissionMode` + 部署级 `actionLevel`）判定，语义见上表
 3. **auto 模式高危开关**：运行时设置 `autoApproveHighRisk: boolean`（扩展 RuntimeSettings，
-   默认 `false` = auto 模式下全自动执行；`true` = auto 模式下 risk=high 的 action 仍审批）
+   **默认 `true`（更保守）**：auto 模式下 risk=high 的 action 默认仍入审批；用户可关闭
+   实现全自动
 4. **不引入 per-tool 权限配置**（用户明确否定）；`actionLevel`（observe/sandbox/full-access）
    部署级闸门保留
 
@@ -56,7 +57,7 @@ if (!approvedReplay && (context.permissionMode === "ask" || tool.manifest.defaul
 ```ts
 export interface RuntimeSettings {
   actionLevel: AutomationLevel;
-  /** auto 模式下 risk=high 的 action 工具是否仍需审批（默认 false）。 */
+  /** auto 模式下 risk=high 的 action 工具是否仍需审批（默认 true，保守）。 */
   autoApproveHighRisk?: boolean;
 }
 ```
@@ -152,7 +153,7 @@ const policy = decidePolicy(tool, context, callId, this.autoApproveHighRisk);
 constructor(
   tools?: SecOpsTool[],
   approvals?: PendingApprovalStore,
-  private autoApproveHighRisk = false   // 默认 false：auto 模式全自动
+  private autoApproveHighRisk = true   // 默认 true（保守）：auto 模式下高危仍审批
 ) {}
 ```
 
@@ -163,8 +164,8 @@ constructor(
 ### 4.7 运行时设置 — `src/apps/server/src/runtime/runtimeSettings.ts`
 
 `RuntimeSettingsStore` 支持 `autoApproveHighRisk`：
-- 构造默认 `{ actionLevel, autoApproveHighRisk: false }`
-- `load()` 解析（缺失 → false）
+- 构造默认 `{ actionLevel, autoApproveHighRisk: true }`
+- `load()` 解析（缺失 → true，保守默认）
 - 新增 `setAutoApproveHighRisk(value: boolean): RuntimeSettings`
 - `persist()` 输出两字段
 
@@ -188,7 +189,7 @@ PUT  /api/settings/auto-approve-high-risk  body { autoApproveHighRisk: boolean }
 
 | 文件 | 内容 |
 |---|---|
-| `registry.test.ts` | 删除 25-26 行 defaultPermission 断言；`testManifest` 删字段（约 252 行）；**新增**：① ask 模式下所有 action（含原 auto 类如 case.note.write）pending_approval；② auto 模式 + autoApproveHighRisk=false 时 case.note.write/block_ip 均 executed；③ auto + autoApproveHighRisk=true 时 risk=high 的 action pending_approval、risk=medium/low 执行；④ deny 模式非 action 执行、action 拒绝 |
+| `registry.test.ts` | 删除 25-26 行 defaultPermission 断言；`testManifest` 删字段（约 252 行）；**新增**：① ask 模式下所有 action（含原 auto 类如 case.note.write）pending_approval；② auto 模式（默认 autoApproveHighRisk=true）下 risk=high 的 action pending_approval、risk=medium/low 执行；③ autoApproveHighRisk=false 时 case.note.write/block_ip 均 executed；④ deny 模式非 action 执行、action 拒绝 |
 | `toolCatalogApi.test.ts` | 假插件 `_meta` 删 permission 字段（约 141 行）；全链路审批测试注释更新（约 193 行）——语义不变（sandbox+ask → 所有 action 审批） |
 | `agentRuntime.test.ts` | `testManifest` 删字段（约 304 行） |
 | `mcp.test.ts` | `base` manifest 删字段（约 19 行） |
@@ -224,8 +225,8 @@ npm run build:runnable
 ## 7. 完成标准
 
 - `defaultPermission` 全代码库消失（grep 无结果）
-- decidePolicy 三态语义正确：ask=所有 action 审批；auto=全执行（高危开关开启时 risk=high
-  审批）；deny=只读；非 action 任何模式可调用
+- decidePolicy 三态语义正确：ask=所有 action 审批；auto=全执行但**默认 risk=high 仍审批**
+  （autoApproveHighRisk=true，用户可关闭）；deny=只读；非 action 任何模式可调用
 - 插件 `_meta` 不再传递/信任 permission；`/api/mcp/tools/:name/call` 客户端自报
   permissionMode 的滥用面收窄（auto 下不再有"工具声明 ask"可被绕过，且高危默认全自动
   由用户开关控制）
@@ -244,8 +245,7 @@ npm run build:runnable
 ## 9. 注意事项
 
 - **行为变化**：auto 请求下 risk=high 的 action（如 wazuh.block_ip，原 defaultPermission=ask）
-  从"审批"变为"执行"（默认 autoApproveHighRisk=false）——安全上依赖用户开启高危开关；
-  若需要更保守默认，可把 `autoApproveHighRisk` 默认改为 `true`（决策点，执行前确认）
+  默认仍审批（autoApproveHighRisk=true，保守）；用户关闭开关后全自动执行
 - `PermissionMode` 类型保留（permissionMode 请求级三态仍需）
 - `ToolContext.permissionMode` 语义不变；`full-access` 部署级仍无视请求级模式
 - MCP 2026 规范视角：`_meta` 不可信——本计划正是消除对 `_meta.permission` 的信任
