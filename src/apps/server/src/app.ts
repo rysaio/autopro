@@ -186,6 +186,10 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     return modelConfigStore.list();
   });
 
+  // 从文件重新加载 model.json（启动后直接编辑文件时的显式重载入口；
+  // 后续前端配置界面的"重载"按钮调用同一端点）
+  app.post("/api/model-config/reload", async (): Promise<ModelConfigState> => modelConfigStore.reload());
+
   app.get("/api/tools", async () => ({
     tools: registry.manifests()
   }));

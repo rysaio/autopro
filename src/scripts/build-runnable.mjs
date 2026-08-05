@@ -136,6 +136,15 @@ if (!existsSync(envPath) && existsSync(envExample)) {
   console.log("[config] created .env from .env.example; update provider credentials before agent runs");
 }
 
+// 11b. Seed the default model config template (deepseek, apiKey empty).
+// The file is the single source of truth for model config both before and
+// after startup: edits are picked up automatically (mtime-based reload).
+const modelTemplate = path.join(launcherTemplateDir, "model.json");
+if (existsSync(modelTemplate)) {
+  cpSync(modelTemplate, path.join(appDir, "runtime", "config", "model.json"));
+  console.log("[config] created runtime/config/model.json from template (deepseek default; fill apiKey)");
+}
+
 // 12. Generate a production lockfile, then install exactly that lockfile.
 // The resulting node_modules is part of the release folder, so start.bat does
 // not need network access or a compiler on the first run.

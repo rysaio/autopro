@@ -134,6 +134,41 @@ describe("model config hot-plug API", () => {
     await app.close();
   });
 
+  it("reloads the model config from disk via API after external file edits", async () => {
+    const config = testConfig({}, { withModel: false });
+    const app = buildServer(config, { createModel: scriptedModelForRequest });
+
+    // 直接编辑文件（同一入口），reload 前不生效
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const path = await import("node:path");
+    mkdirSync(path.dirname(config.modelConfigPath), { recursive: true });
+    writeFileSync(config.modelConfigPath, JSON.stringify({
+      connections: [{
+        id: "file-conn",
+        name: "deepseek",
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        baseUrl: "https://api.deepseek.com",
+        apiKey: ""
+      }],
+      activeConnectionId: "file-conn"
+    }), "utf8");
+
+    const before = await app.inject({ method: "GET", url: "/api/model-config" });
+    expect(before.json().connections).toEqual([]);
+
+    const reloaded = await app.inject({ method: "POST", url: "/api/model-config/reload" });
+    expect(reloaded.statusCode).toBe(200);
+    expect(reloaded.json().connections).toHaveLength(1);
+    expect(reloaded.json().connections[0].model).toBe("deepseek-v4-flash");
+
+    const health = await app.inject({ method: "GET", url: "/api/health" });
+    expect(health.json().configured).toBe(true);
+    expect(health.json().provider).toBe("deepseek");
+
+    await app.close();
+  });
+
   it("deletes a connection and returns to unconfigured state", async () => {
     const app = buildServer(testConfig({}, { withModel: false }), { createModel: scriptedModelForRequest });
 

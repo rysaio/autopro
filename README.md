@@ -74,10 +74,15 @@ cd src
 npm ci
 ```
 
-Node.js 建议使用 24 LTS。首次运行前，将 `.env.example` 复制为 `.env` 或 `.env.local`（服务、安全、持久化等配置）。模型配置不再走 env 或配置文件——它收敛为单一明文文件 `runtime/config/model.json`（运行时热配置），支持两种用法：
+Node.js 建议使用 24 LTS。首次运行前，将 `.env.example` 复制为 `.env` 或 `.env.local`（服务、安全、持久化等配置）。模型配置不再走 env 或配置文件——它收敛为单一明文文件 `runtime/config/model.json`（唯一事实来源，启动前后入口一致）：
 
-- **先配置再启动**：直接编辑 `runtime/config/model.json`（结构见下方示例）
-- **启动后配置**：服务启动后通过 API 增删改/切换模型连接，立即生效、无需重启：
+- **默认模板**：发布包（runnable）预置 `runtime/config/model.json`，默认配置为
+  `provider=deepseek` / `model=deepseek-v4-flash` / `baseUrl=https://api.deepseek.com`，
+  `apiKey` 为空——填入你的 key 即可使用
+- **先配置再启动**：直接编辑 `runtime/config/model.json`（结构见下方示例），启动时读取
+- **启动后配置**（两种方式，均无需重启）：
+  - 直接编辑 `runtime/config/model.json` → 调用 `POST /api/model-config/reload` 从文件重新加载
+  - 通过 API 增删改/切换（写文件并即时生效）：
 
 ```bash
 # 查看连接
@@ -88,6 +93,8 @@ curl -X POST http://127.0.0.1:4317/api/model-config \
   -d '{"name":"qwen","provider":"qwen","model":"qwen3.6-max-preview","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"your-key"}'
 # 切换活动连接
 curl -X POST http://127.0.0.1:4317/api/model-config/<id>/activate
+# 从文件重新加载（直接编辑 model.json 后调用）
+curl -X POST http://127.0.0.1:4317/api/model-config/reload
 ```
 
 `runtime/config/model.json` 示例：

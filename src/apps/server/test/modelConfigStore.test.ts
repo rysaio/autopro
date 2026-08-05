@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -140,5 +140,64 @@ describe("ModelConfigStore", () => {
     expect(status.baseUrl).toBe("https://active.test/v1");
     expect(status.connections).toBe(2);
     expect(status.activeConnectionId).toBe("a");
+  });
+
+  it("reload() picks up external file edits after construction (post-startup config)", () => {
+    const { filePath } = tempStore();
+    const store = new ModelConfigStore(filePath);
+    expect(store.resolveConnection()).toBeUndefined();
+
+    // 模拟启动后用户直接编辑 model.json，再显式 reload
+    writeFileSync(filePath, JSON.stringify({
+      connections: [{
+        id: "edited-conn",
+        name: "edited",
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        baseUrl: "https://api.deepseek.com",
+        apiKey: "sk-new"
+      }],
+      activeConnectionId: "edited-conn"
+    }), "utf8");
+
+    expect(store.resolveConnection()).toBeUndefined(); // reload 前不生效
+    store.reload();
+    expect(store.resolveConnection()?.model).toBe("deepseek-v4-flash");
+    expect(store.list().connections[0]?.apiKeySet).toBe(true);
+  });
+
+  it("reload() replaces in-memory config with changed file content", () => {
+    const { filePath } = tempStore();
+    const store = new ModelConfigStore(filePath);
+    store.add(validInput({ id: "conn-1", model: "model-old" }));
+    expect(store.resolveConnection()?.model).toBe("model-old");
+
+    // 外部修改文件中的 model
+    writeFileSync(filePath, JSON.stringify({
+      connections: [{
+        id: "conn-1",
+        name: "test-provider",
+        provider: "openai-compatible",
+        model: "model-new",
+        baseUrl: "https://provider.test/v1",
+        apiKey: "test-key"
+      }],
+      activeConnectionId: "conn-1"
+    }), "utf8");
+
+    store.reload();
+    expect(store.resolveConnection()?.model).toBe("model-new");
+  });
+
+  it("reload() treats a deleted file as empty configuration", () => {
+    const { filePath } = tempStore();
+    const store = new ModelConfigStore(filePath);
+    store.add(validInput({ id: "conn-1" }));
+    expect(store.resolveConnection()).toBeDefined();
+
+    rmSync(filePath);
+    store.reload();
+    expect(store.resolveConnection()).toBeUndefined();
+    expect(store.list().connections).toEqual([]);
   });
 });

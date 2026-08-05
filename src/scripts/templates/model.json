@@ -1,0 +1,13 @@
+{
+  "connections": [
+    {
+      "id": "deepseek-main",
+      "name": "deepseek",
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKey": ""
+    }
+  ],
+  "activeConnectionId": "deepseek-main"
+}

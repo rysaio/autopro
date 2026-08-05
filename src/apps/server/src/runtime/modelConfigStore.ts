@@ -37,7 +37,14 @@ interface PersistedModelConfig {
 
 const REQUIRED_FIELDS = ["name", "provider", "model", "baseUrl"] as const;
 
-/** 模型配置热存储：明文读写 runtime/config/model.json，启动即可读，运行时可改并立即生效。 */
+/**
+ * 模型配置热存储：明文读写 runtime/config/model.json。
+ * 启动前后入口一致——唯一事实来源就是该文件：
+ * - 启动前：直接编辑文件，启动时读取
+ * - 启动后：直接编辑文件，再调用 reload()（后端 POST /api/model-config/reload，
+ *   或后续前端配置界面的“重载”按钮）从文件重新加载，无需重启服务
+ * API 修改（add/update/remove/setActive）写文件并即时更新内存，不依赖 reload
+ */
 export class ModelConfigStore {
   private connections: ModelConnection[];
   private activeConnectionId: string | null;
@@ -46,6 +53,14 @@ export class ModelConfigStore {
     const loaded = this.load();
     this.connections = loaded.connections;
     this.activeConnectionId = loaded.activeConnectionId;
+  }
+
+  /** 从磁盘重新加载 model.json（覆盖内存）；文件不存在/被删除视为空态。 */
+  reload(): ModelConfigState {
+    const loaded = this.load();
+    this.connections = loaded.connections;
+    this.activeConnectionId = loaded.activeConnectionId;
+    return this.list();
   }
 
   list(): ModelConfigState {
