@@ -23,7 +23,7 @@ import {
   Workflow,
   Terminal
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import type {
   SkillPackManifest,
   SkillManifest,
@@ -466,6 +466,16 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
   const [pan, setPan] = useState<Vec2>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef<Vec2>({ x: 0, y: 0 });
+  const didFitRef = useRef(false);
+
+  // 挂载时在浏览器绘制前同步读取容器真实尺寸，避免先用 fallback 布局
+  // （节点挤在一角）再跳变到真实布局的「从小放大」观感
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+      setDimensions({ width: el.clientWidth, height: el.clientHeight });
+    }
+  }, []);
 
   // Build dynamic graph data from props
   const { allNodes, allEdges } = useMemo(() => {
@@ -522,6 +532,38 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
     return computeLayout(filteredNodes, filteredEdges, w, h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredNodes, filteredEdges, dimensions.width, dimensions.height]);
+
+  // 首次打开时自动适配视图：计算所有节点包围盒，缩放/平移使全部可见
+  useEffect(() => {
+    if (didFitRef.current || !dimensions.width || !dimensions.height || nodePositions.size === 0) {
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const pos of nodePositions.values()) {
+      minX = Math.min(minX, pos.x);
+      minY = Math.min(minY, pos.y);
+      maxX = Math.max(maxX, pos.x);
+      maxY = Math.max(maxY, pos.y);
+    }
+    const boxWidth = Math.max(1, maxX - minX);
+    const boxHeight = Math.max(1, maxY - minY);
+    const padding = 70;
+    const availWidth = Math.max(1, dimensions.width - padding * 2);
+    const availHeight = Math.max(1, dimensions.height - padding * 2);
+    const targetZoom = Math.max(0.2, Math.min(3, Math.min(availWidth / boxWidth, availHeight / boxHeight)));
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    setZoom(targetZoom);
+    setPan({
+      x: dimensions.width / 2 - centerX * targetZoom,
+      y: dimensions.height / 2 - centerY * targetZoom
+    });
+    didFitRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dimensions.width, dimensions.height, nodePositions]);
 
   // Stats
   const typeCounts = useMemo(() => {

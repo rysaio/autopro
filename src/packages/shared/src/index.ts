@@ -184,7 +184,13 @@ export interface AgentRunEvent {
 }
 
 export interface AgentRunRequest {
-  messages: Array<Pick<ChatMessage, "role" | "content">>;
+  /** 消息需携带原始 id（如有），服务端持久化按 id 去重，避免历史消息重复入库。 */
+  messages: Array<Pick<ChatMessage, "role" | "content"> & {
+    id?: string;
+    createdAt?: string;
+    name?: string;
+    toolCallId?: string;
+  }>;
   sessionId?: string;
   enabledTools?: string[];
   permissionMode?: PermissionMode;

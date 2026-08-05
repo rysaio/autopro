@@ -379,7 +379,24 @@ function toolContext(context: Omit<AgentRunContext, "approvedToolCallIds">): Age
 function normalizeMessages(messages: AgentRunRequest["messages"]): ChatMessage[] {
   return messages
     .filter((message) => message.role === "user" || message.role === "assistant")
-    .map((message) => chat(message.role, message.content));
+    .map((message) => {
+      // 保留原始 id/createdAt：每次 run 前端都会传入完整历史，
+      // 若重新生成 id，历史消息会以新 id 反复写入会话存储，
+      // 导致打开旧对话时同一条消息重复出现（数据库逐 run 膨胀）。
+      const normalized: ChatMessage = {
+        id: message.id ?? crypto.randomUUID(),
+        role: message.role,
+        content: message.content,
+        createdAt: message.createdAt ?? new Date().toISOString()
+      };
+      if (message.name) {
+        normalized.name = message.name;
+      }
+      if (message.toolCallId) {
+        normalized.toolCallId = message.toolCallId;
+      }
+      return normalized;
+    });
 }
 
 function chat(role: ChatMessage["role"], content: string, name?: string, toolCallId?: string): ChatMessage {

@@ -225,7 +225,17 @@ export function App() {
       const detail = await fetchSession(id);
       setCurrentSessionId(detail.id);
       setActiveSession(detail);
-      setMessages(detail.messages.length ? detail.messages : seedMessages);
+      // 防御性去重：历史版本可能把同一消息以不同 id 反复持久化
+      // （agentRuntime.normalizeMessages 曾为历史消息重新生成 id）
+      const seenIds = new Set<string>();
+      const dedupedMessages = detail.messages.filter((message) => {
+        if (seenIds.has(message.id)) {
+          return false;
+        }
+        seenIds.add(message.id);
+        return true;
+      });
+      setMessages(dedupedMessages.length ? dedupedMessages : seedMessages);
       setLastRun(detail.runs.at(-1) ?? null);
       setStreamAudit(detail.audit);
       setStreamArtifacts(detail.artifacts);
@@ -289,7 +299,9 @@ export function App() {
       const run = await streamAgent({
         messages: nextMessages.map((message) => ({
           role: message.role,
-          content: message.content
+          content: message.content,
+          ...(message.id ? { id: message.id } : {}),
+          ...(message.createdAt ? { createdAt: message.createdAt } : {})
         })),
         sessionId: currentSessionId,
         enabledTools: enabledToolList,
