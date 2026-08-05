@@ -172,7 +172,7 @@ constructor(
 ### 4.8 app.ts — `src/apps/server/src/app.ts`
 
 1. `buildServer` 内：`registry` 创建后应用运行时开关——
-   `registry.autoApproveHighRisk = runtimeSettings.get().autoApproveHighRisk ?? false`
+   `registry.autoApproveHighRisk = runtimeSettings.get().autoApproveHighRisk ?? true`
    （或经 ToolRegistry setter；`/api/settings/action-level` 之后新增联动：actionLevel 变更
    不影响该开关）
 2. 新增 API：
