@@ -52,6 +52,22 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders()
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${path} failed with ${response.status}: ${text}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 async function deleteJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "DELETE",
@@ -186,7 +202,7 @@ export function addModelConnection(input: ModelConnectionInput): Promise<ModelCo
 }
 
 export function updateModelConnection(id: string, input: Partial<ModelConnectionInput>): Promise<ModelConfigState> {
-  return postJson<ModelConfigState>(`/api/model-config/${encodeURIComponent(id)}`, input);
+  return putJson<ModelConfigState>(`/api/model-config/${encodeURIComponent(id)}`, input);
 }
 
 export function removeModelConnection(id: string): Promise<ModelConfigState> {
