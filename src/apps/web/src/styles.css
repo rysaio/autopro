@@ -3191,3 +3191,15 @@ h3 {
 .chat-welcome-btn:hover {
   background: #0d9488;
 }
+
+/* ── 知识图谱加载占位 ── */
+.kg-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 100%;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}

@@ -10,6 +10,7 @@ import {
   X,
   ZoomIn,
   ZoomOut,
+  Loader2,
   RotateCcw,
   Wrench,
   Activity,
@@ -467,6 +468,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef<Vec2>({ x: 0, y: 0 });
   const didFitRef = useRef(false);
+  const [graphReady, setGraphReady] = useState(false);
 
   // 挂载时在浏览器绘制前同步读取容器真实尺寸，避免先用 fallback 布局
   // （节点挤在一角）再跳变到真实布局的「从小放大」观感
@@ -533,9 +535,19 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredNodes, filteredEdges, dimensions.width, dimensions.height]);
 
-  // 首次打开时自动适配视图：计算所有节点包围盒，缩放/平移使全部可见
+  // 首次打开时自动适配视图：计算所有节点包围盒，缩放/平移使全部可见。
+  // 适配完成前不渲染图（显示 loading 占位），避免用户看到未适配的初始状态
+  // 或「从小放大」的闪变。
   useEffect(() => {
-    if (didFitRef.current || !dimensions.width || !dimensions.height || nodePositions.size === 0) {
+    if (!dimensions.width || !dimensions.height) {
+      return;
+    }
+    if (nodePositions.size === 0) {
+      // 空图谱直接就绪
+      setGraphReady(true);
+      return;
+    }
+    if (didFitRef.current) {
       return;
     }
     let minX = Infinity;
@@ -562,6 +574,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
       y: dimensions.height / 2 - centerY * targetZoom
     });
     didFitRef.current = true;
+    setGraphReady(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dimensions.width, dimensions.height, nodePositions]);
 
@@ -638,6 +651,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
         <div ref={containerRef} className="kg-graph"
           onMouseDown={handleMouseDown} onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onWheel={handleWheel}>
+          {graphReady ? (
           <svg width="100%" height="100%" style={{ cursor: isDragging ? "grabbing" : "grab", display: "block" }}>
             <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
               {/* Edges */}
@@ -702,6 +716,12 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
               })}
             </g>
           </svg>
+          ) : (
+            <div className="kg-loading">
+              <Loader2 className="spin" size={20} aria-hidden="true" />
+              <span>正在渲染图谱…</span>
+            </div>
+          )}
         </div>
 
         {/* Detail panel */}
