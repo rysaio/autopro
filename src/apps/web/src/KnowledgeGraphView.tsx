@@ -24,7 +24,7 @@ import {
   Workflow,
   Terminal
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type {
   SkillPackManifest,
   SkillManifest,
@@ -469,15 +469,6 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
   const dragStart = useRef<Vec2>({ x: 0, y: 0 });
   const didFitRef = useRef(false);
   const [graphReady, setGraphReady] = useState(false);
-
-  // 挂载时在浏览器绘制前同步读取容器真实尺寸，避免先用 fallback 布局
-  // （节点挤在一角）再跳变到真实布局的「从小放大」观感
-  useLayoutEffect(() => {
-    const el = containerRef.current;
-    if (el && el.clientWidth > 0 && el.clientHeight > 0) {
-      setDimensions({ width: el.clientWidth, height: el.clientHeight });
-    }
-  }, []);
 
   // Build dynamic graph data from props
   const { allNodes, allEdges } = useMemo(() => {
