@@ -69,7 +69,7 @@ function tool(name: string, manifestId: string, overrides: Partial<Tool> = {}): 
     title: name,
     description: `${name} description`,
     inputSchema: { type: "object", properties: {} },
-    _meta: { manifestId, risk: "medium", permission: "auto", toolClass: "perception" },
+    _meta: { manifestId, risk: "medium", toolClass: "perception" },
     ...overrides
   };
 }
@@ -80,7 +80,7 @@ describe("PluginManager", () => {
     setup.toolsByPlugin["demo"] = [
       tool("secops_demo_query", "demo.query"),
       tool("secops_demo_action", "demo.action", {
-        _meta: { manifestId: "demo.action", risk: "high", permission: "ask", toolClass: "action" }
+        _meta: { manifestId: "demo.action", risk: "high", toolClass: "action" }
       })
     ];
     await installPlugin(setup.pluginsDir, "demo");

@@ -23,7 +23,9 @@ export class ToolRegistry {
       ...createSecOpsTools(),
       ...createActionTools()
     ],
-    private readonly approvals: PendingApprovalStore = new ApprovalStore()
+    private readonly approvals: PendingApprovalStore = new ApprovalStore(),
+    /** auto 模式下 risk=high 的 action 工具是否仍需审批（默认 true，保守）。 */
+    private autoApproveHighRisk = true
   ) {
     for (const tool of tools) {
       this.registerInternal(tool);
@@ -67,6 +69,11 @@ export class ToolRegistry {
     }
     this.byApiName.set(tool.apiName, tool);
     this.byManifestId.set(tool.manifest.id, tool);
+  }
+
+  /** 设置 auto 模式下 risk=high 的 action 工具是否仍需审批（运行时热更新）。 */
+  setAutoApproveHighRisk(value: boolean): void {
+    this.autoApproveHighRisk = value;
   }
 
   manifests(): SkillManifest[] {
@@ -157,7 +164,7 @@ export class ToolRegistry {
       };
     }
 
-    const policy = decidePolicy(tool, context, callId);
+    const policy = decidePolicy(tool, context, callId, this.autoApproveHighRisk);
     if (policy.status !== "executed") {
       const pendingInvocation = invocation(tool, callId, parsedArgs, policy.status, startedAt);
       if (policy.status === "pending_approval") {
@@ -254,16 +261,14 @@ export class ToolRegistry {
 function decidePolicy(
   tool: SecOpsTool,
   context: ToolContext,
-  callId: string
+  callId: string,
+  autoApproveHighRisk: boolean
 ): { status: "executed" } | { status: "denied" | "pending_approval"; reason: string } {
-  if (context.permissionMode === "deny") {
-    return tool.manifest.toolClass === "action" && context.actionLevel !== "full-access"
-      ? { status: "denied", reason: "Action tool execution denied by permission policy" }
-      : { status: "executed" };
-  }
+  // 非 action（读取类）在所有模式下自由调用
   if (tool.manifest.toolClass !== "action") {
     return { status: "executed" };
   }
+  // 部署级 actionLevel 闸门
   if (context.actionLevel === "full-access") {
     return { status: "executed" };
   }
@@ -273,9 +278,21 @@ function decidePolicy(
   if (tool.manifest.id === "full_access.exec") {
     return { status: "denied", reason: "Full access exec requires SECOPS_ACTION_LEVEL=full-access" };
   }
-  const approvedReplay = context.approvedToolCallIds?.includes(callId) ?? false;
-  if (!approvedReplay && (context.permissionMode === "ask" || tool.manifest.defaultPermission === "ask")) {
+  // 审批通过后的重放
+  if (context.approvedToolCallIds?.includes(callId) ?? false) {
+    return { status: "executed" };
+  }
+  // 全局权限模式（请求级 permissionMode）
+  if (context.permissionMode === "deny") {
+    return { status: "denied", reason: "Action tool execution denied by permission policy" };
+  }
+  if (context.permissionMode === "ask") {
+    // ask：所有 action 工具均需审批（不再区分工具声明）
     return { status: "pending_approval", reason: "Action tool requires explicit analyst approval" };
+  }
+  // permissionMode === "auto"：自动执行，可选高危例外
+  if (autoApproveHighRisk && tool.manifest.risk === "high") {
+    return { status: "pending_approval", reason: "High risk action tool requires approval under auto mode policy" };
   }
   return { status: "executed" };
 }

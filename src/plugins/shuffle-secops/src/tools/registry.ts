@@ -567,7 +567,6 @@ function manifest(input: {
   return {
     ...input,
     skillPackId: "secops-shuffle",
-    defaultPermission: input.toolClass === "action" ? "ask" : "auto",
     mcpCompatible: true
   };
 }

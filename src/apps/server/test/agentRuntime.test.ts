@@ -301,7 +301,6 @@ function testManifest(id: string, name: string): SkillManifest {
     description: "Test tool.",
     toolClass: "perception",
     risk: "low",
-    defaultPermission: "auto",
     tags: ["test"],
     mcpCompatible: true,
     inputSchema: {

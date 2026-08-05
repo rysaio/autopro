@@ -433,7 +433,6 @@ function manifest(input: {
   return {
     ...input,
     skillPackId: "secops-core",
-    defaultPermission: "auto",
     mcpCompatible: true
   };
 }

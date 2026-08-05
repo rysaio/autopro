@@ -18,7 +18,6 @@ export interface SkillManifest {
   description: string;
   toolClass: ToolClass;
   risk: ToolRisk;
-  defaultPermission: PermissionMode;
   inputSchema: ToolSchema;
   tags: string[];
   mcpCompatible: boolean;

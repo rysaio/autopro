@@ -34,7 +34,6 @@ export function createWazuhMcpServer(options: WazuhMcpServerOptions = {}): McpSe
         _meta: {
           manifestId: tool.manifest.id,
           risk: tool.manifest.risk,
-          permission: tool.manifest.defaultPermission,
           toolClass: tool.manifest.toolClass
         }
       },

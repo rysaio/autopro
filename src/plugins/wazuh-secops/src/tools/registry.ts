@@ -701,7 +701,6 @@ function manifest(input: {
   return {
     ...input,
     skillPackId: "secops-wazuh",
-    defaultPermission: input.toolClass === "action" ? "ask" : "auto",
     mcpCompatible: true
   };
 }

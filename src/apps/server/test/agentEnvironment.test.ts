@@ -22,7 +22,7 @@ async function buildEnvironment(settingsPath: string, modelPath: string, plugins
         title: `${pluginId} Query`,
         description: "Query tool.",
         inputSchema: { type: "object", properties: {} },
-        _meta: { manifestId: `${pluginId}.query`, risk: "low", permission: "auto", toolClass: "perception" }
+        _meta: { manifestId: `${pluginId}.query`, risk: "low", toolClass: "perception" }
       }];
       return {
         listTools: async () => tools,
@@ -61,7 +61,7 @@ describe("AgentEnvironment", () => {
           title: "q",
           description: "q",
           inputSchema: { type: "object", properties: {} },
-          _meta: { manifestId: `${pluginId}.query`, risk: "low", permission: "auto", toolClass: "perception" }
+          _meta: { manifestId: `${pluginId}.query`, risk: "low", toolClass: "perception" }
         }],
         callTool: async (_name: string, _args: Record<string, unknown>): Promise<CallToolResult> => ({
           content: [{ type: "text", text: "{}" }]

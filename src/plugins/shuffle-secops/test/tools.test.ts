@@ -39,7 +39,7 @@ describe("shuffle plugin tools", () => {
     expect(tools.map((tool) => tool.apiName)).toEqual(expectedApiNames);
     expect(tools.every((tool) => tool.manifest.skillPackId === "secops-shuffle")).toBe(true);
     expect(tools.every((tool) => tool.manifest.mcpCompatible)).toBe(true);
-    expect(tools.find((tool) => tool.manifest.id === "shuffle.workflow.execute")?.manifest.defaultPermission).toBe("ask");
+    expect(tools.find((tool) => tool.manifest.id === "shuffle.workflow.execute")?.manifest.risk).toBe("high");
   });
 
   it("summarizes workflow list responses", async () => {

@@ -32,7 +32,6 @@ function fakePluginClient(pluginId: string): McpClientHandle {
           _meta: {
             manifestId: "wazuh.alerts.search",
             risk: "low",
-            permission: "auto",
             toolClass: "perception"
           }
         },
@@ -45,7 +44,6 @@ function fakePluginClient(pluginId: string): McpClientHandle {
           _meta: {
             manifestId: "wazuh.block_ip",
             risk: "high",
-            permission: "ask",
             toolClass: "action"
           }
         }
@@ -59,7 +57,6 @@ function fakePluginClient(pluginId: string): McpClientHandle {
           _meta: {
             manifestId: "shuffle.workflow.list",
             risk: "low",
-            permission: "auto",
             toolClass: "perception"
           }
         }
@@ -137,8 +134,7 @@ describe("tool catalog API with plugins", () => {
     expect(pluginTools.map((tool: { id: string }) => tool.id)).toEqual(["wazuh.alerts.search", "wazuh.block_ip"]);
     expect(pluginTools.find((tool: { id: string }) => tool.id === "wazuh.block_ip")).toMatchObject({
       toolClass: "action",
-      risk: "high",
-      defaultPermission: "ask"
+      risk: "high"
     });
     expect(pluginTools.find((tool: { id: string }) => tool.id === "wazuh.alerts.search")).toMatchObject({
       toolClass: "perception",
@@ -190,7 +186,7 @@ describe("tool catalog API with plugins", () => {
     });
 
     // triage 阶段模型只能看到 core 工具；deep 阶段经关键词推断加载 wazuh-platform，
-    // 插件 action 工具 wazuh.block_ip（defaultPermission ask）在 sandbox+ask 下必须走审批
+    // 插件 action 工具 wazuh.block_ip 在 sandbox+ask 下必须走审批（全局 ask：所有 action 均审批）
     const run = await app.inject({
       method: "POST",
       url: "/api/agent/run",
@@ -237,6 +233,44 @@ describe("tool catalog API with plugins", () => {
     // 服务其他路由不受影响
     const health = await app.inject({ method: "GET", url: "/api/health" });
     expect(health.statusCode).toBe(200);
+
+    await app.close();
+  });
+
+  it("auto mode gates high risk plugin actions by default and executes after toggling autoApproveHighRisk", async () => {
+    const config = testConfig();
+    await installFakePlugin(config.pluginsDir, "wazuh-demo", "Wazuh Demo");
+    const app = buildServer(config, { createPluginClient });
+
+    // 默认 autoApproveHighRisk=true：auto 请求下高危 action 仍走审批
+    const before = await app.inject({
+      method: "POST",
+      url: "/api/mcp/tools/secops_wazuh_block_ip/call",
+      payload: {
+        permissionMode: "auto",
+        args: { ip: "203.0.113.10" }
+      }
+    });
+    expect(before.json().invocation.status).toBe("pending_approval");
+
+    // 关闭高危开关后同一请求直接执行（运行时热更新，无需重启）
+    const toggle = await app.inject({
+      method: "PUT",
+      url: "/api/settings/auto-approve-high-risk",
+      payload: { autoApproveHighRisk: false }
+    });
+    expect(toggle.statusCode).toBe(200);
+    expect(toggle.json().autoApproveHighRisk).toBe(false);
+
+    const after = await app.inject({
+      method: "POST",
+      url: "/api/mcp/tools/secops_wazuh_block_ip/call",
+      payload: {
+        permissionMode: "auto",
+        args: { ip: "203.0.113.10" }
+      }
+    });
+    expect(after.json().invocation.status).toBe("executed");
 
     await app.close();
   });

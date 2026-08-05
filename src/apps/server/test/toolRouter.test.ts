@@ -14,7 +14,6 @@ function pluginTool(apiName: string, manifestId: string, packId: string): SecOps
       description: "Plugin tool.",
       toolClass: "perception",
       risk: "low",
-      defaultPermission: "auto",
       tags: [packId],
       mcpCompatible: true,
       inputSchema: { type: "object", properties: {} }

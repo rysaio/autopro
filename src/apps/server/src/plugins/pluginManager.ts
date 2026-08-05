@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import type { PermissionMode, PluginSummary, ToolClass, ToolRisk, ToolSchema } from "@secops-agent/shared";
+import type { PluginSummary, ToolClass, ToolRisk, ToolSchema } from "@secops-agent/shared";
 import type { ModelTool } from "../providers/types.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../tools/types.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -303,7 +303,6 @@ function mcpToolToSecOpsTool(
       description: tool.description ?? "",
       toolClass,
       risk: toToolRisk(meta.risk),
-      defaultPermission: toPermission(meta.permission),
       inputSchema: schema,
       tags: [pluginId],
       mcpCompatible: true
@@ -372,9 +371,6 @@ function toToolClass(value: unknown): ToolClass {
 }
 
 function toToolRisk(value: unknown): ToolRisk {
-  return value === "low" || value === "medium" || value === "high" ? value : "medium";
-}
-
-function toPermission(value: unknown): PermissionMode {
-  return value === "auto" || value === "ask" || value === "deny" ? value : "auto";
+  // risk 缺失时默认 high（保守）：插件未声明风险即按高危 action 处理，仍需审批
+  return value === "low" || value === "medium" || value === "high" ? value : "high";
 }

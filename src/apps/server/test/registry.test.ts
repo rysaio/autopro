@@ -22,8 +22,7 @@ describe("ToolRegistry", () => {
     expect(manifests.every((manifest) => manifest.mcpCompatible)).toBe(true);
     expect(manifests.every((manifest) => manifest.skillPackId)).toBe(true);
     expect(manifests.filter((manifest) => manifest.toolClass === "action")).toHaveLength(3);
-    expect(manifests.find((manifest) => manifest.id === "full_access.exec")?.defaultPermission).toBe("ask");
-    expect(manifests.find((manifest) => manifest.id === "case.note.write")?.defaultPermission).toBe("auto");
+    expect(manifests.find((manifest) => manifest.id === "full_access.exec")?.risk).toBe("high");
   });
 
   it("groups registered tools into skill packs", () => {
@@ -216,6 +215,118 @@ describe("ToolRegistry", () => {
     });
     expect(record.artifacts).toEqual([artifact]);
   });
+
+  it("requires approval for all action tools under ask mode (no tool-declared exception)", async () => {
+    const registry = new ToolRegistry();
+    registry.registerTools([
+      new TestTool(
+        "test_high_risk_action",
+        { ...testManifest("test.high.risk.action", "High Risk Action"), toolClass: "action", risk: "high" },
+        async () => ({ output: { ok: true } })
+      ),
+      new TestTool(
+        "test_low_risk_action",
+        { ...testManifest("test.low.risk.action", "Low Risk Action"), toolClass: "action", risk: "low" },
+        async () => ({ output: { ok: true } })
+      )
+    ]);
+
+    const high = await registry.executeApiTool("test_high_risk_action", "ask-high", {}, context);
+    const low = await registry.executeApiTool("test_low_risk_action", "ask-low", {}, context);
+    const note = await registry.executeApiTool("secops_case_note_write", "ask-note", {
+      caseId: "INC-ASK",
+      title: "Note",
+      body: "Body"
+    }, context);
+
+    expect(high.invocation.status).toBe("pending_approval");
+    expect(low.invocation.status).toBe("pending_approval");
+    expect(note.invocation.status).toBe("pending_approval");
+    expect(high.invocation.error).toContain("requires explicit analyst approval");
+  });
+
+  it("auto mode approves high risk by default but executes medium/low risk actions", async () => {
+    const registry = new ToolRegistry();
+    registry.registerTools([
+      new TestTool(
+        "test_high_risk_action",
+        { ...testManifest("test.high.risk.action", "High Risk Action"), toolClass: "action", risk: "high" },
+        async () => ({ output: { ok: true } })
+      ),
+      new TestTool(
+        "test_low_risk_action",
+        { ...testManifest("test.low.risk.action", "Low Risk Action"), toolClass: "action", risk: "low" },
+        async () => ({ output: { ok: true } })
+      ),
+      new TestTool(
+        "test_read_tool",
+        testManifest("test.read.tool", "Read Tool"),
+        async () => ({ output: { ok: true } })
+      )
+    ]);
+    const autoContext = { ...context, permissionMode: "auto" as const };
+
+    const high = await registry.executeApiTool("test_high_risk_action", "auto-high", {}, autoContext);
+    const low = await registry.executeApiTool("test_low_risk_action", "auto-low", {}, autoContext);
+    const note = await registry.executeApiTool("secops_case_note_write", "auto-note", {
+      caseId: "INC-AUTO",
+      title: "Note",
+      body: "Body"
+    }, autoContext);
+    const read = await registry.executeApiTool("test_read_tool", "auto-read", {}, autoContext);
+
+    expect(high.invocation.status).toBe("pending_approval");
+    expect(high.invocation.error).toContain("High risk action tool requires approval under auto mode policy");
+    expect(low.invocation.status).toBe("executed");
+    expect(note.invocation.status).toBe("executed");
+    expect(read.invocation.status).toBe("executed");
+  });
+
+  it("autoApproveHighRisk=false executes high risk actions fully automatically", async () => {
+    const registry = new ToolRegistry(undefined, undefined, false);
+    registry.registerTools([
+      new TestTool(
+        "test_high_risk_action",
+        { ...testManifest("test.high.risk.action", "High Risk Action"), toolClass: "action", risk: "high" },
+        async () => ({ output: { ok: true } })
+      )
+    ]);
+    const autoContext = { ...context, permissionMode: "auto" as const };
+
+    const high = await registry.executeApiTool("test_high_risk_action", "auto-high", {}, autoContext);
+    const note = await registry.executeApiTool("secops_case_note_write", "auto-note", {
+      caseId: "INC-AUTO",
+      title: "Note",
+      body: "Body"
+    }, autoContext);
+
+    expect(high.invocation.status).toBe("executed");
+    expect(note.invocation.status).toBe("executed");
+  });
+
+  it("deny mode allows non-action tools but denies action tools", async () => {
+    const registry = new ToolRegistry();
+    registry.registerTools([
+      new TestTool(
+        "test_action_tool",
+        { ...testManifest("test.action.tool", "Action Tool"), toolClass: "action", risk: "medium" },
+        async () => ({ output: { ok: true } })
+      ),
+      new TestTool(
+        "test_read_tool",
+        testManifest("test.read.tool", "Read Tool"),
+        async () => ({ output: { ok: true } })
+      )
+    ]);
+    const denyContext = { ...context, permissionMode: "deny" as const };
+
+    const action = await registry.executeApiTool("test_action_tool", "deny-action", {}, denyContext);
+    const read = await registry.executeApiTool("test_read_tool", "deny-read", {}, denyContext);
+
+    expect(action.invocation.status).toBe("denied");
+    expect(action.invocation.error).toContain("Action tool execution denied by permission policy");
+    expect(read.invocation.status).toBe("executed");
+  });
 });
 
 class TestTool implements SecOpsTool {
@@ -249,7 +360,6 @@ function testManifest(id: string, name: string): SkillManifest {
     description: "Test tool.",
     toolClass: "perception",
     risk: "low",
-    defaultPermission: "auto",
     tags: ["test"],
     mcpCompatible: true,
     inputSchema: {

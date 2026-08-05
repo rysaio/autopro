@@ -25,8 +25,7 @@ export function createSecOpsMcpServer(registry: ToolRegistry, context: ToolConte
         },
         _meta: {
           manifestId: manifest.id,
-          risk: manifest.risk,
-          permission: manifest.defaultPermission
+          risk: manifest.risk
         }
       },
       async (args: Record<string, unknown>) => {

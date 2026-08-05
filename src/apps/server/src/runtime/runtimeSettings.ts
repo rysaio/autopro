@@ -22,6 +22,12 @@ export class RuntimeSettingsStore {
     return this.get();
   }
 
+  setAutoApproveHighRisk(value: boolean): RuntimeSettings {
+    this.settings = { ...this.settings, autoApproveHighRisk: value };
+    this.persist();
+    return this.get();
+  }
+
   private load(defaults: RuntimeSettings): RuntimeSettings {
     try {
       const raw = readFileSync(this.filePath, "utf8");
@@ -29,7 +35,13 @@ export class RuntimeSettingsStore {
       if (!isAutomationLevel(parsed.actionLevel)) {
         throw new Error(`Invalid actionLevel in ${this.filePath}`);
       }
-      return { actionLevel: parsed.actionLevel };
+      return {
+        actionLevel: parsed.actionLevel,
+        // 仅接受字面布尔；缺失/异常 → true（保守默认）：auto 模式下高危 action 仍入审批
+        autoApproveHighRisk: typeof parsed.autoApproveHighRisk === "boolean"
+          ? parsed.autoApproveHighRisk
+          : true
+      };
     } catch (error) {
       if (isMissingFileError(error)) {
         return defaults;

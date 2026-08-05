@@ -181,10 +181,26 @@ wazuh / shuffle 等工具以 Codex 插件形态提供（`runtime/plugins/<name>/
 - `GET /api/plugins` 查看插件加载状态与工具数
 - 插件动作工具的审批/审计由主服务统一把关
 
+### 工具权限模型（全局三态）
+
+**工具只声明属性（toolClass / risk），放行由全局权限模式决定**——工具/插件不能自声明权限，`defaultPermission` 已彻底移除。放行策略由用户通过全局模式控制，作用于所有工具：
+
+| 全局模式 | 语义 |
+|---|---|
+| `ask` | 非 action（读取类）自由调用；**所有 action 工具均需审批** |
+| `auto` | 自动运行所有工具；**可选开关**：risk=high 的 action 默认仍入审批（`autoApproveHighRisk`，默认 true 保守），用户可关闭实现全自动 |
+| `deny` | 只读：仅非 action 可调用，action 一律拒绝 |
+
+- 请求级 `permissionMode`（agent run / MCP 调用端点传入，三态）决定当次放行；部署级 `actionLevel`（observe/sandbox/full-access）是闸门——`full-access` 无视请求级模式直接放行 action，`observe` 下所有 action 拒绝
+- 审批通过的 action 以重放方式执行（不二次审批）；非 action 在任何模式下均可自由调用
+- 插件 `_meta` 不再传递/信任 `permission`；`/api/mcp/tools/:name/call` 客户端自报 `permissionMode` 的滥用面收窄
+
 ### 运行时设置
 
 - `GET /api/settings` 查看当前设置
 - `POST /api/settings/action-level` 切换自动化级别（`observe` 只读 / `sandbox` 沙箱 / `full-access` 全权），持久化到 `runtime/config/settings.json`
+- `GET /api/settings/auto-approve-high-risk` 查看 auto 模式下高危 action 是否仍需审批（默认 `true` 保守）
+- `PUT /api/settings/auto-approve-high-risk` 切换该开关（body `{ "autoApproveHighRisk": false }` 关闭后 auto 模式全自动执行），持久化并即时生效
 
 ### 环境变量参考（`.env`）
 

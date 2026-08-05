@@ -163,7 +163,6 @@ function manifest(input: {
   return {
     ...input,
     skillPackId: input.id === "full_access.exec" ? "secops-full-access" : "secops-actions",
-    defaultPermission: input.risk === "high" ? "ask" : "auto",
     mcpCompatible: true
   };
 }

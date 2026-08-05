@@ -268,7 +268,6 @@ function reportManifest(input: {
   return {
     ...input,
     skillPackId: "secops-reports",
-    defaultPermission: "auto",
     mcpCompatible: true
   };
 }

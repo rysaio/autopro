@@ -49,8 +49,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   const registry = new ToolRegistry(undefined, durableSessionStore ?? new ApprovalStore(config.approvalStorePath));
   const auditLog = new AuditLog(config.auditLogPath);
   const runtimeSettings = new RuntimeSettingsStore(config.runtimeConfigPath, {
-    actionLevel: config.actionLevel
+    actionLevel: config.actionLevel,
+    autoApproveHighRisk: true
   });
+  // 运行时开关同步到 ToolRegistry（auto 模式下高危 action 是否仍审批）
+  registry.setAutoApproveHighRisk(runtimeSettings.get().autoApproveHighRisk ?? true);
   const modelConfigStore = new ModelConfigStore(config.modelConfigPath);
   const pluginManager = new PluginManager({
     pluginsDir: config.pluginsDir,
@@ -125,6 +128,20 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       return reply.code(400).send({ error: "actionLevel must be observe, sandbox, or full-access" });
     }
     return runtimeSettings.setActionLevel(body.actionLevel);
+  });
+
+  app.get("/api/settings/auto-approve-high-risk", async () => ({
+    autoApproveHighRisk: runtimeSettings.get().autoApproveHighRisk ?? true
+  }));
+
+  app.put("/api/settings/auto-approve-high-risk", async (request, reply) => {
+    const body = coerceRecord(request.body);
+    if (typeof body.autoApproveHighRisk !== "boolean") {
+      return reply.code(400).send({ error: "autoApproveHighRisk must be a boolean" });
+    }
+    const settings = runtimeSettings.setAutoApproveHighRisk(body.autoApproveHighRisk);
+    registry.setAutoApproveHighRisk(settings.autoApproveHighRisk ?? true);
+    return { autoApproveHighRisk: settings.autoApproveHighRisk ?? true };
   });
 
   // ── AgentEnvironment 基座聚合视图：模型连接 + 插件外围设施 + 运行时设置 ──

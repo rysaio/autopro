@@ -31,6 +31,8 @@ export interface RecoverableToolResult {
 
 export interface RuntimeSettings {
   actionLevel: AutomationLevel;
+  /** auto 模式下 risk=high 的 action 工具是否仍需审批（默认 true，保守）。 */
+  autoApproveHighRisk?: boolean;
 }
 
 export interface ChatMessage {
@@ -57,7 +59,6 @@ export interface SkillManifest {
   description: string;
   toolClass: ToolClass;
   risk: ToolRisk;
-  defaultPermission: PermissionMode;
   inputSchema: ToolSchema;
   tags: string[];
   mcpCompatible: boolean;

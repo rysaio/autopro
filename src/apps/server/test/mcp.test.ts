@@ -16,7 +16,6 @@ describe("MCP facade", () => {
       toolClass: "perception",
       risk: "low",
       tags: ["test"],
-      defaultPermission: "auto",
       mcpCompatible: true,
       inputSchema: {
         type: "object",
