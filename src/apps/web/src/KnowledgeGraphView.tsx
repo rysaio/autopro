@@ -4,7 +4,6 @@ import {
   Camera,
   Globe,
   Search,
-  Server,
   Shield,
   UserX,
   X,
@@ -37,7 +36,7 @@ import type {
 import type { McpToolSummary } from "./api.js";
 
 // ── Types ──
-export type KgNodeType = "skill-pack" | "tool" | "wazuh-agent" | "session" | "artifact" | "threat";
+export type KgNodeType = "skill-pack" | "tool" | "session" | "artifact" | "threat";
 
 export interface KgNode {
   id: string;
@@ -62,17 +61,6 @@ interface Vec2 {
   y: number;
 }
 
-// ── Wazuh Demo Agents (embedded, since frontend can't directly query backend Wazuh API) ──
-const WAZUH_AGENTS = [
-  { id: "wa001", name: "web-server-01", ip: "10.0.1.10", status: "active", group: "production/web", os: "Ubuntu 22.04" },
-  { id: "wa002", name: "web-server-02", ip: "10.0.1.11", status: "active", group: "production/web", os: "Ubuntu 22.04" },
-  { id: "wa003", name: "db-server-01", ip: "10.0.2.20", status: "active", group: "production/database", os: "CentOS 7.9" },
-  { id: "wa004", name: "dev-workstation-01", ip: "192.168.10.50", status: "active", group: "development", os: "Windows 10" },
-  { id: "wa005", name: "monitoring-01", ip: "10.0.3.30", status: "active", group: "production/monitoring", os: "Debian 12" },
-  { id: "wa006", name: "backup-server-01", ip: "10.0.4.40", status: "disconnected", group: "production/backup", os: "Ubuntu 20.04" },
-  { id: "wa007", name: "dmz-proxy-01", ip: "172.16.1.10", status: "active", group: "dmz/proxy", os: "Alpine 3.18" },
-];
-
 // ── Props ──
 export interface KnowledgeGraphProps {
   skillPacks: SkillPackManifest[];
@@ -89,7 +77,6 @@ export interface KnowledgeGraphProps {
 const NODE_STYLE: Record<KgNodeType, { color: string; bg: string; size: number }> = {
   "skill-pack": { color: "#7c3aed", bg: "#f5f3ff", size: 32 },
   tool: { color: "#d97706", bg: "#fffbeb", size: 28 },
-  "wazuh-agent": { color: "#0f766e", bg: "#f0fdfa", size: 28 },
   session: { color: "#2563eb", bg: "#eff6ff", size: 26 },
   artifact: { color: "#059669", bg: "#ecfdf5", size: 24 },
   threat: { color: "#dc2626", bg: "#fef2f2", size: 34 },
@@ -98,7 +85,6 @@ const NODE_STYLE: Record<KgNodeType, { color: string; bg: string; size: number }
 const TYPE_LABEL: Record<KgNodeType, string> = {
   "skill-pack": "技能包",
   tool: "工具",
-  "wazuh-agent": "Wazuh Agent",
   session: "会话",
   artifact: "证据产物",
   threat: "威胁",
@@ -219,27 +205,7 @@ function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: K
     });
   }
 
-  // 6. Wazuh Agent nodes (7 demo agents)
-  for (const agent of WAZUH_AGENTS) {
-    const isDisconnected = agent.status === "disconnected";
-    nodes.push({
-      id: agent.id,
-      label: agent.name,
-      type: "wazuh-agent",
-      risk: isDisconnected ? "high" : "low",
-      description: `${agent.ip} | ${agent.os} | ${isDisconnected ? "断开连接" : "在线"}`,
-      source: "Wazuh Manager",
-      details: {
-        "Agent ID": agent.id.replace("wa", ""),
-        "IP": agent.ip,
-        "OS": agent.os,
-        "状态": agent.status === "active" ? "在线" : "断开连接",
-        "分组": agent.group,
-      },
-    });
-  }
-
-  // 7. Build relationships
+  // 5b. Build relationships
 
   // Threat → SkillPacks (关联)
   for (const pack of topPacks) {
@@ -250,47 +216,6 @@ function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: K
       label: "管理",
       type: "related-to",
     });
-  }
-
-  // Wazuh agents → same-group relationships
-  const groupMap = new Map<string, string[]>();
-  for (const agent of WAZUH_AGENTS) {
-    const parts = agent.group.split("/");
-    const env = parts[0] ?? "unknown";
-    if (!groupMap.has(env)) groupMap.set(env, []);
-    groupMap.get(env)?.push(agent.id);
-  }
-  for (const [, agentIds] of groupMap) {
-    for (let i = 0; i < agentIds.length - 1; i++) {
-      const src = agentIds[i]!;
-      const tgt = agentIds[i + 1]!;
-      edges.push({
-        id: `same-group-${src}-${tgt}`,
-        source: src,
-        target: tgt,
-        label: "同组",
-        type: "same-group",
-      });
-    }
-  }
-
-  // Wazuh-related tools → Wazuh agents
-  const wazuhToolIds = ["wazuh-list-agents", "wazuh-get-agent", "wazuh-agent-health", "wazuh-active-response", "wazuh-syscollector"];
-  const wazuhAgentIds = WAZUH_AGENTS.map((a) => a.id);
-  for (const toolId of wazuhToolIds) {
-    if (toolIds.has(toolId)) {
-      // Connect to first 2 agents
-      for (let i = 0; i < Math.min(2, wazuhAgentIds.length); i++) {
-        const agentId = wazuhAgentIds[i]!;
-        edges.push({
-          id: `tool2agent-${toolId}-${agentId}`,
-          source: `tool-${toolId}`,
-          target: agentId,
-          label: "监控",
-          type: "monitors",
-        });
-      }
-    }
   }
 
   // Session ↔ Artifact (if activeSession has runs)
@@ -447,7 +372,6 @@ function NodeIcon({ type, size }: { type: KgNodeType; size: number }) {
   switch (type) {
     case "skill-pack": return <Package size={s} />;
     case "tool": return <Wrench size={s} />;
-    case "wazuh-agent": return <Server size={s} />;
     case "session": return <Activity size={s} />;
     case "artifact": return <FileText size={s} />;
     case "threat": return <AlertTriangle size={s} />;
