@@ -1,23 +1,17 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
-import { missingModelConfig, type AppConfig } from "../config.js";
+import type { ModelConnection } from "../runtime/modelConfigStore.js";
 
-export function createAiSdkModel(config: AppConfig): LanguageModel {
-  const missing = missingModelConfig(config);
-  if (missing.length) {
-    throw new Error(`Model provider is not configured. Missing: ${missing.join(", ")}.`);
-  }
-  const modelBaseUrl = config.modelBaseUrl;
-  const modelApiKey = config.modelApiKey;
-  const model = config.model;
-  if (!modelBaseUrl || !modelApiKey || !model) {
+export function createAiSdkModel(connection: ModelConnection): LanguageModel {
+  if (!connection.model || !connection.baseUrl) {
     throw new Error("Model provider is not configured.");
   }
   const provider = createOpenAICompatible({
-    baseURL: modelBaseUrl,
-    name: config.provider,
-    apiKey: modelApiKey
+    baseURL: connection.baseUrl,
+    name: connection.provider,
+    // apiKey 允许为空：支持本地无 key 的 OpenAI-compatible 端点
+    apiKey: connection.apiKey ?? ""
   });
 
-  return provider.chatModel(model);
+  return provider.chatModel(connection.model);
 }

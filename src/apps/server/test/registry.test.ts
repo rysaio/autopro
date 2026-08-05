@@ -17,14 +17,13 @@ describe("ToolRegistry", () => {
     const registry = new ToolRegistry();
     const manifests = registry.manifests();
 
-    expect(manifests).toHaveLength(43);
+    expect(manifests).toHaveLength(12);
     expect(new Set(manifests.map((manifest) => manifest.id)).size).toBe(manifests.length);
     expect(manifests.every((manifest) => manifest.mcpCompatible)).toBe(true);
     expect(manifests.every((manifest) => manifest.skillPackId)).toBe(true);
-    expect(manifests.filter((manifest) => manifest.toolClass === "action")).toHaveLength(8);
+    expect(manifests.filter((manifest) => manifest.toolClass === "action")).toHaveLength(3);
     expect(manifests.find((manifest) => manifest.id === "full_access.exec")?.defaultPermission).toBe("ask");
-    expect(manifests.find((manifest) => manifest.id === "wazuh.block_ip")?.defaultPermission).toBe("ask");
-    expect(manifests.find((manifest) => manifest.id === "shuffle.workflow.execute")?.defaultPermission).toBe("ask");
+    expect(manifests.find((manifest) => manifest.id === "case.note.write")?.defaultPermission).toBe("auto");
   });
 
   it("groups registered tools into skill packs", () => {
@@ -35,9 +34,7 @@ describe("ToolRegistry", () => {
       "secops-actions",
       "secops-core",
       "secops-full-access",
-      "secops-reports",
-      "secops-shuffle",
-      "secops-wazuh"
+      "secops-reports"
     ]);
     expect(packs.find((pack) => pack.id === "secops-core")?.tools).toEqual([
       "alert.triage.playbook",
@@ -53,42 +50,29 @@ describe("ToolRegistry", () => {
       "report.generate"
     ]);
     expect(packs.find((pack) => pack.id === "secops-full-access")?.tools).toEqual(["full_access.exec"]);
-    expect(packs.find((pack) => pack.id === "secops-shuffle")?.tools).toEqual([
-      "shuffle.apps.list",
-      "shuffle.config.status",
-      "shuffle.execution.result.get",
-      "shuffle.health",
-      "shuffle.mcp.call",
-      "shuffle.wazuh.alert.forward",
-      "shuffle.wazuh.integration.render",
-      "shuffle.webhook.trigger",
-      "shuffle.workflow.execute",
-      "shuffle.workflow.executions.list",
-      "shuffle.workflow.get",
-      "shuffle.workflows.list"
-    ]);
-    expect(packs.find((pack) => pack.id === "secops-wazuh")?.tools).toEqual([
-      "wazuh.agent.alerts.timeline",
-      "wazuh.agent.get",
-      "wazuh.agent.netaddr.list",
-      "wazuh.agent.netiface.list",
-      "wazuh.agent.network.summary",
-      "wazuh.agent.ports.list",
-      "wazuh.agent.processes.list",
-      "wazuh.agents.list",
-      "wazuh.alerts.search",
-      "wazuh.block_ip",
-      "wazuh.config.status",
-      "wazuh.health",
-      "wazuh.host.neighbors",
-      "wazuh.ip.activity.timeline",
-      "wazuh.lateral.path.summary",
-      "wazuh.lateral.suspects",
-      "wazuh.network.exposure.map",
-      "wazuh.network.service.find",
-      "wazuh.rule.hits.summary"
+    expect(packs.find((pack) => pack.id === "secops-actions")?.tools).toEqual([
+      "case.note.write",
+      "command.run.sandbox"
     ]);
     expect(packs.every((pack) => pack.mcpCompatible)).toBe(true);
+  });
+
+  it("registers and removes external plugin tools dynamically", () => {
+    const registry = new ToolRegistry();
+    const external = new TestTool(
+      "test_external_tool",
+      testManifest("external.hello", "External Hello"),
+      async () => ({ output: { ok: true } })
+    );
+
+    registry.registerTools([external]);
+    expect(registry.manifests()).toHaveLength(13);
+    expect(registry.manifests().find((manifest) => manifest.id === "external.hello")?.skillPackId).toBe("test-pack");
+    expect(registry.skillPacks().find((pack) => pack.id === "test-pack")?.tools).toEqual(["external.hello"]);
+
+    registry.unregisterExternalTools();
+    expect(registry.manifests()).toHaveLength(12);
+    expect(registry.manifests().find((manifest) => manifest.id === "external.hello")).toBeUndefined();
   });
 
   it("fails invalid tool arguments before policy and approval persistence", async () => {

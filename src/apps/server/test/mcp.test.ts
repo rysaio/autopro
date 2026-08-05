@@ -70,7 +70,7 @@ describe("MCP facade", () => {
       url: "/api/mcp/tools"
     });
     expect(listResponse.statusCode).toBe(200);
-    expect(listResponse.json().tools).toHaveLength(43);
+    expect(listResponse.json().tools).toHaveLength(12);
 
     const skillResponse = await app.inject({
       method: "GET",
@@ -78,8 +78,7 @@ describe("MCP facade", () => {
     });
     expect(skillResponse.statusCode).toBe(200);
     expect(skillResponse.json().skills.map((skill: { id: string }) => skill.id)).toContain("secops-actions");
-    expect(skillResponse.json().skills.map((skill: { id: string }) => skill.id)).toContain("secops-wazuh");
-    expect(skillResponse.json().skills.map((skill: { id: string }) => skill.id)).toContain("secops-shuffle");
+    expect(skillResponse.json().skills.map((skill: { id: string }) => skill.id)).toContain("secops-core");
     expect(skillResponse.json().skills.map((skill: { id: string }) => skill.id)).toContain("secops-reports");
 
     await app.close();

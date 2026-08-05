@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildServer } from "../src/app.js";
 import { getConfig } from "../src/config.js";
@@ -5,12 +6,10 @@ import { testConfig } from "./fixtures/testConfig.js";
 
 describe("exposure controls", () => {
   it("defaults to loopback bind and localhost web origins", () => {
-    const config = getConfig({
-      SECOPS_CONFIG_PATH: "__missing-secops.config.json"
-    });
+    const config = getConfig({});
 
     expect(config.bindHost).toBe("127.0.0.1");
-    expect(config.modelBaseUrl).toBeUndefined();
+    expect(config.modelConfigPath.endsWith(path.join("runtime", "config", "model.json"))).toBe(true);
     expect(config.allowedHosts).toContain("localhost");
     expect(config.allowedHosts).toContain("127.0.0.1");
     expect(config.allowedOrigins).toContain("http://localhost:5317");

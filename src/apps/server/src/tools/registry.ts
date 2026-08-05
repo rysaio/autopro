@@ -8,24 +8,30 @@ import { isRecoverableToolResult } from "./guidance.js";
 import { validateToolInput } from "./inputValidation.js";
 import { createReportTools } from "./reportTools.js";
 import { createSecOpsTools } from "./secopsTools.js";
-import { createShuffleTools } from "./shuffleTools.js";
 import type { SecOpsTool, ToolContext, ToolExecutionRecord } from "./types.js";
-import { createWazuhTools } from "./wazuhTools.js";
 
 export class ToolRegistry {
   private readonly byApiName = new Map<string, SecOpsTool>();
   private readonly byManifestId = new Map<string, SecOpsTool>();
+  /** 外部（插件）注册的工具，重载插件时整体移除。 */
+  private readonly externalApiNames = new Set<string>();
+  private readonly externalManifestIds = new Set<string>();
 
   constructor(
     tools: SecOpsTool[] = [
       ...createReportTools(),
       ...createSecOpsTools(),
-      ...createActionTools(),
-      ...createWazuhTools(),
-      ...createShuffleTools()
+      ...createActionTools()
     ],
     private readonly approvals: PendingApprovalStore = new ApprovalStore()
   ) {
+    for (const tool of tools) {
+      this.registerInternal(tool);
+    }
+  }
+
+  /** 注册外部（插件）工具；与已有工具冲突时抛错。 */
+  registerTools(tools: SecOpsTool[]): void {
     for (const tool of tools) {
       if (this.byApiName.has(tool.apiName)) {
         throw new Error(`Duplicate tool apiName: ${tool.apiName}`);
@@ -35,7 +41,32 @@ export class ToolRegistry {
       }
       this.byApiName.set(tool.apiName, tool);
       this.byManifestId.set(tool.manifest.id, tool);
+      this.externalApiNames.add(tool.apiName);
+      this.externalManifestIds.add(tool.manifest.id);
     }
+  }
+
+  /** 移除全部外部（插件）工具，用于插件重载。 */
+  unregisterExternalTools(): void {
+    for (const apiName of this.externalApiNames) {
+      this.byApiName.delete(apiName);
+    }
+    for (const manifestId of this.externalManifestIds) {
+      this.byManifestId.delete(manifestId);
+    }
+    this.externalApiNames.clear();
+    this.externalManifestIds.clear();
+  }
+
+  private registerInternal(tool: SecOpsTool): void {
+    if (this.byApiName.has(tool.apiName)) {
+      throw new Error(`Duplicate tool apiName: ${tool.apiName}`);
+    }
+    if (this.byManifestId.has(tool.manifest.id)) {
+      throw new Error(`Duplicate tool manifest id: ${tool.manifest.id}`);
+    }
+    this.byApiName.set(tool.apiName, tool);
+    this.byManifestId.set(tool.manifest.id, tool);
   }
 
   manifests(): SkillManifest[] {

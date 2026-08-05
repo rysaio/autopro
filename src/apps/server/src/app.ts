@@ -9,12 +9,18 @@ import type {
   AgentSessionSummary,
   ApprovalDecisionResult,
   AuditEvent,
+  EnvironmentStatus,
+  ModelConfigState,
   PermissionMode,
+  PluginSummary,
   ProviderStatus,
   RuntimeSettings
 } from "@secops-agent/shared";
-import { isModelConfigured, missingModelConfig, type AppConfig } from "./config.js";
+import type { AppConfig } from "./config.js";
 import { createAiSdkModel } from "./providers/aiSdkModelFactory.js";
+import { AgentEnvironment } from "./runtime/agentEnvironment.js";
+import { ModelConfigStore, type ModelConnection } from "./runtime/modelConfigStore.js";
+import { PluginManager, type PluginManagerOptions, type ResolvedMcpServer, type McpClientHandle } from "./plugins/pluginManager.js";
 import { AgentRuntime } from "./runtime/agentRuntime.js";
 import { AuditLog } from "./runtime/auditLog.js";
 import { ApprovalStore } from "./runtime/approvalStore.js";
@@ -27,7 +33,11 @@ import { ToolRegistry } from "./tools/registry.js";
 import type { ToolContext } from "./tools/types.js";
 
 export interface BuildServerOptions {
-  createModel?: (config: AppConfig, request: AgentRunRequest) => LanguageModel;
+  createModel?: (connection: ModelConnection, request: AgentRunRequest) => LanguageModel;
+  /** 测试注入：自定义插件 MCP 客户端工厂（默认为真实 stdio 连接）。 */
+  createPluginClient?: PluginManagerOptions["createClient"];
+  /** 关闭分层工具路由（测试用；默认开启）。 */
+  enableLayeredRouting?: boolean;
 }
 
 export function buildServer(config: AppConfig, options: BuildServerOptions = {}) {
@@ -41,6 +51,14 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   const runtimeSettings = new RuntimeSettingsStore(config.runtimeConfigPath, {
     actionLevel: config.actionLevel
   });
+  const modelConfigStore = new ModelConfigStore(config.modelConfigPath);
+  const pluginManager = new PluginManager({
+    pluginsDir: config.pluginsDir,
+    registry,
+    ...(options.createPluginClient ? { createClient: options.createPluginClient } : {})
+  });
+  // AgentEnvironment 基座：统一管理配置（settings/models）与外围设施（plugins）
+  const environment = new AgentEnvironment(runtimeSettings, modelConfigStore, pluginManager);
 
   app.addHook("onRequest", async (request, reply) => {
     const host = normalizeHost(request.headers.host);
@@ -65,18 +83,21 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   });
   app.addHook("onReady", async () => {
     await durableSessionStore?.migrate();
+    // 启动时按基座顺序加载：settings/models 构造即加载，插件扫描加载；单插件失败不影响启动
+    await environment.loadAll();
   });
   app.addHook("onClose", async () => {
+    await pluginManager.disconnectAll();
     await durableSessionStore?.close();
   });
   registerStreamableMcpRoutes(app, registry, config, () => runtimeSettings.get());
 
   app.get("/api/health", async (): Promise<ProviderStatus> => {
-    const configured = isModelConfigured(config);
+    const modelStatus = environment.status().model;
     const status: ProviderStatus = {
-      provider: config.provider,
-      model: config.model,
-      configured,
+      provider: modelStatus.provider,
+      model: modelStatus.model,
+      configured: modelStatus.configured,
       apiTokenRequired: Boolean(config.apiToken),
       actionLevel: runtimeSettings.get().actionLevel,
       sandboxRoot: config.sandboxRoot,
@@ -85,13 +106,13 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
         configured: config.durableSessionMode === "postgres"
       },
       capabilities: {
-        tools: configured,
+        tools: modelStatus.configured,
         streaming: false,
         toolStreaming: false
       }
     };
-    if (config.modelBaseUrl) {
-      status.baseUrl = config.modelBaseUrl;
+    if (modelStatus.baseUrl) {
+      status.baseUrl = modelStatus.baseUrl;
     }
     return status;
   });
@@ -106,6 +127,65 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     return runtimeSettings.setActionLevel(body.actionLevel);
   });
 
+  // ── AgentEnvironment 基座聚合视图：模型连接 + 插件外围设施 + 运行时设置 ──
+  app.get("/api/environment", async (): Promise<EnvironmentStatus> => environment.status());
+
+  // ── 模型连接热配置 API：启动后可增删改/切换，写文件即生效，无需重启 ──
+  app.get("/api/model-config", async (): Promise<ModelConfigState> => modelConfigStore.list());
+
+  app.post("/api/model-config", async (request, reply): Promise<ModelConfigState | unknown> => {
+    const body = coerceRecord(request.body);
+    try {
+      modelConfigStore.add({
+        name: stringField(body.name),
+        provider: stringField(body.provider),
+        model: stringField(body.model),
+        baseUrl: stringField(body.baseUrl),
+        apiKey: typeof body.apiKey === "string" ? body.apiKey : ""
+      });
+      return modelConfigStore.list();
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.put("/api/model-config/:id", async (request, reply): Promise<ModelConfigState | unknown> => {
+    const params = request.params as { id: string };
+    const body = coerceRecord(request.body);
+    try {
+      const updated = modelConfigStore.update(params.id, {
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(typeof body.provider === "string" ? { provider: body.provider } : {}),
+        ...(typeof body.model === "string" ? { model: body.model } : {}),
+        ...(typeof body.baseUrl === "string" ? { baseUrl: body.baseUrl } : {}),
+        ...(body.apiKey !== undefined ? { apiKey: typeof body.apiKey === "string" ? body.apiKey : "" } : {})
+      });
+      if (!updated) {
+        return reply.code(404).send({ error: `No model connection found for ${params.id}` });
+      }
+      return modelConfigStore.list();
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.delete("/api/model-config/:id", async (request, reply): Promise<ModelConfigState | unknown> => {
+    const params = request.params as { id: string };
+    if (!modelConfigStore.remove(params.id)) {
+      return reply.code(404).send({ error: `No model connection found for ${params.id}` });
+    }
+    return modelConfigStore.list();
+  });
+
+  app.post("/api/model-config/:id/activate", async (request, reply): Promise<ModelConfigState | unknown> => {
+    const params = request.params as { id: string };
+    const activated = modelConfigStore.setActive(params.id);
+    if (!activated) {
+      return reply.code(404).send({ error: `No model connection found for ${params.id}` });
+    }
+    return modelConfigStore.list();
+  });
+
   app.get("/api/tools", async () => ({
     tools: registry.manifests()
   }));
@@ -113,6 +193,16 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   app.get("/api/skills", async () => ({
     skills: registry.skillPacks()
   }));
+
+  // ── 插件热插拔 API：安装插件目录到 runtime/plugins/ 后 reload 一次即可 reach ──
+  app.get("/api/plugins", async (): Promise<{ plugins: PluginSummary[] }> => ({
+    plugins: pluginManager.status()
+  }));
+
+  app.post("/api/plugins/reload", async (): Promise<{ plugins: PluginSummary[] }> => {
+    await pluginManager.reload();
+    return { plugins: pluginManager.status() };
+  });
 
   app.get("/api/mcp/tools", async () => ({
     tools: mcpToolSummaries(registry)
@@ -217,11 +307,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!runRequest) {
       return reply.code(400).send({ error: "messages must contain at least one user message" });
     }
-    const missing = missingModelConfig(config);
-    if (missing.length) {
-      return reply.code(503).send({ error: `Model provider is not configured. Missing: ${missing.join(", ")}.` });
+    const connection = modelConfigStore.resolveConnection();
+    if (!connection) {
+      return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore);
+    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection);
     return runtime.run(runRequest, (event) => auditLog.append(event));
   });
 
@@ -279,11 +369,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!runRequest) {
       return reply.code(400).send({ error: "messages must contain at least one user message" });
     }
-    const missing = missingModelConfig(config);
-    if (missing.length) {
-      return reply.code(503).send({ error: `Model provider is not configured. Missing: ${missing.join(", ")}.` });
+    const connection = modelConfigStore.resolveConnection();
+    if (!connection) {
+      return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore);
+    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection);
     reply.hijack();
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -315,17 +405,19 @@ function createRuntime(
   registry: ToolRegistry,
   runRequest: AgentRunRequest,
   options: BuildServerOptions,
-  sessionStateStore: SessionStateStore
+  sessionStateStore: SessionStateStore,
+  connection: ModelConnection
 ) {
   return new AgentRuntime({
-    model: options.createModel?.(config, runRequest) ?? createAiSdkModel(config),
+    model: options.createModel?.(connection, runRequest) ?? createAiSdkModel(connection),
     registry,
-    modelName: config.model,
-    providerLabel: config.provider,
+    modelName: connection.model,
+    providerLabel: connection.provider,
     actionLevel: settings.actionLevel,
     sandboxRoot: config.sandboxRoot,
     workspaceRoot: config.workspaceRoot,
-    sessionStateStore
+    sessionStateStore,
+    ...(options.enableLayeredRouting !== undefined ? { enableLayeredRouting: options.enableLayeredRouting } : {})
   });
 }
 
@@ -366,6 +458,10 @@ function coerceRecord(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
   }
   return {};
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function coerceLimit(value: unknown, fallback: number): number {

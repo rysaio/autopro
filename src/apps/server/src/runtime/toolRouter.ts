@@ -37,25 +37,16 @@ const CATEGORY_PATTERNS: [string, ToolCategory][] = [
   ["secops_full_access_exec", "sandbox-actions"],
 ];
 
-/** DEBUG：打印工具分类统计 */
-function logCategoryStats(categories: Map<ToolCategory, string[]>) {
-  const total = Array.from(categories.values()).reduce((sum, tools) => sum + tools.length, 0);
-  console.log(`[ToolRouter] 工具分类统计 (共 ${total} 个):`);
-  for (const [cat, tools] of categories) {
-    console.log(`  ${cat}: ${tools.length} 个`);
-  }
-}
-
 export class ToolRouter {
   private categoryMap: Map<ToolCategory, string[]> = new Map();
   private initialized = false;
 
   /**
    * 从 ToolRegistry 构建分类映射
-   * 基于 manifest 信息自动归类：perception/reasoning 工具按前缀分类
+   * 基于 manifest 信息自动归类：perception/reasoning 工具按前缀分类。
+   * 每次调用都重建（不缓存）：插件 reload 注册新工具后分类必须反映最新注册表。
    */
   build(registry: ToolRegistry): void {
-    if (this.initialized) return;
     if (!registry) return; // 安全兜底
     this.categoryMap = new Map<ToolCategory, string[]>([
       ["core-triage", []],
@@ -100,7 +91,6 @@ export class ToolRouter {
       }
     }
     this.initialized = true;
-    logCategoryStats(this.categoryMap);
   }
 
   /**
@@ -156,7 +146,10 @@ export class ToolRouter {
     if (
       msg.includes("agent") || msg.includes("wazuh") || msg.includes("告警") ||
       msg.includes("主机") || msg.includes("端口") || msg.includes("进程") ||
-      msg.includes("横向") || msg.includes("封禁") || msg.includes("block")
+      msg.includes("横向") || msg.includes("封禁") || msg.includes("block") ||
+      msg.includes("拉黑") || msg.includes("拦截") || msg.includes("检测") ||
+      msg.includes("排查") || msg.includes("监控") || msg.includes("防护") ||
+      msg.includes("入侵") || msg.includes("漏洞") || msg.includes("威胁")
     ) {
       categories.add("wazuh-platform");
     }
@@ -166,12 +159,14 @@ export class ToolRouter {
       categories.add("shuffle-soar");
     }
     if (msg.includes("报告") || msg.includes("report") || msg.includes("导出") ||
-      msg.includes("export") || msg.includes("证据") || msg.includes("case")
+      msg.includes("export") || msg.includes("证据") || msg.includes("总结") ||
+      msg.includes("分析报告")
     ) {
       categories.add("reporting");
     }
     if (msg.includes("执行") || msg.includes("命令") || msg.includes("exec") ||
-      msg.includes("运行") || msg.includes("run")
+      msg.includes("运行") || msg.includes("run") || msg.includes("笔记") ||
+      msg.includes("案例") || msg.includes("沙箱") || msg.includes("note")
     ) {
       categories.add("sandbox-actions");
     }

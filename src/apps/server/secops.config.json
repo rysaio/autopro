@@ -1,1 +1,0 @@
-{"model":{"provider":"openai-compatible","name":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKeyEnv":"MODEL_API_KEY"}}

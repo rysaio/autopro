@@ -8,9 +8,8 @@ out/
 coverage/
 
 # Runtime data dirs (per-package generated data — audit logs, test artifacts,
-# PGlite data. NOT the **/src/runtime code dirs like src/server/src/runtime/)
+# PGlite data. NOT the **/src/runtime code dirs like src/apps/server/src/runtime/)
 src/runtime/
-src/server/runtime/
 src/apps/server/runtime/
 .vite-cache/
 

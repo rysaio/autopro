@@ -34,7 +34,8 @@ export function createShuffleMcpServer(options: ShuffleMcpServerOptions = {}): M
         _meta: {
           manifestId: tool.manifest.id,
           risk: tool.manifest.risk,
-          permission: tool.manifest.defaultPermission
+          permission: tool.manifest.defaultPermission,
+          toolClass: tool.manifest.toolClass
         }
       },
       async (args: Record<string, unknown>) => {

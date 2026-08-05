@@ -71,12 +71,8 @@ if (existsSync(envExample)) {
   console.log("[copy] .env.example");
 }
 
-// 8. Copy secops.config.example.json
-const configExample = path.join(root, "secops.config.example.json");
-if (existsSync(configExample)) {
-  cpSync(configExample, path.join(appDir, "secops.config.example.json"));
-  console.log("[copy] secops.config.example.json");
-}
+// 8. (removed) secops.config.json is obsolete — model config is now a hot
+//    runtime file (runtime/config/model.json) managed via /api/model-config.
 
 // 9. Create production package.json (only runtime deps)
 const serverPkg = JSON.parse(readFileSync(path.join(root, "apps", "server", "package.json"), "utf8"));
@@ -125,7 +121,8 @@ const runtimeDirs = [
   ["runtime", "sandbox"],
   ["runtime", "audit"],
   ["runtime", "approvals"],
-  ["runtime", "config"]
+  ["runtime", "config"],
+  ["runtime", "plugins"]
 ];
 for (const parts of runtimeDirs) {
   mkdirSync(path.join(appDir, ...parts), { recursive: true });
@@ -151,20 +148,37 @@ console.log("[install] production dependencies ready");
 // 13. Install compiled workspace packages into the release. TypeScript emits
 // package imports rather than bundling them, so a standalone runnable must not
 // rely on a parent workspace node_modules directory for resolution.
-const workspacePackages = [
-  path.join("packages", "shared"),
-  path.join("plugins", "wazuh-secops"),
-  path.join("plugins", "shuffle-secops")
-];
-for (const relativePackageDir of workspacePackages) {
-  const sourceDir = path.join(root, relativePackageDir);
+// @secops-agent/shared 是主服务的编译期依赖 → node_modules；
+// wazuh/shuffle 插件按插件模式（Claude Code / Codex 形态）复制到
+// runtime/plugins/<name>/，由主服务启动扫描 / reload 热加载，不再编译期捆绑。
+const sharedPackageDir = path.join("packages", "shared");
+{
+  const sourceDir = path.join(root, sharedPackageDir);
   const packageJson = JSON.parse(readFileSync(path.join(sourceDir, "package.json"), "utf8"));
-  const packageNameParts = packageJson.name.split("/");
-  const targetDir = path.join(appDir, "node_modules", ...packageNameParts);
+  const targetDir = path.join(appDir, "node_modules", "@secops-agent", "shared");
   mkdirSync(targetDir, { recursive: true });
   cpSync(path.join(sourceDir, "dist"), path.join(targetDir, "dist"), { recursive: true });
   cpSync(path.join(sourceDir, "package.json"), path.join(targetDir, "package.json"));
-  console.log(`[copy] workspace runtime package ${packageJson.name}`);
+  console.log("[copy] workspace runtime package @secops-agent/shared");
+}
+
+const pluginPackages = [
+  path.join("plugins", "wazuh-secops"),
+  path.join("plugins", "shuffle-secops")
+];
+for (const relativePackageDir of pluginPackages) {
+  const sourceDir = path.join(root, relativePackageDir);
+  const packageJson = JSON.parse(readFileSync(path.join(sourceDir, "package.json"), "utf8"));
+  const pluginName = packageJson.name.split("/").pop();
+  const targetDir = path.join(appDir, "runtime", "plugins", pluginName);
+  mkdirSync(targetDir, { recursive: true });
+  for (const item of ["dist", "package.json", ".mcp.json", ".codex-plugin", "skills", "README.md"]) {
+    const sourceItem = path.join(sourceDir, item);
+    if (existsSync(sourceItem)) {
+      cpSync(sourceItem, path.join(targetDir, item), { recursive: true });
+    }
+  }
+  console.log(`[copy] plugin runtime/plugins/${pluginName}`);
 }
 
 console.log(`\n=== 构建完成 ===`);

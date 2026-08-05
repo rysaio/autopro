@@ -241,7 +241,11 @@ export class AgentRuntime {
         // Phase 2: DEEP DIVE — 核心 + 推断的专用工具
         // ══════════════════════════════════════════════════════════════
         const deepOnRecord = createOnRecord();
-        const deepToolIds = toolRouter.getSpecializedToolIds(inferredCategories);
+        // 动作工具（sandbox-actions）固定加载：保证 action 工具永远可达，
+        // 不依赖关键词推断（“拉黑/记笔记”等说法可能不在推断表内）
+        const deepCategories = new Set(inferredCategories);
+        deepCategories.add("sandbox-actions");
+        const deepToolIds = toolRouter.getSpecializedToolIds([...deepCategories]);
 
         // 使用 Phase 1 的完整消息历史作为 Phase 2 的输入
         const phase1Messages = triageResult.response.messages;

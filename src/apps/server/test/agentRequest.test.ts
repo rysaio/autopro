@@ -44,7 +44,7 @@ describe("agent request validation", () => {
       SECOPS_ACTION_LEVEL: "sandbox",
       SECOPS_SANDBOX_ROOT: sandboxRoot,
       SECOPS_APPROVAL_STORE_PATH: approvalStorePath
-    }), { createModel: scriptedModelForRequest });
+    }), { createModel: scriptedModelForRequest, enableLayeredRouting: false });
 
     const response = await app.inject({
       method: "POST",

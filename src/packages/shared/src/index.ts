@@ -207,3 +207,46 @@ export interface ProviderStatus {
   };
   baseUrl?: string;
 }
+
+/** 对外暴露的模型连接摘要：永不携带明文 apiKey。 */
+export interface ModelConnectionSummary {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  apiKeySet: boolean;
+}
+
+export interface ModelConfigState {
+  connections: ModelConnectionSummary[];
+  activeConnectionId: string | null;
+}
+
+export interface PluginSummary {
+  id: string;
+  name: string;
+  version: string;
+  status: "loaded" | "error";
+  toolCount: number;
+  error?: string;
+}
+
+/** AgentEnvironment 基座聚合状态：模型连接 + 插件外围设施 + 运行时设置。 */
+export interface EnvironmentStatus {
+  model: {
+    configured: boolean;
+    provider: string;
+    model: string;
+    baseUrl?: string;
+    connections: number;
+    activeConnectionId: string | null;
+  };
+  plugins: {
+    installed: number;
+    loaded: number;
+    failed: number;
+    plugins: PluginSummary[];
+  };
+  settings: RuntimeSettings;
+}

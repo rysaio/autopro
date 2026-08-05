@@ -1,0 +1,200 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import { PluginManager, type McpClientHandle, type ResolvedMcpServer } from "../src/plugins/pluginManager.js";
+import { ToolRegistry } from "../src/tools/registry.js";
+
+interface FakePluginSetup {
+  pluginsDir: string;
+  registry: ToolRegistry;
+  spawned: ResolvedMcpServer[];
+  calls: Array<{ name: string; args: Record<string, unknown> }>;
+  toolsByPlugin: Record<string, Tool[]>;
+  resultByTool: Record<string, unknown>;
+}
+
+async function setupPluginManager(): Promise<{ manager: PluginManager; setup: FakePluginSetup }> {
+  const pluginsDir = await mkdtemp(path.join(os.tmpdir(), "secops-plugin-"));
+  const registry = new ToolRegistry();
+  const setup: FakePluginSetup = {
+    pluginsDir,
+    registry,
+    spawned: [],
+    calls: [],
+    toolsByPlugin: {},
+    resultByTool: {}
+  };
+  const manager = new PluginManager({
+    pluginsDir,
+    registry,
+    createClient: async (server: ResolvedMcpServer, pluginId: string): Promise<McpClientHandle> => {
+      setup.spawned.push(server);
+      const tools = setup.toolsByPlugin[pluginId] ?? [];
+      return {
+        listTools: async () => tools,
+        callTool: async (name: string, args: Record<string, unknown>): Promise<CallToolResult> => {
+          setup.calls.push({ name, args });
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ status: "executed", result: setup.resultByTool[name] ?? { ok: true }, artifacts: [] })
+            }]
+          };
+        },
+        close: async () => undefined
+      };
+    }
+  });
+  return { manager, setup };
+}
+
+async function installPlugin(pluginsDir: string, id: string, manifest: Record<string, unknown> = {}): Promise<void> {
+  const dir = path.join(pluginsDir, id);
+  await mkdir(path.join(dir, ".codex-plugin"), { recursive: true });
+  await writeFile(
+    path.join(dir, ".codex-plugin", "plugin.json"),
+    JSON.stringify({ name: id, version: "0.1.0", ...manifest }),
+    "utf8"
+  );
+  await writeFile(path.join(dir, ".mcp.json"), JSON.stringify({
+    mcpServers: { [id]: { command: "node", args: ["./dist/bin/fake.js"] } }
+  }), "utf8");
+}
+
+function tool(name: string, manifestId: string, overrides: Partial<Tool> = {}): Tool {
+  return {
+    name,
+    title: name,
+    description: `${name} description`,
+    inputSchema: { type: "object", properties: {} },
+    _meta: { manifestId, risk: "medium", permission: "auto", toolClass: "perception" },
+    ...overrides
+  };
+}
+
+describe("PluginManager", () => {
+  it("loads a plugin, registers its tools, and spawns with host env injection", async () => {
+    const { manager, setup } = await setupPluginManager();
+    setup.toolsByPlugin["demo"] = [
+      tool("secops_demo_query", "demo.query"),
+      tool("secops_demo_action", "demo.action", {
+        _meta: { manifestId: "demo.action", risk: "high", permission: "ask", toolClass: "action" }
+      })
+    ];
+    await installPlugin(setup.pluginsDir, "demo");
+
+    await manager.load();
+
+    expect(manager.status()).toEqual([
+      expect.objectContaining({ id: "demo", status: "loaded", toolCount: 2 })
+    ]);
+    const manifestIds = setup.registry.manifests().map((m) => m.id);
+    expect(manifestIds).toContain("demo.query");
+    expect(manifestIds).toContain("demo.action");
+
+    // spawn env：透传宿主环境 + 插件放行 + 动作审批归主服务
+    expect(setup.spawned).toHaveLength(1);
+    expect(setup.spawned[0]?.cwd).toBe(path.join(setup.pluginsDir, "demo"));
+    expect(setup.spawned[0]?.env.SECOPS_ACTION_LEVEL).toBe("full-access");
+    expect(setup.spawned[0]?.env.WAZUH_MCP_ALLOW_ACTIONS).toBe("true");
+    expect(setup.spawned[0]?.env.SHUFFLE_MCP_ALLOW_ACTIONS).toBe("true");
+
+    await manager.disconnectAll();
+  });
+
+  it("forwards tool calls through MCP and parses the plugin result envelope", async () => {
+    const { manager, setup } = await setupPluginManager();
+    setup.toolsByPlugin["demo"] = [tool("secops_demo_query", "demo.query")];
+    setup.resultByTool["secops_demo_query"] = { items: [1, 2, 3] };
+    await installPlugin(setup.pluginsDir, "demo");
+    await manager.load();
+
+    const record = await setup.registry.executeApiTool("secops_demo_query", "call-1", {}, {
+      runId: "plugin-test",
+      permissionMode: "auto",
+      actionLevel: "sandbox",
+      sandboxRoot: "runtime/sandbox",
+      workspaceRoot: "."
+    });
+
+    expect(record.invocation.status).toBe("executed");
+    expect(record.invocation.result).toEqual({ items: [1, 2, 3] });
+    expect(setup.calls).toEqual([{ name: "secops_demo_query", args: {} }]);
+
+    await manager.disconnectAll();
+  });
+
+  it("reload picks up newly installed plugins and drops removed ones", async () => {
+    const { manager, setup } = await setupPluginManager();
+    setup.toolsByPlugin["first"] = [tool("secops_first_tool", "first.tool")];
+    await installPlugin(setup.pluginsDir, "first");
+    await manager.load();
+    expect(manager.status()).toHaveLength(1);
+
+    // 安装第二个插件后 reload
+    setup.toolsByPlugin["second"] = [tool("secops_second_tool", "second.tool")];
+    await installPlugin(setup.pluginsDir, "second");
+    await manager.reload();
+
+    expect(manager.status().map((p) => p.id).sort()).toEqual(["first", "second"]);
+    expect(setup.registry.manifests().map((m) => m.id)).toEqual(
+      expect.arrayContaining(["first.tool", "second.tool"])
+    );
+
+    // 删除第二个插件目录后 reload
+    await rmPluginDir(setup.pluginsDir, "second");
+    await manager.reload();
+    expect(manager.status().map((p) => p.id)).toEqual(["first"]);
+    expect(setup.registry.manifests().map((m) => m.id)).not.toContain("second.tool");
+
+    await manager.disconnectAll();
+  });
+
+  it("isolates a single plugin failure without affecting the service or other plugins", async () => {
+    const { manager, setup } = await setupPluginManager();
+    // 无 manifest 的目录 → 加载失败
+    await mkdir(path.join(setup.pluginsDir, "broken"), { recursive: true });
+    setup.toolsByPlugin["healthy"] = [tool("secops_healthy_tool", "healthy.tool")];
+    await installPlugin(setup.pluginsDir, "healthy");
+
+    await manager.load();
+
+    const statuses = manager.status();
+    expect(statuses).toHaveLength(2);
+    expect(statuses.find((p) => p.id === "broken")).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("Missing plugin manifest")
+    });
+    expect(statuses.find((p) => p.id === "healthy")).toMatchObject({ status: "loaded" });
+    expect(setup.registry.manifests().map((m) => m.id)).toContain("healthy.tool");
+
+    await manager.disconnectAll();
+  });
+
+  it("marks a plugin as error when tool registration conflicts", async () => {
+    const { manager, setup } = await setupPluginManager();
+    // 与内置工具 apiName 冲突
+    setup.toolsByPlugin["clash"] = [tool("secops_ioc_enrich", "clash.tool")];
+    await installPlugin(setup.pluginsDir, "clash");
+
+    await manager.load();
+
+    expect(manager.status()[0]).toMatchObject({
+      id: "clash",
+      status: "error",
+      error: expect.stringContaining("Duplicate tool apiName")
+    });
+    expect(setup.registry.manifests()).toHaveLength(12);
+
+    await manager.disconnectAll();
+  });
+});
+
+async function rmPluginDir(pluginsDir: string, id: string): Promise<void> {
+  await mkdir(path.join(pluginsDir, id), { recursive: true });
+  // Node 22+ 支持 fs.rm 递归；此处用系统 rm 语义的最小实现
+  const { rm } = await import("node:fs/promises");
+  await rm(path.join(pluginsDir, id), { recursive: true, force: true });
+}

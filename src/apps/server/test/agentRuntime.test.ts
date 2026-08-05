@@ -66,7 +66,8 @@ describe("AgentRuntime", () => {
       actionLevel: config.actionLevel,
       sandboxRoot: config.sandboxRoot,
       workspaceRoot: config.workspaceRoot,
-      maxToolRounds: 4
+      maxToolRounds: 4,
+      enableLayeredRouting: false
     });
 
     const run = await runtime.run({
@@ -101,7 +102,8 @@ describe("AgentRuntime", () => {
       actionLevel: config.actionLevel,
       sandboxRoot: config.sandboxRoot,
       workspaceRoot: config.workspaceRoot,
-      maxToolRounds: 4
+      maxToolRounds: 4,
+      enableLayeredRouting: false
     });
 
     const run = await runtime.run({
@@ -158,7 +160,8 @@ describe("AgentRuntime", () => {
       actionLevel: config.actionLevel,
       sandboxRoot: config.sandboxRoot,
       workspaceRoot: config.workspaceRoot,
-      maxToolRounds: 4
+      maxToolRounds: 4,
+      enableLayeredRouting: false
     });
     const events: string[] = [];
 
@@ -223,7 +226,8 @@ describe("AgentRuntime", () => {
       sandboxRoot: config.sandboxRoot,
       workspaceRoot: config.workspaceRoot,
       maxToolRounds: 4,
-      sessionStateStore
+      sessionStateStore,
+      enableLayeredRouting: false
     });
 
     const run = await runtime.run({
