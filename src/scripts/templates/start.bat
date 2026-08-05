@@ -163,6 +163,8 @@ echo   Web:    http://localhost:5317
 echo   API:    http://127.0.0.1:4317
 echo   Logs:   %APP_DIR%\runtime\api.log and web.log
 echo   Stop:   %~dp0stop.bat
+echo Opening the web interface in the default browser...
+start "" "http://localhost:5317" >nul 2>&1
 exit /b 0
 
 :stop_port
