@@ -23,6 +23,30 @@ triage/deep 两阶段暴露由**路由侧硬编码分类**决定：
 | deep 阶段策略 | **保留类别推断**：deep = 常驻工具（非 defer）+ 按类别推断加载的 defer 工具。37 工具处于官方 30–50 精度拐点内，deep 不全量加载 |
 | 用户覆盖入口 | 后端 API + `runtime/config/toolVisibility.json` 持久化；插件 `_meta` 声明默认值；**本轮不做前端 UI** |
 
+## 2.5 已完成的相关修改（提交 c5b7fe6，执行前请先确认存在）
+
+以下三处修改已在主分支落地并全量测试通过（server 72/72 全绿），本计划在其之上实施，
+**执行窗口 AI 请先确认这些修改已存在**，避免重复改动或遗漏关联：
+
+1. **toolRouter.build() 每次重建分类**（`src/apps/server/src/runtime/toolRouter.ts` 的 `build()`）
+   - 已移除 `if (this.initialized) return;` 短路——插件 reload 注册新工具后分类映射必须重建
+     （此前 bug：插件工具在 `/api/plugins` 显示已加载，但 agent run 的工具集里不可达）
+   - `initialized` 字段保留（仅不再短路）
+   - 本计划 4.5 的 `alwaysVisibleIds`/`deferredIds` 收集直接加在 `build()` 的分类循环中
+   - 回归测试：`src/apps/server/test/toolRouter.test.ts`（"reclassifies after plugin tools are registered on a later run"）
+
+2. **deep 阶段固定加载 sandbox-actions**（`src/apps/server/src/runtime/agentRuntime.ts` 约 244-248 行）
+   - `deepCategories.add("sandbox-actions")`：动作工具（case.note.write / command.run.sandbox / full_access.exec）
+     不依赖关键词推断即可达（修复"拉黑/记笔记"等说法不在关键词表导致动作工具不可达）
+   - 本计划 4.6 改造后**此逻辑保留**：sandbox-actions 工具默认 `deferLoading: true`，
+     deep 阶段仍通过类别固定加入，行为不变
+
+3. **inferCategories 关键词扩充**（`src/apps/server/src/runtime/toolRouter.ts` 的 `inferCategories()`）
+   - wazuh-platform 增加：拉黑 / 拦截 / 检测 / 排查 / 监控 / 防护 / 入侵 / 漏洞 / 威胁
+   - reporting 增加：总结 / 分析报告（原 "case" 英文词已移至 sandbox-actions）
+   - sandbox-actions 增加：笔记 / 案例 / 沙箱 / note
+   - 本计划**不改 inferCategories**（4.5 只新增暴露集合收集，类别推断逻辑保持现状）
+
 ## 3. 术语
 
 - **常驻工具（non-deferred）**：`deferLoading: false`。triage 阶段与 deep 阶段均可见
