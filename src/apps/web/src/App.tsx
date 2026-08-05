@@ -28,7 +28,7 @@ import {
   XCircle,
   Wrench
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import type {
   AgentRun,
@@ -240,8 +240,10 @@ export function App() {
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
-  // 打开/切换对话后自动滚动到最新消息（底部）
-  useEffect(() => {
+  // 打开/切换对话后自动滚动到最新消息（底部）。
+  // 用 useLayoutEffect：在浏览器绘制前同步设置滚动位置，
+  // 避免「先显示头部再跳到底部」的可见闪烁。
+  useLayoutEffect(() => {
     const element = transcriptRef.current;
     if (element) {
       element.scrollTop = element.scrollHeight;
