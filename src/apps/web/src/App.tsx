@@ -18,6 +18,7 @@ import {
   Network,
   Play,
   PlugZap,
+  Plus,
   Search,
   Send,
   Server,
@@ -27,7 +28,7 @@ import {
   XCircle,
   Wrench
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import type {
   AgentRun,
@@ -106,7 +107,7 @@ export function App() {
   const [tools, setTools] = useState<SkillManifest[]>([]);
   const [mcpTools, setMcpTools] = useState<McpToolSummary[]>([]);
   const [enabledTools, setEnabledTools] = useState<Set<string>>(new Set());
-  const [messages, setMessages] = useState<ChatMessage[]>(seedMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => crypto.randomUUID());
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [activeSession, setActiveSession] = useState<AgentSessionDetail | null>(null);
@@ -234,6 +235,16 @@ export function App() {
       setIsLoadingSession(false);
     }
   }
+
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+
+  // 打开/切换对话后自动滚动到最新消息（底部）
+  useEffect(() => {
+    const element = transcriptRef.current;
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [messages, activeToolInvocations, activeSession]);
 
   function startNewSession() {
     setCurrentSessionId(crypto.randomUUID());
@@ -565,12 +576,12 @@ async function handleGenerateReport() {
             <span>会话</span>
           </div>
           <button
-            className={!activePanel && !activeSession ? "session-row active" : "session-row"}
+            className={!activePanel && !activeSession ? "new-chat-btn active" : "new-chat-btn"}
             onClick={startNewSession}
             type="button"
           >
-            <strong>新建调查</strong>
-            <small>{messages.length} 条消息 · {activeToolInvocations.length} 次工具调用</small>
+            <Plus size={15} aria-hidden="true" />
+            <span>新建对话</span>
           </button>
           {sessions.length ? sessions.map((session) => (
             <button
@@ -1026,7 +1037,7 @@ async function handleGenerateReport() {
             <StatusPill health={health} />
             <button
               className="icon-button"
-              disabled={isRunning || !prompt.trim()}
+              disabled={isRunning || !prompt.trim() || messages.length === 0}
               form="agent-composer"
               title="运行当前提示"
               type="submit"
@@ -1044,22 +1055,35 @@ async function handleGenerateReport() {
         ) : null}
 
         <section className="chat-stage" aria-label="智能体对话">
-          <div className="transcript" aria-label="对话记录">
-            {messages.filter((message) => message.role !== "tool").map((message) => (
-              <TranscriptMessage key={message.id} message={message} />
-            ))}
-            {activeToolInvocations.map((invocation) => (
-              <ToolCallCard
-                invocation={invocation}
-                isResolving={resolvingApprovalId === invocation.id}
-                key={invocation.id}
-                onApprove={() => resolveApproval(invocation.id, "approve")}
-                onDeny={() => resolveApproval(invocation.id, "deny")}
-              />
-            ))}
-          </div>
+          {messages.length === 0 ? (
+            <div className="chat-welcome">
+              <Bot size={42} aria-hidden="true" />
+              <h3>开始新的安全调查</h3>
+              <p>点击左侧「新建对话」创建新的调查会话，或从会话列表选择已保存的对话继续。</p>
+              <button className="chat-welcome-btn" onClick={startNewSession} type="button">
+                <Plus size={15} aria-hidden="true" />
+                <span>新建对话</span>
+              </button>
+            </div>
+          ) : (
+            <div className="transcript" aria-label="对话记录" ref={transcriptRef}>
+              {messages.filter((message) => message.role !== "tool").map((message) => (
+                <TranscriptMessage key={message.id} message={message} />
+              ))}
+              {activeToolInvocations.map((invocation) => (
+                <ToolCallCard
+                  invocation={invocation}
+                  isResolving={resolvingApprovalId === invocation.id}
+                  key={invocation.id}
+                  onApprove={() => resolveApproval(invocation.id, "approve")}
+                  onDeny={() => resolveApproval(invocation.id, "deny")}
+                />
+              ))}
+            </div>
+          )}
         </section>
 
+        {messages.length > 0 ? (
         <form className="composer" id="agent-composer" onSubmit={submit}>
           <div className="composer-meta">
             <Sparkles size={16} aria-hidden="true" />
@@ -1079,6 +1103,7 @@ async function handleGenerateReport() {
             <span>运行</span>
           </button>
         </form>
+        ) : null}
           </>
         )}
       </main>

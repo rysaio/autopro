@@ -3116,3 +3116,78 @@ h3 {
     flex-wrap: wrap;
   }
 }
+
+/* ── 新建对话按键 ── */
+.new-chat-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #0f766e;
+  border-radius: 8px;
+  color: #0f766e;
+  background: #ecfdf5;
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.new-chat-btn:hover:not(:disabled) {
+  background: #d1fae5;
+}
+
+.new-chat-btn.active {
+  color: #ffffff;
+  border-color: #0f766e;
+  background: #0f766e;
+}
+
+/* ── 对话欢迎空状态 ── */
+.chat-welcome {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  height: 100%;
+  min-height: 320px;
+  padding: 20px;
+  color: #64748b;
+  text-align: center;
+}
+
+.chat-welcome h3 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 850;
+}
+
+.chat-welcome p {
+  margin: 0;
+  max-width: 430px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.chat-welcome-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 9px 18px;
+  border: 1px solid #0f766e;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #0f766e;
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.chat-welcome-btn:hover {
+  background: #0d9488;
+}
