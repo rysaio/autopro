@@ -558,8 +558,10 @@ async function handleGenerateReport() {
     void refreshSessions();
   }
 
-  function togglePanel(panel: WorkbenchPanel) {
-    setActivePanel((current) => current === panel ? null : panel);
+  // 工作区按键：点击总是打开/切换到对应面板，不再二次点击关闭；
+  // 返回对话界面统一通过顶部「返回对话」按钮。
+  function openPanel(panel: WorkbenchPanel) {
+    setActivePanel(panel);
     if (panel !== "skills" && panel !== "dashboard" && panel !== "knowledge-graph" && panel !== "model-config") {
       setTab(panel);
     }
@@ -636,7 +638,7 @@ async function handleGenerateReport() {
           </div>
 <button
             className={activePanel === "dashboard" ? "nav-item active" : "nav-item"}
-            onClick={() => togglePanel("dashboard")}
+            onClick={() => openPanel("dashboard")}
             type="button"
           >
             <LayoutDashboard size={15} aria-hidden="true" />
@@ -645,7 +647,7 @@ async function handleGenerateReport() {
           </button>
           <button
             className={activePanel === "model-config" ? "nav-item active" : "nav-item"}
-            onClick={() => togglePanel("model-config")}
+            onClick={() => openPanel("model-config")}
             type="button"
           >
             <Server size={15} aria-hidden="true" />
@@ -654,7 +656,7 @@ async function handleGenerateReport() {
           </button>
           <button
             className={activePanel === "knowledge-graph" ? "nav-item active" : "nav-item"}
-            onClick={() => togglePanel("knowledge-graph")}
+            onClick={() => openPanel("knowledge-graph")}
             type="button"
           >
             <Network size={15} aria-hidden="true" />
@@ -663,7 +665,7 @@ async function handleGenerateReport() {
           </button>
           <button
             className={activePanel === "skills" ? "nav-item active" : "nav-item"}
-            onClick={() => togglePanel("skills")}
+            onClick={() => openPanel("skills")}
             type="button"
           >
             <Wrench size={15} aria-hidden="true" />
@@ -672,7 +674,7 @@ async function handleGenerateReport() {
           </button>
           <button
             className={activePanel === "mcp" ? "nav-item active" : "nav-item"}
-            onClick={() => togglePanel("mcp")}
+            onClick={() => openPanel("mcp")}
             type="button"
           >
             <PlugZap size={15} aria-hidden="true" />
@@ -681,7 +683,7 @@ async function handleGenerateReport() {
           </button>
           <button
             className={activePanel === "plan" ? "nav-item active" : "nav-item"}
-            onClick={() => togglePanel("plan")}
+            onClick={() => openPanel("plan")}
             type="button"
           >
             <Activity size={15} aria-hidden="true" />
@@ -690,7 +692,7 @@ async function handleGenerateReport() {
           </button>
           <button
             className={activePanel === "audit" ? "nav-item active" : "nav-item"}
-            onClick={() => togglePanel("audit")}
+            onClick={() => openPanel("audit")}
             type="button"
           >
             <ShieldCheck size={15} aria-hidden="true" />
@@ -699,7 +701,7 @@ async function handleGenerateReport() {
           </button>
           <button
             className={activePanel === "artifacts" ? "nav-item active" : "nav-item"}
-            onClick={() => togglePanel("artifacts")}
+            onClick={() => openPanel("artifacts")}
             type="button"
           >
             <DatabaseZap size={15} aria-hidden="true" />
