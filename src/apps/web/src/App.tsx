@@ -757,7 +757,6 @@ async function handleGenerateReport() {
 {activePanel === "dashboard" ? (
               <div className="config-inspector">
                 <DashboardView
-                  artifacts={activeArtifacts}
                   generatedReport={generatedReport}
                   isGeneratingReport={isGeneratingReport}
                   messages={messages}
@@ -767,8 +766,8 @@ async function handleGenerateReport() {
                     setReportSeverity("medium");
                     setReportDialogOpen(true);
                   }}
-                  pendingApprovals={pendingApprovals}
                   sessions={sessions}
+                  skillPacks={skillPacks}
                   toolInvocations={activeToolInvocations}
                   tools={tools}
                 />
@@ -1223,7 +1222,7 @@ function panelSubtitle(
   }
 ): string {
   if (panel === "dashboard") {
-    return `概览 · ${context.activeToolInvocations.length} 次工具调用 · ${context.activeArtifacts.length} 个证据`;
+    return "概览";
   }
   if (panel === "knowledge-graph") {
     return "自建安全知识图谱 · 3.7万节点 · 6.6万条关系 · MITRE ATT&CK / EDB / NVD";
@@ -1869,25 +1868,23 @@ function MitreMatrix({
 }
 
 function DashboardView({
-  artifacts,
   generatedReport,
   isGeneratingReport,
   messages,
   onExportReport,
   onOpenReportDialog,
-  pendingApprovals,
   sessions,
+  skillPacks,
   toolInvocations,
   tools
 }: {
-  artifacts: EvidenceArtifact[];
   generatedReport: unknown;
   isGeneratingReport: boolean;
   messages: ChatMessage[];
   onExportReport: (fmt: "markdown" | "json") => void;
   onOpenReportDialog: () => void;
-  pendingApprovals: PendingApproval[];
   sessions: AgentSessionSummary[];
+  skillPacks: SkillPackManifest[];
   toolInvocations: ToolInvocation[];
   tools: SkillManifest[];
 }) {
@@ -1925,28 +1922,21 @@ function DashboardView({
             <MessageSquare size={18} aria-hidden="true" />
             <span className="stat-value">{sessions.length}</span>
           </div>
-          <span className="stat-label">总会话</span>
+          <span className="stat-label">对话窗口</span>
         </div>
         <div className="dashboard-card">
           <div className="dashboard-stat">
-            <Activity size={18} aria-hidden="true" />
-            <span className="stat-value">{totalToolCalls}</span>
+            <Wrench size={18} aria-hidden="true" />
+            <span className="stat-value">{tools.length}</span>
           </div>
-          <span className="stat-label">工具调用</span>
-        </div>
-        <div className="dashboard-card warn">
-          <div className="dashboard-stat">
-            <AlertTriangle size={18} aria-hidden="true" />
-            <span className="stat-value">{pendingApprovals.length}</span>
-          </div>
-          <span className="stat-label">待审批</span>
+          <span className="stat-label">工具</span>
         </div>
         <div className="dashboard-card">
           <div className="dashboard-stat">
-            <DatabaseZap size={18} aria-hidden="true" />
-            <span className="stat-value">{artifacts.length}</span>
+            <Sparkles size={18} aria-hidden="true" />
+            <span className="stat-value">{skillPacks.length}</span>
           </div>
-          <span className="stat-label">工件</span>
+          <span className="stat-label">技能</span>
         </div>
       </div>
 
