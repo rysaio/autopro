@@ -74,46 +74,7 @@ cd src
 npm ci
 ```
 
-Node.js 建议使用 24 LTS。首次运行前，将 `.env.example` 复制为 `.env` 或 `.env.local`（服务、安全、持久化等配置）。模型配置不再走 env 或配置文件——它收敛为单一明文文件 `runtime/config/model.json`（唯一事实来源，启动前后入口一致）：
-
-- **默认模板**：发布包（runnable）预置 `runtime/config/model.json`，默认配置为
-  `provider=deepseek` / `model=deepseek-v4-flash` / `baseUrl=https://api.deepseek.com`，
-  `apiKey` 为空——填入你的 key 即可使用
-- **先配置再启动**：直接编辑 `runtime/config/model.json`（结构见下方示例），启动时读取
-- **启动后配置**（两种方式，均无需重启）：
-  - 直接编辑 `runtime/config/model.json` → 调用 `POST /api/model-config/reload` 从文件重新加载
-  - 通过 API 增删改/切换（写文件并即时生效）：
-
-```bash
-# 查看连接
-curl http://127.0.0.1:4317/api/model-config
-# 新建连接（首个连接自动设为活动）
-curl -X POST http://127.0.0.1:4317/api/model-config \
-  -H "Content-Type: application/json" \
-  -d '{"name":"qwen","provider":"qwen","model":"qwen3.6-max-preview","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"your-key"}'
-# 切换活动连接
-curl -X POST http://127.0.0.1:4317/api/model-config/<id>/activate
-# 从文件重新加载（直接编辑 model.json 后调用）
-curl -X POST http://127.0.0.1:4317/api/model-config/reload
-```
-
-`runtime/config/model.json` 示例：
-
-```json
-{
-  "connections": [
-    {
-      "id": "conn-1",
-      "name": "qwen",
-      "provider": "qwen",
-      "model": "qwen3.6-max-preview",
-      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "apiKey": "your-key"
-    }
-  ],
-  "activeConnectionId": "conn-1"
-}
-```
+Node.js 建议使用 24 LTS。首次运行前，将 `.env.example` 复制为 `.env` 或 `.env.local`（环境变量配置，见下方「配置」章节）。模型、插件等运行时配置的完整用法见「配置」章节。
 
 ### 2. 启动源码服务
 
@@ -163,6 +124,85 @@ npm test
 ### 4. 停止源码服务
 
 在运行 `npm run dev` 的终端按 `Ctrl+C`。如果使用了独立后端端口，也只需停止对应的开发进程。
+
+## 配置
+
+### 模型配置（唯一事实来源：`runtime/config/model.json`）
+
+模型配置不依赖环境变量——唯一事实来源是明文文件 `runtime/config/model.json`，**启动前后入口一致**（改动同一个文件，启动时读取 / 启动后 reload 生效）：
+
+- **默认模板**：发布包预置 `runtime/config/model.json`，默认 `provider=deepseek` / `model=deepseek-v4-flash` / `baseUrl=https://api.deepseek.com`，`apiKey` 为空——填入 key 即可使用。源码开发首次运行无此文件，按下方示例创建即可
+- **先配置再启动**：直接编辑该文件，启动时读取
+- **启动后配置**（均无需重启）：
+  - 直接编辑该文件 → 调用 `POST /api/model-config/reload` 从文件重新加载
+  - 通过 API 增删改/切换（写文件并即时生效）
+
+`runtime/config/model.json` 结构（多连接注册表 + 活动连接）：
+
+```json
+{
+  "connections": [
+    {
+      "id": "conn-1",
+      "name": "qwen",
+      "provider": "qwen",
+      "model": "qwen3.6-max-preview",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiKey": "your-key"
+    }
+  ],
+  "activeConnectionId": "conn-1"
+}
+```
+
+模型配置 API：
+
+```bash
+GET    /api/model-config                        # 查看连接列表（apiKey 永不回传，仅 apiKeySet）
+POST   /api/model-config                        # 新建连接（首个自动设为活动）
+PUT    /api/model-config/:id                    # 更新连接（省略字段保留旧值；apiKey 空串=清除）
+DELETE /api/model-config/:id                    # 删除连接（删除活动连接自动转移）
+POST   /api/model-config/:id/activate           # 切换活动连接
+POST   /api/model-config/reload                 # 从文件重新加载（编辑 model.json 后调用）
+```
+
+```bash
+curl -X POST http://127.0.0.1:4317/api/model-config \
+  -H "Content-Type: application/json" \
+  -d '{"name":"qwen","provider":"qwen","model":"qwen3.6-max-preview","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"your-key"}'
+```
+
+### 插件配置（`runtime/plugins/`）
+
+wazuh / shuffle 等工具以 Codex 插件形态提供（`runtime/plugins/<name>/`，含 `.codex-plugin/plugin.json` 与 `.mcp.json`）：
+
+- 发布包预置 `wazuh-secops`、`shuffle-secops` 两个插件；**安装新插件** = 把插件目录复制到 `runtime/plugins/`
+- 服务启动时自动扫描加载；运行中安装后调用 `POST /api/plugins/reload` 即可生效（无需重启）
+- `GET /api/plugins` 查看插件加载状态与工具数
+- 插件动作工具的审批/审计由主服务统一把关
+
+### 运行时设置
+
+- `GET /api/settings` 查看当前设置
+- `POST /api/settings/action-level` 切换自动化级别（`observe` 只读 / `sandbox` 沙箱 / `full-access` 全权），持久化到 `runtime/config/settings.json`
+
+### 环境变量参考（`.env`）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `SECOPS_MODEL_CONFIG_PATH` | `runtime/config/model.json` | 模型配置文件路径 |
+| `SECOPS_PLUGINS_DIR` | `runtime/plugins` | 插件目录 |
+| `SECOPS_ACTION_LEVEL` | `sandbox` | 默认自动化级别（observe/sandbox/full-access） |
+| `SECOPS_RUNTIME_CONFIG_PATH` | `runtime/config/settings.json` | 运行时设置文件 |
+| `SECOPS_SANDBOX_ROOT` | `runtime/sandbox` | 沙箱目录 |
+| `SECOPS_AUDIT_LOG_PATH` | `runtime/audit/events.jsonl` | 审计日志 |
+| `SECOPS_APPROVAL_STORE_PATH` | `runtime/approvals/pending.json` | 审批存储 |
+| `SECOPS_DATA_DIR` / `SECOPS_DURABLE_SESSIONS` | `runtime/pgdata` / `on` | 会话持久化（`memory://` 内存 / `off` 禁用） |
+| `SECOPS_ALLOWED_HOSTS` / `SECOPS_ALLOWED_ORIGINS` | localhost,127.0.0.1,::1 / http://localhost:5317,… | Host/Origin 访问控制 |
+| `SECOPS_API_TOKEN` | 空 | API Bearer 令牌（设置后所有 API 需携带） |
+| `PORT` / `SECOPS_BIND_HOST` | `4317` / `127.0.0.1` | 后端监听地址 |
+| `SECOPS_DEMO_MODE` | `true` | Wazuh/Shuffle 使用 mock 数据（无真实端点也可运行） |
+| `WAZUH_*` / `SHUFFLE_*` | — | 插件端点与凭据配置（`SECOPS_DEMO_MODE=true` 时可省略） |
 
 ## 构建可运行包
 
