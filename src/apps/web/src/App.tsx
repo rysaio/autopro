@@ -20,6 +20,7 @@ import {
   PlugZap,
   Search,
   Send,
+  Server,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -70,6 +71,7 @@ import {
   type McpToolSummary
 } from "./api.js";
 import { KnowledgeGraphView } from "./KnowledgeGraphView.js";
+import { ModelConfigView } from "./ModelConfigView.js";
 
 const seedMessages: ChatMessage[] = [
   {
@@ -81,7 +83,7 @@ const seedMessages: ChatMessage[] = [
 ];
 
 type InspectorTab = "plan" | "audit" | "artifacts" | "mcp";
-type WorkbenchPanel = "skills" | "dashboard" | "knowledge-graph" | InspectorTab;
+type WorkbenchPanel = "skills" | "dashboard" | "knowledge-graph" | "model-config" | InspectorTab;
 type ToolClassFilter = ToolClass | "all";
 
 const capabilityFilters: Array<{ id: ToolClassFilter; label: string }> = [
@@ -531,8 +533,16 @@ async function handleGenerateReport() {
 
   function togglePanel(panel: WorkbenchPanel) {
     setActivePanel((current) => current === panel ? null : panel);
-    if (panel !== "skills" && panel !== "dashboard" && panel !== "knowledge-graph") {
+    if (panel !== "skills" && panel !== "dashboard" && panel !== "knowledge-graph" && panel !== "model-config") {
       setTab(panel);
+    }
+  }
+
+  async function refreshHealth() {
+    try {
+      setHealth(await fetchHealth());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
 
@@ -594,6 +604,15 @@ async function handleGenerateReport() {
             <LayoutDashboard size={15} aria-hidden="true" />
             <span>仪表盘</span>
             <strong>{sessions.length}</strong>
+          </button>
+          <button
+            className={activePanel === "model-config" ? "nav-item active" : "nav-item"}
+            onClick={() => togglePanel("model-config")}
+            type="button"
+          >
+            <Server size={15} aria-hidden="true" />
+            <span>模型配置</span>
+            <strong>{health?.configured ? "已配置" : "未配置"}</strong>
           </button>
           <button
             className={activePanel === "knowledge-graph" ? "nav-item active" : "nav-item"}
@@ -725,6 +744,8 @@ async function handleGenerateReport() {
                 streamToolInvocations={streamToolInvocations}
                 health={health}
               />
+            ) : activePanel === "model-config" ? (
+              <ModelConfigView onConfigChanged={refreshHealth} />
             ) : activePanel === "skills" ? (
             
               <div className="config-grid skills-config">
@@ -1130,6 +1151,9 @@ function panelTitle(panel: WorkbenchPanel): string {
   if (panel === "knowledge-graph") {
     return "知识图谱";
   }
+  if (panel === "model-config") {
+    return "模型配置";
+  }
   if (panel === "skills") {
     return "技能";
   }
@@ -1163,6 +1187,9 @@ function panelSubtitle(
   }
   if (panel === "knowledge-graph") {
     return "自建安全知识图谱 · 3.7万节点 · 6.6万条关系 · MITRE ATT&CK / EDB / NVD";
+  }
+  if (panel === "model-config") {
+    return "启动前编辑 runtime/config/model.json 读取 · 启动后界面 CRUD 或从文件重载，均无需重启";
   }
   if (panel === "skills") {
     return `${context.enabledSkillCount}/${context.tools.length} 已启用 · ${context.enabledMcpCount} 个 MCP 兼容`;

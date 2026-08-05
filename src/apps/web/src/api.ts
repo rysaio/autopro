@@ -7,6 +7,7 @@ import type {
   AgentSessionSummary,
   AutomationLevel,
   EvidenceArtifact,
+  ModelConfigState,
   PendingApproval,
   PermissionMode,
   ProviderStatus,
@@ -43,6 +44,18 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
       ...authHeaders()
     },
     body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${path} failed with ${response.status}: ${text}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function deleteJson<T>(path: string): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "DELETE",
+    headers: authHeaders()
   });
   if (!response.ok) {
     const text = await response.text();
@@ -153,6 +166,40 @@ export interface McpCallResult {
 export async function fetchMcpTools(): Promise<McpToolSummary[]> {
   const result = await getJson<{ tools: McpToolSummary[] }>("/api/mcp/tools");
   return result.tools;
+}
+// ── 模型配置（启动前：编辑 runtime/config/model.json 后启动；启动后：界面 CRUD / 显式重载）──
+
+export interface ModelConnectionInput {
+  name: string;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  apiKey?: string;
+}
+
+export function fetchModelConfig(): Promise<ModelConfigState> {
+  return getJson<ModelConfigState>("/api/model-config");
+}
+
+export function addModelConnection(input: ModelConnectionInput): Promise<ModelConfigState> {
+  return postJson<ModelConfigState>("/api/model-config", input);
+}
+
+export function updateModelConnection(id: string, input: Partial<ModelConnectionInput>): Promise<ModelConfigState> {
+  return postJson<ModelConfigState>(`/api/model-config/${encodeURIComponent(id)}`, input);
+}
+
+export function removeModelConnection(id: string): Promise<ModelConfigState> {
+  return deleteJson<ModelConfigState>(`/api/model-config/${encodeURIComponent(id)}`);
+}
+
+export function activateModelConnection(id: string): Promise<ModelConfigState> {
+  return postJson<ModelConfigState>(`/api/model-config/${encodeURIComponent(id)}/activate`, {});
+}
+
+/** 从磁盘重新加载 model.json（启动后直接编辑文件时的显式重载入口）。 */
+export function reloadModelConfig(): Promise<ModelConfigState> {
+  return postJson<ModelConfigState>("/api/model-config/reload", {});
 }
 
 export function callMcpTool(
