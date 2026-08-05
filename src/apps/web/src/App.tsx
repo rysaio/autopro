@@ -107,7 +107,7 @@ export function App() {
   const [tools, setTools] = useState<SkillManifest[]>([]);
   const [mcpTools, setMcpTools] = useState<McpToolSummary[]>([]);
   const [enabledTools, setEnabledTools] = useState<Set<string>>(new Set());
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(seedMessages);
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => crypto.randomUUID());
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [activeSession, setActiveSession] = useState<AgentSessionDetail | null>(null);
@@ -178,6 +178,8 @@ export function App() {
     };
   }, []);
 
+  // 当前会话（未保存）在真实对话发生（至少一条用户消息）后，左侧才显示标题
+  const liveConversationActive = !sessions.some((session) => session.id === currentSessionId) && messages.length > 1;
   const fullAccessActive = health?.actionLevel === "full-access";
   const enabledToolList = useMemo(
     () => fullAccessActive ? tools.map((tool) => tool.id) : [...enabledTools],
@@ -583,6 +585,17 @@ async function handleGenerateReport() {
             <Plus size={15} aria-hidden="true" />
             <span>新建对话</span>
           </button>
+          {liveConversationActive ? (
+            <button
+              className="session-row active"
+              onClick={() => undefined}
+              title="当前对话（未保存，发生对话后显示）"
+              type="button"
+            >
+              <strong>{liveSessionTitle(messages)}</strong>
+              <small>{messages.length} 条消息 · {activeToolInvocations.length} 次工具调用</small>
+            </button>
+          ) : null}
           {sessions.length ? sessions.map((session) => (
             <button
               className={currentSessionId === session.id && activeSession ? "session-row active" : "session-row"}
@@ -1037,7 +1050,7 @@ async function handleGenerateReport() {
             <StatusPill health={health} />
             <button
               className="icon-button"
-              disabled={isRunning || !prompt.trim() || messages.length === 0}
+              disabled={isRunning || !prompt.trim()}
               form="agent-composer"
               title="运行当前提示"
               type="submit"
@@ -1055,18 +1068,7 @@ async function handleGenerateReport() {
         ) : null}
 
         <section className="chat-stage" aria-label="智能体对话">
-          {messages.length === 0 ? (
-            <div className="chat-welcome">
-              <Bot size={42} aria-hidden="true" />
-              <h3>开始新的安全调查</h3>
-              <p>点击左侧「新建对话」创建新的调查会话，或从会话列表选择已保存的对话继续。</p>
-              <button className="chat-welcome-btn" onClick={startNewSession} type="button">
-                <Plus size={15} aria-hidden="true" />
-                <span>新建对话</span>
-              </button>
-            </div>
-          ) : (
-            <div className="transcript" aria-label="对话记录" ref={transcriptRef}>
+          <div className="transcript" aria-label="对话记录" ref={transcriptRef}>
               {messages.filter((message) => message.role !== "tool").map((message) => (
                 <TranscriptMessage key={message.id} message={message} />
               ))}
@@ -1080,10 +1082,8 @@ async function handleGenerateReport() {
                 />
               ))}
             </div>
-          )}
         </section>
 
-        {messages.length > 0 ? (
         <form className="composer" id="agent-composer" onSubmit={submit}>
           <div className="composer-meta">
             <Sparkles size={16} aria-hidden="true" />
@@ -1103,7 +1103,6 @@ async function handleGenerateReport() {
             <span>运行</span>
           </button>
         </form>
-        ) : null}
           </>
         )}
       </main>
@@ -1429,6 +1428,15 @@ function mergeMessages(current: ChatMessage[], nextMessages: ChatMessage[]): Cha
     ...current,
     ...nextMessages.filter((message) => !seen.has(message.id))
   ];
+}
+
+function liveSessionTitle(messages: ChatMessage[]): string {
+  const firstUser = messages.find((message) => message.role === "user");
+  if (firstUser && typeof firstUser.content === "string" && firstUser.content.trim()) {
+    const text = firstUser.content.trim();
+    return text.length > 24 ? `${text.slice(0, 24)}…` : text;
+  }
+  return "新对话";
 }
 
 function sessionTitle(session: AgentSessionSummary): string {
