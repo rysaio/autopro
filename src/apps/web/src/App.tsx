@@ -736,7 +736,7 @@ async function handleGenerateReport() {
               </button>
               <div>
                 <h2>{panelTitle(activePanel)}</h2>
-                <p>{panelSubtitle(activePanel, {
+                {panelSubtitle(activePanel, {
                   activeArtifacts,
                   activeToolInvocations,
                   enabledMcpCount,
@@ -745,7 +745,18 @@ async function handleGenerateReport() {
                   pendingApprovals,
                   tools,
                   visibleAudit
-                })}</p>
+                }) ? (
+                  <p>{panelSubtitle(activePanel, {
+                    activeArtifacts,
+                    activeToolInvocations,
+                    enabledMcpCount,
+                    enabledSkillCount,
+                    mcpTools,
+                    pendingApprovals,
+                    tools,
+                    visibleAudit
+                  })}</p>
+                ) : null}
               </div>
               {activePanel !== "skills" ? (
                 <div className={`approval-dot ${pendingApprovals.length ? "active" : ""}`} title="待审批">
@@ -1225,7 +1236,7 @@ function panelSubtitle(
     return "概览";
   }
   if (panel === "knowledge-graph") {
-    return "自建安全知识图谱 · 3.7万节点 · 6.6万条关系 · MITRE ATT&CK / EDB / NVD";
+    return "";
   }
   if (panel === "model-config") {
     return "启动前编辑 runtime/config/model.json 读取 · 启动后界面 CRUD 或从文件重载，均无需重启";
