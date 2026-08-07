@@ -1,7 +1,7 @@
 # 工具权限模型修正：移除工具自声明权限，放行由全局权限模式决定 — 实施计划
 
 日期：2026-08-05
-状态：待执行（供执行窗口 AI 直接照做，无需本会话上下文）
+状态：✅ 已完成（2026-08-07 执行完毕，实现 + review 修正 + 全量验证）
 
 ## 1. 背景与问题
 
@@ -249,3 +249,12 @@ npm run build:runnable
 - `PermissionMode` 类型保留（permissionMode 请求级三态仍需）
 - `ToolContext.permissionMode` 语义不变；`full-access` 部署级仍无视请求级模式
 - MCP 2026 规范视角：`_meta` 不可信——本计划正是消除对 `_meta.permission` 的信任
+
+## 10. 执行记录（2026-08-07）
+
+- **实现提交**：`f565eae` feat: 工具权限模型修正（移除 defaultPermission，全局三态放行 + autoApproveHighRisk 开关）——26 文件 +308/−49
+- **review 修正**：`46fcae3` fix: deny 只读模式下连已审批重放也拒绝（review should-fix + 回归测试）
+- **验证结果**：`npm run typecheck` 全绿；server 85 / wazuh-secops 19 / shuffle-secops 17 / web 测试全绿；`npm run build:runnable` 成功；`defaultPermission` 代码库零残留
+- **附加保守硬化**（security review 建议）：插件 `_meta.risk` 缺失时默认 `high`（原 medium）；`runtimeSettings.load` 仅接受字面布尔否则回退 `true`
+- **并行开发说明**：前端模型配置改动经 `feature/frontend-model-config` fast-forward 合并进 main（`12cc5ab`），与实现提交同线共存、无冲突
+- **遗留**（按 §8 明确不做）：per-tool 权限配置、前端 UI、`actionLevel` 语义变更；deferLoading 计划（`2026-08-05-tool-exposure-routing.md`）独立执行
