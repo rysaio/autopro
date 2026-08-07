@@ -278,13 +278,13 @@ function decidePolicy(
   if (tool.manifest.id === "full_access.exec") {
     return { status: "denied", reason: "Full access exec requires SECOPS_ACTION_LEVEL=full-access" };
   }
+  // 全局权限模式（请求级 permissionMode）：deny 为只读，连已批准的重放也拒绝
+  if (context.permissionMode === "deny") {
+    return { status: "denied", reason: "Action tool execution denied by permission policy" };
+  }
   // 审批通过后的重放
   if (context.approvedToolCallIds?.includes(callId) ?? false) {
     return { status: "executed" };
-  }
-  // 全局权限模式（请求级 permissionMode）
-  if (context.permissionMode === "deny") {
-    return { status: "denied", reason: "Action tool execution denied by permission policy" };
   }
   if (context.permissionMode === "ask") {
     // ask：所有 action 工具均需审批（不再区分工具声明）

@@ -192,7 +192,7 @@ wazuh / shuffle 等工具以 Codex 插件形态提供（`runtime/plugins/<name>/
 | `deny` | 只读：仅非 action 可调用，action 一律拒绝 |
 
 - 请求级 `permissionMode`（agent run / MCP 调用端点传入，三态）决定当次放行；部署级 `actionLevel`（observe/sandbox/full-access）是闸门——`full-access` 无视请求级模式直接放行 action，`observe` 下所有 action 拒绝
-- 审批通过的 action 以重放方式执行（不二次审批）；非 action 在任何模式下均可自由调用
+- 审批通过的 action 以重放方式执行（不二次审批；`deny` 只读模式下重放也拒绝）；非 action 在任何模式下均可自由调用
 - 插件 `_meta` 不再传递/信任 `permission`；`/api/mcp/tools/:name/call` 客户端自报 `permissionMode` 的滥用面收窄
 
 ### 运行时设置

@@ -327,6 +327,27 @@ describe("ToolRegistry", () => {
     expect(action.invocation.error).toContain("Action tool execution denied by permission policy");
     expect(read.invocation.status).toBe("executed");
   });
+
+  it("deny mode rejects even previously approved action replays (read-only contract)", async () => {
+    const registry = new ToolRegistry();
+    registry.registerTools([
+      new TestTool(
+        "test_action_tool",
+        { ...testManifest("test.action.tool", "Action Tool"), toolClass: "action", risk: "medium" },
+        async () => ({ output: { ok: true } })
+      )
+    ]);
+    const denyReplayContext = {
+      ...context,
+      permissionMode: "deny" as const,
+      approvedToolCallIds: ["deny-replay"]
+    };
+
+    const action = await registry.executeApiTool("test_action_tool", "deny-replay", {}, denyReplayContext);
+
+    expect(action.invocation.status).toBe("denied");
+    expect(action.invocation.error).toContain("Action tool execution denied by permission policy");
+  });
 });
 
 class TestTool implements SecOpsTool {
