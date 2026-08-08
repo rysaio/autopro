@@ -37,6 +37,7 @@ describe("runtime audit log", () => {
     expect(events.map((event: { type: string }) => event.type)).toContain("run_started");
     expect(events.map((event: { type: string }) => event.type)).toContain("tool");
     expect(events.at(-1).type).toBe("run_completed");
+    expect(events.at(-1).run.metrics).toEqual(runResponse.json().metrics);
 
     await app.close();
     await rm(auditRoot, { recursive: true, force: true });

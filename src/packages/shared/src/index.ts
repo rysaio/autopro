@@ -130,6 +130,70 @@ export interface EvidenceArtifact {
   createdAt: string;
 }
 
+export interface AgentModelUsageMetrics {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+}
+
+export interface AgentModelRequestMetrics {
+  phase: "triage" | "deep" | "single";
+  durationMs: number;
+  exposedToolCount: number;
+  outcome: "completed" | "failed";
+  finishReason?: string;
+  usage: AgentModelUsageMetrics;
+}
+
+export type AgentTextMetrics =
+  | {
+      measurement: "provider-stream";
+      timeToFirstTextMs: number;
+    }
+  | {
+      measurement: "unavailable";
+    };
+
+export type AgentModelMetrics =
+  | {
+      measurement: "provider-attempts";
+      requestCount: number;
+      totalDurationMs: number;
+      retryCount: number;
+      requests: AgentModelRequestMetrics[];
+    }
+  | {
+      measurement: "unavailable";
+      requests: [];
+    };
+
+export interface AgentRunMetrics {
+  schemaVersion: 1;
+  mode: "layered" | "single";
+  totalDurationMs: number;
+  localRoutingDurationMs: number;
+  text: AgentTextMetrics;
+  model: AgentModelMetrics;
+  tools: {
+    callCount: number;
+    totalDurationMs: number;
+  };
+  cache: {
+    hits: number;
+    misses: number;
+    bypasses: number;
+    size: number;
+  };
+  persistence: {
+    operationCount: number;
+    totalDurationMs: number;
+    failureCount: number;
+  };
+}
+
 export interface AgentRun {
   id: string;
   sessionId?: string;
@@ -142,6 +206,7 @@ export interface AgentRun {
   toolInvocations: ToolInvocation[];
   audit: AuditEvent[];
   artifacts: EvidenceArtifact[];
+  metrics: AgentRunMetrics;
 }
 
 export interface AgentSessionSummary {

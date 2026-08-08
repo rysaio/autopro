@@ -5,6 +5,7 @@ import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "../src/app.js";
 import type { McpClientHandle, ResolvedMcpServer } from "../src/plugins/pluginManager.js";
 import { testConfig, scriptedModelForRequest } from "./fixtures/testConfig.js";
+import { streamResultFromGenerateResult } from "./fixtures/scriptedModel.js";
 
 /** 在测试 pluginsDir 下创建假插件目录（manifest + .mcp.json，client 由注入提供）。 */
 async function installFakePlugin(pluginsDir: string, id: string, name: string): Promise<void> {
@@ -108,8 +109,8 @@ function createSequencedModel(actions: Array<{ tool: string; input?: Record<stri
         warnings: []
       };
     },
-    async doStream(): Promise<import("@ai-sdk/provider").LanguageModelV3StreamResult> {
-      throw new Error("Streaming is not implemented for the sequenced test model.");
+    async doStream(options: import("@ai-sdk/provider").LanguageModelV3CallOptions): Promise<import("@ai-sdk/provider").LanguageModelV3StreamResult> {
+      return streamResultFromGenerateResult(await this.doGenerate(options));
     }
   } as unknown as import("ai").LanguageModel;
 }

@@ -37,6 +37,7 @@ export interface SessionStateStore {
   ): Promise<void>;
   listStateMarkers(sessionId: string): Promise<StateMarker[]>;
   completeRun(sessionId: string, run: AgentRun): Promise<void>;
+  finalizeRunSnapshot(sessionId: string, run: AgentRun, completionEvent: AgentRunEvent): Promise<void>;
 }
 
 export class NoopSessionStateStore implements SessionStateStore {
@@ -51,6 +52,7 @@ export class NoopSessionStateStore implements SessionStateStore {
     return [];
   }
   async completeRun(): Promise<void> {}
+  async finalizeRunSnapshot(): Promise<void> {}
 }
 
 export class MemorySessionStateStore implements SessionStateStore {
@@ -117,6 +119,17 @@ export class MemorySessionStateStore implements SessionStateStore {
     const started = this.runs.find((candidate) => candidate.sessionId === sessionId && candidate.runId === run.id);
     if (started) {
       started.completed = run;
+    }
+  }
+
+  async finalizeRunSnapshot(sessionId: string, run: AgentRun, completionEvent: AgentRunEvent): Promise<void> {
+    const started = this.runs.find((candidate) => candidate.sessionId === sessionId && candidate.runId === run.id);
+    if (started) {
+      started.completed = run;
+    }
+    const eventIndex = this.events.findIndex((event) => event.id === completionEvent.id);
+    if (eventIndex >= 0) {
+      this.events[eventIndex] = completionEvent;
     }
   }
 }

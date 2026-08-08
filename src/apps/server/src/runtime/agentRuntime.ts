@@ -7,9 +7,10 @@ import type {
   EvidenceArtifact,
   ToolInvocation
 } from "@secops-agent/shared";
-import { generateText, stepCountIs, type LanguageModel } from "ai";
+import { stepCountIs, streamText, type LanguageModel } from "ai";
 import { ToolRegistry } from "../tools/registry.js";
 import type { ToolExecutionRecord } from "../tools/types.js";
+import { ModelMetricsRecorder } from "./modelMetrics.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
 import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP } from "./systemPrompt.js";
 import { ToolCache, type ToolCacheCategory } from "./toolCache.js";
@@ -53,13 +54,29 @@ export class AgentRuntime {
   constructor(private readonly options: AgentRuntimeOptions) {}
 
   async run(request: AgentRunRequest, onEvent?: AgentRunEventSink): Promise<AgentRun> {
+    const runStartedAt = performance.now();
     const runId = crypto.randomUUID();
     const sessionId = request.sessionId ?? crypto.randomUUID();
     const startedAt = new Date().toISOString();
     const stateStore = this.options.sessionStateStore ?? new NoopSessionStateStore();
     let persistence = Promise.resolve();
+    let persistenceOperationCount = 0;
+    let persistenceDurationMs = 0;
+    let persistenceFailureCount = 0;
+    const measurePersistence = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
+      persistenceOperationCount += 1;
+      const operationStartedAt = performance.now();
+      try {
+        return await operation();
+      } catch (error) {
+        persistenceFailureCount += 1;
+        throw error;
+      } finally {
+        persistenceDurationMs += performance.now() - operationStartedAt;
+      }
+    };
     const persist = (operation: () => Promise<void>) => {
-      persistence = persistence.then(operation);
+      persistence = persistence.then(() => measurePersistence(operation));
     };
     const audit: AuditEvent[] = [];
     const toolInvocations: ToolInvocation[] = [];
@@ -68,6 +85,10 @@ export class AgentRuntime {
     const maxTriageRounds = this.options.maxTriageRounds ?? 3;
     const maxDeepRounds = this.options.maxDeepRounds ?? 8;
     const useLayeredRouting = this.options.enableLayeredRouting !== false;
+    const modelMetrics = new ModelMetricsRecorder();
+    const cacheStatsAtStart = this.toolCache.stats();
+    let localRoutingDurationMs = 0;
+    let timeToFirstTextMs: number | undefined;
     let status: AgentRun["status"] = "completed";
     const toolRecords: ToolExecutionRecord[] = [];
     const effectivePermissionMode = this.options.actionLevel === "full-access"
@@ -76,11 +97,11 @@ export class AgentRuntime {
     const effectiveEnabledTools = this.options.actionLevel === "full-access"
       ? undefined
       : request.enabledTools;
-    await stateStore.startRun({ sessionId, runId, startedAt });
+    await measurePersistence(() => stateStore.startRun({ sessionId, runId, startedAt }));
     for (const message of messages) {
       persist(() => stateStore.appendMessage(sessionId, runId, message));
     }
-    const storedMarkers = await stateStore.listStateMarkers(sessionId);
+    const storedMarkers = await measurePersistence(() => stateStore.listStateMarkers(sessionId));
     const context = toolContext({
       runId,
       permissionMode: effectivePermissionMode,
@@ -90,15 +111,18 @@ export class AgentRuntime {
       sessionId,
       stateMarkers: storedMarkers.map((marker) => marker.key)
     });
-    const emit = (payload: Omit<AgentRunEvent, "id" | "runId" | "createdAt">) => {
-      const event = {
+    const createRunEvent = (payload: Omit<AgentRunEvent, "id" | "runId" | "createdAt">): AgentRunEvent => {
+      return {
         id: crypto.randomUUID(),
         runId,
         createdAt: new Date().toISOString(),
         ...payload
-      };
-      onEvent?.(event);
-      persist(() => stateStore.recordRunEvent(event));
+      } as AgentRunEvent;
+    };
+    const emit = (payload: Omit<AgentRunEvent, "id" | "runId" | "createdAt">) => {
+      const runEvent = createRunEvent(payload);
+      onEvent?.(runEvent);
+      persist(() => stateStore.recordRunEvent(runEvent));
     };
     emit({ type: "run_started" });
 
@@ -174,7 +198,9 @@ export class AgentRuntime {
 
     try {
       // ── 初始化工具路由器 ──
+      const routeStartedAt = performance.now();
       toolRouter.build(this.options.registry);
+      localRoutingDurationMs += performance.now() - routeStartedAt;
 
       let finalText = "";
       let totalSteps = 0;
@@ -197,8 +223,8 @@ export class AgentRuntime {
         // 使用 registry 直接生成 triage 工具集，带上 onRecord 以追踪结果
         const triageOnRecord = createOnRecord();
         const triageToolIds = toolRouter.getTriageToolIds();
-        const triageResult = await generateText({
-          model: this.options.model,
+        const triageGeneration = streamText({
+          model: modelMetrics.wrap(this.options.model, "triage", triageToolIds.length),
           system: SYSTEM_PROMPT_TRIAGE,
           messages: request.messages
             .filter((message) => message.role === "user" || message.role === "assistant")
@@ -210,6 +236,7 @@ export class AgentRuntime {
           stopWhen: stepCountIs(maxTriageRounds),
           temperature: 0.2
         });
+        const triageResult = await consumeTextGeneration(triageGeneration);
 
         totalSteps += triageResult.steps.length;
         totalToolResults += triageResult.steps.reduce((c, s) => c + s.toolResults.length, 0);
@@ -225,7 +252,9 @@ export class AgentRuntime {
           .filter((m) => m.role === "user")
           .map((m) => m.content)
           .join(" ");
+        const inferenceStartedAt = performance.now();
         const inferredCategories = toolRouter.inferCategories(triageToolCalls, userMessage);
+        localRoutingDurationMs += performance.now() - inferenceStartedAt;
         const savedTokens = toolRouter.estimateTokenSavings(inferredCategories);
 
         const routeAudit = event(
@@ -250,19 +279,21 @@ export class AgentRuntime {
         // 使用 Phase 1 的完整消息历史作为 Phase 2 的输入
         const phase1Messages = triageResult.response.messages;
 
-        const deepResult = await generateText({
-          model: this.options.model,
+        const deepGeneration = streamText({
+          model: modelMetrics.wrap(this.options.model, "deep", deepToolIds.length),
           system: SYSTEM_PROMPT_DEEP,
           messages: phase1Messages,
           tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord),
           stopWhen: stepCountIs(maxDeepRounds),
           temperature: 0.2
         });
+        const deepResult = await consumeTextGeneration(deepGeneration, () => {
+          timeToFirstTextMs ??= elapsedMs(runStartedAt);
+        });
 
         totalSteps += deepResult.steps.length;
         totalToolResults += deepResult.steps.reduce((c, s) => c + s.toolResults.length, 0);
         finalText = deepResult.text || deepResult.steps.findLast((s) => s.text)?.text || '';
-
         const deepFinish = deepResult.finishReason === 'tool-calls'
           ? ' [Agent stopped at max tool rounds - increase maxDeepRounds]'
           : '';
@@ -297,8 +328,17 @@ export class AgentRuntime {
         persist(() => stateStore.recordAuditEvent(sessionId, runId, requestAudit));
         emit({ type: "audit", audit: requestAudit });
 
-        const result = await generateText({
-          model: this.options.model,
+        const singleTools = this.options.registry.aiSdkTools(
+          context,
+          effectiveEnabledTools,
+          createOnRecord()
+        );
+        const generation = streamText({
+          model: modelMetrics.wrap(
+            this.options.model,
+            "single",
+            Object.keys(singleTools).length
+          ),
           system: SYSTEM_PROMPT_DEEP,
           messages: request.messages
             .filter((message) => message.role === "user" || message.role === "assistant")
@@ -306,13 +346,12 @@ export class AgentRuntime {
               role: message.role === "assistant" ? "assistant" as const : "user" as const,
               content: message.content
             })),
-          tools: this.options.registry.aiSdkTools(
-            context,
-            effectiveEnabledTools,
-            createOnRecord()
-          ),
+          tools: singleTools,
           stopWhen: stepCountIs(this.options.maxToolRounds ?? 10),
           temperature: 0.2
+        });
+        const result = await consumeTextGeneration(generation, () => {
+          timeToFirstTextMs ??= elapsedMs(runStartedAt);
         });
 
         if (toolRecords.some((record) => record.invocation.status === "pending_approval")) {
@@ -346,13 +385,20 @@ export class AgentRuntime {
       emit({ type: "message", message: errorMessage });
     }
 
+    // Flush all queued state writes before taking the run-level snapshot.
+    await persistence;
+
     // ── 缓存统计 ──
     const cacheStats = this.toolCache.stats();
-    if (cacheStats.hits > 0) {
-      console.log(`[ToolCache] Run ${runId}: ${cacheStats.hits} hits, ${cacheStats.misses} misses, hit rate ${Math.round(this.toolCache.hitRate() * 100)}%, ~${cacheStats.savedTokensEstimate} tokens saved`);
+    const cacheHits = counterDelta(cacheStats.hits, cacheStatsAtStart.hits);
+    const cacheMisses = counterDelta(cacheStats.misses, cacheStatsAtStart.misses);
+    if (cacheHits > 0) {
+      const cacheLookups = cacheHits + cacheMisses;
+      const hitRate = cacheLookups === 0 ? 0 : cacheHits / cacheLookups;
+      console.log(`[ToolCache] Run ${runId}: ${cacheHits} hits, ${cacheMisses} misses, hit rate ${Math.round(hitRate * 100)}%, ~${counterDelta(cacheStats.savedTokensEstimate, cacheStatsAtStart.savedTokensEstimate)} tokens saved`);
     }
 
-    const run = {
+    const run: AgentRun = {
       id: runId,
       sessionId,
       status,
@@ -363,13 +409,88 @@ export class AgentRuntime {
       messages,
       toolInvocations,
       audit,
-      artifacts
+      artifacts,
+      metrics: {
+        schemaVersion: 1,
+        mode: useLayeredRouting ? "layered" : "single",
+        totalDurationMs: elapsedMs(runStartedAt),
+        localRoutingDurationMs: roundedMs(localRoutingDurationMs),
+        text: timeToFirstTextMs === undefined
+          ? { measurement: "unavailable" }
+          : { timeToFirstTextMs, measurement: "provider-stream" },
+        model: modelMetrics.snapshot(),
+        tools: {
+          callCount: toolRecords.length,
+          totalDurationMs: roundedMs(toolRecords.reduce((total, record) => total + invocationDurationMs(record.invocation), 0))
+        },
+        cache: {
+          hits: cacheHits,
+          misses: cacheMisses,
+          bypasses: toolRecords.length,
+          size: cacheStats.size
+        },
+        persistence: {
+          operationCount: persistenceOperationCount,
+          totalDurationMs: roundedMs(persistenceDurationMs),
+          failureCount: persistenceFailureCount
+        }
+      }
     };
+    const completionEvent = createRunEvent({ type: "run_completed", run });
     persist(() => stateStore.completeRun(sessionId, run));
-    emit({ type: "run_completed", run });
+    persist(() => stateStore.recordRunEvent(completionEvent));
     await persistence;
+    run.metrics.totalDurationMs = elapsedMs(runStartedAt);
+    run.metrics.persistence = {
+      operationCount: persistenceOperationCount,
+      totalDurationMs: roundedMs(persistenceDurationMs),
+      failureCount: persistenceFailureCount
+    };
+    // The exporter write is excluded from its own snapshot to avoid recursive measurement.
+    await stateStore.finalizeRunSnapshot(sessionId, run, completionEvent);
+    onEvent?.(completionEvent);
     return run;
   }
+}
+
+function elapsedMs(startedAt: number): number {
+  return roundedMs(performance.now() - startedAt);
+}
+
+function roundedMs(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+async function consumeTextGeneration(
+  generation: ReturnType<typeof streamText>,
+  onFirstText?: () => void
+) {
+  let firstTextSeen = false;
+  for await (const part of generation.fullStream) {
+    if (!firstTextSeen && part.type === "text-delta" && part.text.length > 0) {
+      firstTextSeen = true;
+      onFirstText?.();
+    }
+  }
+  const [text, steps, response, finishReason] = await Promise.all([
+    generation.text,
+    generation.steps,
+    generation.response,
+    generation.finishReason
+  ]);
+  return { text, steps, response, finishReason };
+}
+
+function counterDelta(current: number, initial: number): number {
+  return Math.max(0, current - initial);
+}
+
+function invocationDurationMs(invocation: ToolInvocation): number {
+  if (!invocation.completedAt) {
+    return 0;
+  }
+  const duration = Date.parse(invocation.completedAt) - Date.parse(invocation.startedAt);
+  return Number.isFinite(duration) && duration > 0 ? duration : 0;
 }
 
 function toolContext(context: Omit<AgentRunContext, "approvedToolCallIds">): AgentRunContext {

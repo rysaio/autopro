@@ -14,7 +14,7 @@ import { AgentRuntime } from "../src/runtime/agentRuntime.js";
 import { MemorySessionStateStore } from "../src/runtime/sessionStateStore.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/types.js";
-import { createScriptedModel } from "./fixtures/scriptedModel.js";
+import { createScriptedModel, streamResultFromGenerateResult } from "./fixtures/scriptedModel.js";
 import { testConfig } from "./fixtures/testConfig.js";
 
 describe("AgentRuntime", () => {
@@ -358,8 +358,8 @@ class TwoStepToolModel implements LanguageModelV3 {
     };
   }
 
-  async doStream(_options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
-    throw new Error("Streaming is not implemented for the two-step test model.");
+  async doStream(options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
+    return streamResultFromGenerateResult(await this.doGenerate(options));
   }
 }
 

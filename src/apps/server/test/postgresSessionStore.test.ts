@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgentRun, AuditEvent, ChatMessage, EvidenceArtifact, ToolGuidance, ToolInvocation } from "@secops-agent/shared";
+import type { AgentRun, AgentRunEvent, AuditEvent, ChatMessage, EvidenceArtifact, ToolGuidance, ToolInvocation } from "@secops-agent/shared";
 import { PostgresSessionStore } from "../src/runtime/postgresSessionStore.js";
 
 let stores: PostgresSessionStore[] = [];
@@ -102,9 +102,21 @@ describe("PostgresSessionStore", () => {
       messages: [message],
       toolInvocations: [invocation],
       audit: [audit],
-      artifacts: [artifact]
+      artifacts: [artifact],
+      metrics: metricsFixture(5, 3)
     };
     await firstStore.completeRun(sessionId, run);
+    const completionEvent: AgentRunEvent = {
+      id: randomUUID(),
+      runId,
+      createdAt: new Date().toISOString(),
+      type: "run_completed",
+      run
+    };
+    await firstStore.recordRunEvent(completionEvent);
+    run.metrics.totalDurationMs = 8;
+    run.metrics.persistence.operationCount = 9;
+    await firstStore.finalizeRunSnapshot(sessionId, run, completionEvent);
 
     const secondStore = await restartViaSnapshot(first);
     stores.push(secondStore);
@@ -132,7 +144,15 @@ describe("PostgresSessionStore", () => {
       pendingApprovalCount: 0,
       latestMessage: message
     });
-    expect(restored?.runs).toMatchObject([{ id: runId, status: "completed" }]);
+    expect(restored?.runs).toMatchObject([{
+      id: runId,
+      status: "completed",
+      metrics: { totalDurationMs: 8, persistence: { operationCount: 9 } },
+      lastEvent: {
+        id: completionEvent.id,
+        run: { metrics: { totalDurationMs: 8, persistence: { operationCount: 9 } } }
+      }
+    }]);
     expect(restored?.messages).toEqual([message]);
     expect(restored?.toolInvocations).toEqual([invocation]);
     expect(restored?.guidance).toEqual([guidance]);
@@ -242,6 +262,24 @@ describe("PostgresSessionStore", () => {
     await expect(secondStore.list()).resolves.toHaveLength(0);
   });
 });
+
+function metricsFixture(totalDurationMs: number, persistenceOperationCount: number): AgentRun["metrics"] {
+  return {
+    schemaVersion: 1,
+    mode: "single",
+    totalDurationMs,
+    localRoutingDurationMs: 0,
+    text: { measurement: "unavailable" },
+    model: { measurement: "unavailable", requests: [] },
+    tools: { callCount: 0, totalDurationMs: 0 },
+    cache: { hits: 0, misses: 0, bypasses: 0, size: 0 },
+    persistence: {
+      operationCount: persistenceOperationCount,
+      totalDurationMs: 0,
+      failureCount: 0
+    }
+  };
+}
 
 function chat(role: ChatMessage["role"], content: string): ChatMessage {
   return {
