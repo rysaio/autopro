@@ -6,27 +6,73 @@
 
 ### 创新一：分层工具路由 (Layered Tool Routing)
 
-**问题**：传统Agent架构将所有工具（37个，约6000 tokens）一次性注入LLM上下文，导致：
-- 大量工具schema占用上下文窗口，压缩有效信息空间
-- 无关工具的schema产生"注意力稀释"效应，降低推理质量
-- 每次请求都承担全部工具描述的成本
+这个改进把“工具何时暴露给模型”从路由器硬编码，改成了“工具声明默认值 + 用户运行时覆盖”。
 
-**方案**：采用"先路由后加载"的两阶段策略：
+**改进前**
 
-**Phase 1 (Triage)**：仅发送5个核心分诊工具（~800 tokens），快速确定分析师意图
-- secops_ioc_enrich：IOC富化查询
-- secops_threat_intel：威胁情报搜索
-- secops_asset_lookup：资产信息查询
-- secops_mitre_lookup：MITRE ATT&CK技战术检索
-- secops_alert_playbook：告警剧本推荐
+路由器主要依赖工具名称和插件前缀分类，例如 `wazuh.*`、`shuffle.*`：
 
-**Phase 2 (Deep Dive)**：根据Phase 1结果，动态加载对应领域的专用工具
-- Wazuh平台工具（Agent管理、告警搜索、网络分析、Active Response）
-- Shuffle SOAR工具（工作流、Webhook、告警转发）
-- 报告生成工具（事件报告、证据导出）
-- 沙箱操作工具（案例笔记、命令执行）
+- 已知插件可以进入对应 deep 类别
+- 未知第三方插件会落入 `core-triage`
+- 这些工具在 triage 阶段可能被全部发送给模型，导致 token 优化失效
+- 用户无法调整单个工具的暴露阶段
 
-**效果**：Phase 1节省约85%的tool schema token开销，Phase 2仅加载相关工具，避免无关工具的注意力干扰。
+**改进后**
+
+每个工具通过 manifest 的 `deferLoading` 字段声明暴露阶段：
+
+- `false`：常驻工具，triage 和 deep 都可见
+- `true`：按需工具，triage 不可见，只在 deep 阶段按推断类别加载
+
+默认策略如下：
+
+- Core 工具：`false`，继续承担分诊
+- 报告和动作工具：`true`
+- Wazuh、Shuffle 内置插件工具：`true`
+- 第三方 MCP 工具未声明时：`false`，保持兼容性
+
+插件通过 MCP `_meta.deferLoading` 向主服务透传声明。运行时工具集合按以下流程生成：
+
+```text
+工具声明 + 用户覆盖
+        ↓
+triage = 所有 deferLoading=false 的工具
+        ↓
+根据用户问题推断 Wazuh / Shuffle / Reporting 等类别
+        ↓
+deep = 所有常驻工具 + 命中类别的 deferLoading=true 工具
+```
+
+动作工具仍固定加入 deep 的 `sandbox-actions` 类别，因此不会因为用户措辞没有命中关键词而不可达。
+
+用户可以通过 API 覆盖任意已注册工具：
+
+```http
+GET /api/tools/visibility
+
+PUT /api/tools/visibility/wazuh.alerts.search
+Content-Type: application/json
+
+{ "deferLoading": false }
+```
+
+上述覆盖会让 `wazuh.alerts.search` 从按需工具变成常驻工具，立即进入 triage。清除覆盖后恢复工具原始声明：
+
+```http
+DELETE /api/tools/visibility/wazuh.alerts.search
+```
+
+覆盖持久化在 `runtime/config/toolVisibility.json`，服务重启或插件 reload 后仍然生效。
+`GET /api/tools` 返回应用覆盖后的最终 `deferLoading` 状态。
+
+**改进效果**
+
+- 第三方插件不再依赖主服务增加硬编码前缀
+- triage 只携带真正需要常驻的工具，降低 tool schema token 消耗
+- deep 只增加当前类别需要的按需工具，减少无关工具的注意力干扰
+- 用户可以根据实际工作流提升或延迟任意工具
+- 插件 reload 后覆盖不会丢失
+- 暴露级别与执行权限完全独立：工具可见不代表可以执行，审批、风险和 `actionLevel` 策略保持不变
 
 ### 创新二：语义工具缓存 (Semantic Tool Cache)
 
@@ -56,7 +102,7 @@
 ### 技术架构
 
 ```
-请求 → Phase 1: Triage (5核心工具) → 意图推断 → Phase 2: Deep Dive (动态工具集)
+请求 → Phase 1: Triage (常驻工具) → 意图推断 → Phase 2: Deep Dive (常驻 + 按需工具)
                 ↓                                    ↓
            ToolCache.Get()                     ToolCache.Set()
                 ↓                                    ↓
@@ -74,7 +120,13 @@ cd src
 npm ci
 ```
 
-Node.js 建议使用 24 LTS。首次运行前，将 `.env.example` 复制为 `.env` 或 `.env.local`（环境变量配置，见下方「配置」章节）。模型、插件等运行时配置的完整用法见「配置」章节。
+Node.js 建议使用 24 LTS。需要覆盖默认环境变量时，将 `.env.example` 复制为 `.env`；当前后端只加载 `.env`，不加载 `.env.local`：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+模型连接不配置在 `.env` 中，统一使用 `runtime/config/model.json` 和模型配置 API。完整用法见下方「配置」章节。
 
 ### 2. 启动源码服务
 
@@ -84,27 +136,35 @@ Node.js 建议使用 24 LTS。首次运行前，将 `.env.example` 复制为 `.e
 npm run dev
 ```
 
-该命令会同时启动：
+该命令先启动 Fastify 后端并等待 `/api/health` 可用，再启动 Vite 前端，避免两个开发编译器同时冷启动时后端未进入监听状态：
 
 - Vite 前端：http://localhost:5317
 - Fastify 后端：http://127.0.0.1:4317
 
-前端开发服务器会把 `/api` 请求代理到 4317 端口。也可以分别启动：
+前端开发服务器会把 `/api` 请求代理到 4317 端口。若需要分别观察日志，请按顺序在两个终端启动：
 
 ```powershell
+# 终端 1（src/）
 npm run dev:server
+
+# 终端 2（src/，确认后端已监听后再执行）
 npm run dev:web
 ```
 
 如果本机已有服务占用后端端口，可以用独立的临时端口和内存会话进行源码调试：
 
 ```powershell
+# 终端 1（src/）
 $env:PORT = "4327"
 $env:SECOPS_DURABLE_SESSIONS = "off"
 npm run dev:server
+
+# 终端 2（src/）
+$env:VITE_API_BASE_URL = "http://127.0.0.1:4327"
+npm run dev:web
 ```
 
-这种方式不会读取或修改 `src/apps/server/runtime/pgdata`。若前端也需要连接该端口，可设置 `VITE_API_BASE_URL=http://127.0.0.1:4327` 后重新启动 Vite。
+这种方式不会读取或修改 `src/runtime/pgdata`。`VITE_API_BASE_URL` 必须在 Vite 启动前设置；修改后需要重启 Vite 开发服务。
 
 ### 3. 源码验证
 
@@ -123,15 +183,21 @@ npm test
 
 ### 4. 停止源码服务
 
-在运行 `npm run dev` 的终端按 `Ctrl+C`。如果使用了独立后端端口，也只需停止对应的开发进程。
+在运行 `npm run dev` 的终端按 `Ctrl+C`。如果终端已关闭但开发进程仍在监听默认端口，可在 `src/` 执行：
+
+```powershell
+npm run stop:dev
+```
+
+使用自定义端口时，应在对应终端按 `Ctrl+C` 停止进程。
 
 ## 配置
 
-### 模型配置（唯一事实来源：`runtime/config/model.json`）
+### 模型配置（唯一事实来源：运行目录下的 `runtime/config/model.json`）
 
-模型配置不依赖环境变量——唯一事实来源是明文文件 `runtime/config/model.json`，**启动前后入口一致**（改动同一个文件，启动时读取 / 启动后 reload 生效）：
+模型配置不依赖环境变量——唯一事实来源是运行目录下的明文文件 `runtime/config/model.json`，**启动前后入口一致**（改动同一个文件，启动时读取 / 启动后 reload 生效）。路径相对于服务工作目录：源码开发时为 `src/runtime/config/model.json`，发布包运行时为 `runnable/app/runtime/config/model.json`；仓库根目录不需要单独创建 `runtime/`。
 
-- **默认模板**：发布包预置 `runtime/config/model.json`，默认 `provider=deepseek` / `model=deepseek-v4-flash` / `baseUrl=https://api.deepseek.com`，`apiKey` 为空——填入 key 即可使用。源码开发首次运行无此文件，按下方示例创建即可
+- **默认模板**：发布包预置 `runtime/config/model.json`，默认 `provider=deepseek` / `model=deepseek-v4-flash` / `baseUrl=https://api.deepseek.com`，`apiKey` 为空——填入 key 即可使用。源码开发执行 `npm run dev` 时，如果文件不存在会自动创建同一份空 key 模板；已有文件不会被覆盖
 - **先配置再启动**：直接编辑该文件，启动时读取
 - **启动后配置**（均无需重启）：
   - 直接编辑该文件 → 调用 `POST /api/model-config/reload` 从文件重新加载
@@ -202,11 +268,26 @@ wazuh / shuffle 等工具以 Codex 插件形态提供（`runtime/plugins/<name>/
 - `GET /api/settings/auto-approve-high-risk` 查看 auto 模式下高危 action 是否仍需审批（默认 `true` 保守）
 - `PUT /api/settings/auto-approve-high-risk` 切换该开关（body `{ "autoApproveHighRisk": false }` 关闭后 auto 模式全自动执行），持久化并即时生效
 
+### 工具暴露级别
+
+用户覆盖持久化在 `runtime/config/toolVisibility.json`，键为工具 manifest id，值为
+`deferLoading`。覆盖值优先于内置或插件声明，插件 reload 后仍会重新应用。
+
+```bash
+GET    /api/tools/visibility
+PUT    /api/tools/visibility/:id       # body: { "deferLoading": false }
+DELETE /api/tools/visibility/:id       # 清除覆盖，回退到工具声明值
+```
+
+`GET /api/tools` 返回应用覆盖后的最终 `deferLoading` 状态。暴露级别只控制模型上下文中的
+工具可见性，不改变工具执行权限或审批策略。
+
 ### 环境变量参考（`.env`）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `SECOPS_MODEL_CONFIG_PATH` | `runtime/config/model.json` | 模型配置文件路径 |
+| `SECOPS_TOOL_VISIBILITY_PATH` | `runtime/config/toolVisibility.json` | 工具暴露级别用户覆盖文件 |
 | `SECOPS_PLUGINS_DIR` | `runtime/plugins` | 插件目录 |
 | `SECOPS_ACTION_LEVEL` | `sandbox` | 默认自动化级别（observe/sandbox/full-access） |
 | `SECOPS_RUNTIME_CONFIG_PATH` | `runtime/config/settings.json` | 运行时设置文件 |
@@ -281,6 +362,6 @@ runnable/
     │   ├── server/dist/   # 后端编译产物
     │   └── web/dist/      # 前端编译产物
     └── runtime/       # 运行时数据目录
-        ├── config/    # 运行时配置（model.json 模型热配置、settings.json）
+        ├── config/    # 运行时配置（model.json、settings.json、toolVisibility.json）
         └── plugins/   # 插件目录（wazuh-secops、shuffle-secops 预置于此）
 ```
