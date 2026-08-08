@@ -15,6 +15,7 @@ describe("MCP facade", () => {
       description: "Test tool with unsupported inputs.",
       toolClass: "perception",
       risk: "low",
+      deferLoading: false,
       tags: ["test"],
       mcpCompatible: true,
       inputSchema: {

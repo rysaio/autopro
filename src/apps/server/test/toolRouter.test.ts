@@ -4,7 +4,7 @@ import { toolRouter } from "../src/runtime/toolRouter.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/types.js";
 
-function pluginTool(apiName: string, manifestId: string, packId: string): SecOpsTool {
+function pluginTool(apiName: string, manifestId: string, packId: string, deferLoading = true): SecOpsTool {
   return {
     apiName,
     manifest: {
@@ -14,6 +14,7 @@ function pluginTool(apiName: string, manifestId: string, packId: string): SecOps
       description: "Plugin tool.",
       toolClass: "perception",
       risk: "low",
+      deferLoading,
       tags: [packId],
       mcpCompatible: true,
       inputSchema: { type: "object", properties: {} }
@@ -29,6 +30,45 @@ function pluginTool(apiName: string, manifestId: string, packId: string): SecOps
 }
 
 describe("toolRouter layered routing with plugins", () => {
+  it("includes a non-core always-visible tool in triage", () => {
+    const registry = new ToolRegistry();
+    registry.registerTools([
+      pluginTool("secops_thirdparty_query", "thirdparty.query", "thirdparty-pack", false)
+    ]);
+
+    toolRouter.build(registry);
+
+    expect(toolRouter.getTriageToolIds()).toContain("thirdparty.query");
+  });
+
+  it("keeps deferred tools out of triage and loads them through inferred deep categories", () => {
+    const registry = new ToolRegistry();
+    registry.registerTools([
+      pluginTool("secops_wazuh_alerts_search", "wazuh.alerts.search", "secops-wazuh")
+    ]);
+
+    toolRouter.build(registry);
+    const categories = toolRouter.inferCategories([], "排查 Wazuh 告警");
+
+    expect(toolRouter.getTriageToolIds()).not.toContain("wazuh.alerts.search");
+    expect(toolRouter.getDeepToolIds(categories)).toContain("wazuh.alerts.search");
+  });
+
+  it("combines all always-visible tools with inferred deferred tools in deep", () => {
+    const registry = new ToolRegistry();
+    registry.registerTools([
+      pluginTool("secops_thirdparty_query", "thirdparty.query", "thirdparty-pack", false),
+      pluginTool("secops_shuffle_workflow_list", "shuffle.workflow.list", "secops-shuffle")
+    ]);
+
+    toolRouter.build(registry);
+    const deepIds = toolRouter.getDeepToolIds(["shuffle-soar"]);
+
+    expect(deepIds).toContain("thirdparty.query");
+    expect(deepIds).toContain("shuffle.workflow.list");
+    expect(deepIds).not.toContain("report.generate");
+  });
+
   it("reclassifies after plugin tools are registered on a later run", () => {
     const registry = new ToolRegistry();
     // 第一次 run：只有内置工具

@@ -303,6 +303,7 @@ function mcpToolToSecOpsTool(
       description: tool.description ?? "",
       toolClass,
       risk: toToolRisk(meta.risk),
+      deferLoading: meta.deferLoading === true,
       inputSchema: schema,
       tags: [pluginId],
       mcpCompatible: true

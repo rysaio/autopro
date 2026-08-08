@@ -80,7 +80,7 @@ describe("PluginManager", () => {
     setup.toolsByPlugin["demo"] = [
       tool("secops_demo_query", "demo.query"),
       tool("secops_demo_action", "demo.action", {
-        _meta: { manifestId: "demo.action", risk: "high", toolClass: "action" }
+        _meta: { manifestId: "demo.action", risk: "high", toolClass: "action", deferLoading: true }
       })
     ];
     await installPlugin(setup.pluginsDir, "demo");
@@ -93,6 +93,8 @@ describe("PluginManager", () => {
     const manifestIds = setup.registry.manifests().map((m) => m.id);
     expect(manifestIds).toContain("demo.query");
     expect(manifestIds).toContain("demo.action");
+    expect(setup.registry.manifests().find((manifest) => manifest.id === "demo.query")?.deferLoading).toBe(false);
+    expect(setup.registry.manifests().find((manifest) => manifest.id === "demo.action")?.deferLoading).toBe(true);
 
     // spawn env：透传宿主环境 + 插件放行 + 动作审批归主服务
     expect(setup.spawned).toHaveLength(1);

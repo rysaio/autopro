@@ -34,7 +34,8 @@ export function createWazuhMcpServer(options: WazuhMcpServerOptions = {}): McpSe
         _meta: {
           manifestId: tool.manifest.id,
           risk: tool.manifest.risk,
-          toolClass: tool.manifest.toolClass
+          toolClass: tool.manifest.toolClass,
+          deferLoading: tool.manifest.deferLoading
         }
       },
       async (args: Record<string, unknown>) => {

@@ -32,7 +32,8 @@ function fakePluginClient(pluginId: string): McpClientHandle {
           _meta: {
             manifestId: "wazuh.alerts.search",
             risk: "low",
-            toolClass: "perception"
+            toolClass: "perception",
+            deferLoading: true
           }
         },
         {
@@ -44,7 +45,8 @@ function fakePluginClient(pluginId: string): McpClientHandle {
           _meta: {
             manifestId: "wazuh.block_ip",
             risk: "high",
-            toolClass: "action"
+            toolClass: "action",
+            deferLoading: true
           }
         }
       ]
@@ -57,7 +59,8 @@ function fakePluginClient(pluginId: string): McpClientHandle {
           _meta: {
             manifestId: "shuffle.workflow.list",
             risk: "low",
-            toolClass: "perception"
+            toolClass: "perception",
+            deferLoading: true
           }
         }
       ];
@@ -134,11 +137,13 @@ describe("tool catalog API with plugins", () => {
     expect(pluginTools.map((tool: { id: string }) => tool.id)).toEqual(["wazuh.alerts.search", "wazuh.block_ip"]);
     expect(pluginTools.find((tool: { id: string }) => tool.id === "wazuh.block_ip")).toMatchObject({
       toolClass: "action",
-      risk: "high"
+      risk: "high",
+      deferLoading: true
     });
     expect(pluginTools.find((tool: { id: string }) => tool.id === "wazuh.alerts.search")).toMatchObject({
       toolClass: "perception",
-      risk: "low"
+      risk: "low",
+      deferLoading: true
     });
 
     const pluginsResponse = await app.inject({ method: "GET", url: "/api/plugins" });
@@ -167,6 +172,94 @@ describe("tool catalog API with plugins", () => {
     const toolsResponse = await app.inject({ method: "GET", url: "/api/tools" });
     const pluginTools = toolsResponse.json().tools.filter((tool: { skillPackId: string }) => tool.skillPackId === "shuffle-demo");
     expect(pluginTools.map((tool: { id: string }) => tool.id)).toEqual(["shuffle.workflow.list"]);
+
+    await app.close();
+  });
+
+  it("reapplies persisted visibility when a plugin is installed after startup", async () => {
+    const config = testConfig();
+    await writeFile(config.toolVisibilityPath, JSON.stringify({
+      "shuffle.workflow.list": false
+    }), "utf8");
+    const app = buildServer(config, { createPluginClient });
+
+    const empty = await app.inject({ method: "GET", url: "/api/plugins" });
+    expect(empty.json().plugins).toEqual([]);
+
+    await installFakePlugin(config.pluginsDir, "shuffle-demo", "Shuffle Demo");
+    const reloaded = await app.inject({ method: "POST", url: "/api/plugins/reload" });
+    expect(reloaded.statusCode).toBe(200);
+
+    const tools = await app.inject({ method: "GET", url: "/api/tools" });
+    expect(tools.json().tools.find((tool: { id: string }) => tool.id === "shuffle.workflow.list").deferLoading).toBe(false);
+
+    await app.close();
+  });
+
+  it("persists visibility overrides and applies them to layered routing", async () => {
+    const config = testConfig();
+    await installFakePlugin(config.pluginsDir, "wazuh-demo", "Wazuh Demo");
+    const app = buildServer(config, {
+      createModel: () => createSequencedModel([
+        { tool: "secops_wazuh_alerts_search" },
+        null,
+        null
+      ]),
+      createPluginClient
+    });
+
+    const initialTools = await app.inject({ method: "GET", url: "/api/tools" });
+    expect(initialTools.json().tools.find((tool: { id: string }) => tool.id === "wazuh.alerts.search").deferLoading).toBe(true);
+
+    const invalid = await app.inject({
+      method: "PUT",
+      url: "/api/tools/visibility/wazuh.alerts.search",
+      payload: { deferLoading: "false" }
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const missing = await app.inject({
+      method: "PUT",
+      url: "/api/tools/visibility/missing.tool",
+      payload: { deferLoading: false }
+    });
+    expect(missing.statusCode).toBe(404);
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: "/api/tools/visibility/wazuh.alerts.search",
+      payload: { deferLoading: false }
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().visibility).toEqual({ "wazuh.alerts.search": false });
+
+    const overriddenTools = await app.inject({ method: "GET", url: "/api/tools" });
+    expect(overriddenTools.json().tools.find((tool: { id: string }) => tool.id === "wazuh.alerts.search").deferLoading).toBe(false);
+
+    const run = await app.inject({
+      method: "POST",
+      url: "/api/agent/run",
+      payload: {
+        messages: [{ role: "user", content: "use the configured triage tool" }],
+        permissionMode: "auto"
+      }
+    });
+    expect(run.statusCode).toBe(200);
+    expect(run.json().toolInvocations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ toolName: "wazuh.alerts.search", status: "executed" })
+    ]));
+
+    const visibility = await app.inject({ method: "GET", url: "/api/tools/visibility" });
+    expect(visibility.json()).toEqual({ visibility: { "wazuh.alerts.search": false } });
+
+    const cleared = await app.inject({ method: "DELETE", url: "/api/tools/visibility/wazuh.alerts.search" });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json()).toEqual({ visibility: {} });
+
+    const restoredTools = await app.inject({ method: "GET", url: "/api/tools" });
+    expect(restoredTools.json().tools.find((tool: { id: string }) => tool.id === "wazuh.alerts.search").deferLoading).toBe(true);
+    const clearedAgain = await app.inject({ method: "DELETE", url: "/api/tools/visibility/wazuh.alerts.search" });
+    expect(clearedAgain.statusCode).toBe(404);
 
     await app.close();
   });

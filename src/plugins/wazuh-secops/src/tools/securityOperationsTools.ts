@@ -116,6 +116,7 @@ function manifest(input: {
   return {
     ...input,
     skillPackId: "secops-wazuh",
+    deferLoading: true,
     mcpCompatible: true
   };
 }

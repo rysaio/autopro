@@ -7,10 +7,16 @@ function listeningPids(port) {
   return [...new Set(
     output
       .split(/\r?\n/)
-      .filter((line) => new RegExp(`127\\.0\\.0\\.1:${port}\\s+.*LISTENING\\s+\\d+$`).test(line))
-      .map((line) => line.trim().split(/\s+/).at(-1))
+      .map((line) => line.trim().split(/\s+/))
+      .filter((fields) => fields[0] === "TCP" && fields[3] === "LISTENING" && endpointPort(fields[1]) === port)
+      .map((fields) => fields[4])
       .filter((pid) => pid && pid !== "0")
   )];
+}
+
+function endpointPort(endpoint) {
+  const match = endpoint?.match(/:(\d+)$/);
+  return match ? Number(match[1]) : undefined;
 }
 
 for (const port of ports) {
@@ -23,4 +29,3 @@ for (const port of ports) {
     }
   }
 }
-

@@ -268,6 +268,7 @@ function reportManifest(input: {
   return {
     ...input,
     skillPackId: "secops-reports",
+    deferLoading: true,
     mcpCompatible: true
   };
 }

@@ -26,6 +26,9 @@ describe("wazuh MCP server", () => {
       expect(tools.tools.map((tool) => tool.name)).toContain("secops_wazuh_config_status");
       expect(tools.tools.map((tool) => tool.name)).toContain("secops_wazuh_agent_network_summary");
       expect(tools.tools.map((tool) => tool.name)).toContain("secops_wazuh_block_ip");
+      expect(tools.tools.find((tool) => tool.name === "secops_wazuh_config_status")?._meta).toMatchObject({
+        deferLoading: true
+      });
 
       const status = await client.callTool({
         name: "secops_wazuh_config_status",

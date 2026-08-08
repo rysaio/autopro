@@ -163,6 +163,7 @@ function manifest(input: {
   return {
     ...input,
     skillPackId: input.id === "full_access.exec" ? "secops-full-access" : "secops-actions",
+    deferLoading: true,
     mcpCompatible: true
   };
 }

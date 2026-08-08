@@ -39,6 +39,8 @@ const CATEGORY_PATTERNS: [string, ToolCategory][] = [
 
 export class ToolRouter {
   private categoryMap: Map<ToolCategory, string[]> = new Map();
+  private alwaysVisibleIds: string[] = [];
+  private deferredIds: string[] = [];
   private initialized = false;
 
   /**
@@ -55,9 +57,16 @@ export class ToolRouter {
       ["reporting", []],
       ["sandbox-actions", []],
     ]);
+    this.alwaysVisibleIds = [];
+    this.deferredIds = [];
 
     const manifests = registry.manifests();
     for (const m of manifests) {
+      if (m.deferLoading) {
+        this.deferredIds.push(m.id);
+      } else {
+        this.alwaysVisibleIds.push(m.id);
+      }
       // 核心分诊工具：SecOps Core 的 perception/reasoning 工具
       if (m.skillPackId === "secops-core") {
         this.categoryMap.get("core-triage")!.push(m.id);
@@ -94,24 +103,20 @@ export class ToolRouter {
   }
 
   /**
-   * 获取 Phase 1 分诊工具 ID 列表（仅核心工具）
+   * 获取 Phase 1 分诊工具 ID 列表（所有常驻工具）
    */
   getTriageToolIds(): string[] {
     this.build(null!); // 确保已初始化（build 在 registry 可用时调用）
-    return this.categoryMap.get("core-triage") ?? [];
+    return [...this.alwaysVisibleIds];
   }
 
   /**
-   * 获取 Phase 1 分诊工具集（仅核心工具，~5个）
+   * 获取 Phase 1 分诊工具集（所有常驻工具）
    * 这是 LLM 第一轮接收的最小工具集，用于快速确定意图
    */
   getTriageToolSet(registry: ToolRegistry, context: ToolContext): ToolSet {
     this.build(registry);
-    const triageIds = this.categoryMap.get("core-triage") ?? [];
-    if (triageIds.length === 0) {
-      // 如果核心工具为空，返回前 5 个工具
-      return registry.aiSdkTools(context, registry.manifests().slice(0, 5).map((m) => m.id));
-    }
+    const triageIds = this.getTriageToolIds();
     return registry.aiSdkTools(context, triageIds);
   }
 
@@ -202,6 +207,14 @@ export class ToolRouter {
       return [...all];
     }
     return [...toolIds];
+  }
+
+  /** 获取 Phase 2 工具：全部常驻工具 + 类别推断命中的按需工具。 */
+  getDeepToolIds(categories: ToolCategory[]): string[] {
+    const deferred = new Set(this.deferredIds);
+    const specializedDeferredIds = this.getSpecializedToolIds(categories)
+      .filter((id) => deferred.has(id));
+    return [...new Set([...this.alwaysVisibleIds, ...specializedDeferredIds])];
   }
 
   /**

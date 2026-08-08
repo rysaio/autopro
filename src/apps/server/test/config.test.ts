@@ -10,16 +10,19 @@ describe("config loading", () => {
     });
 
     expect(config.modelConfigPath.endsWith(path.join("runtime", "config", "model.json"))).toBe(true);
+    expect(config.toolVisibilityPath.endsWith(path.join("runtime", "config", "toolVisibility.json"))).toBe(true);
     expect(config.pluginsDir.endsWith(path.join("runtime", "plugins"))).toBe(true);
   });
 
-  it("respects explicit SECOPS_MODEL_CONFIG_PATH and SECOPS_PLUGINS_DIR overrides", () => {
+  it("respects explicit model, tool visibility, and plugin path overrides", () => {
     const config = getConfig({
       SECOPS_MODEL_CONFIG_PATH: path.join(os.tmpdir(), "custom-model.json"),
+      SECOPS_TOOL_VISIBILITY_PATH: path.join(os.tmpdir(), "custom-tool-visibility.json"),
       SECOPS_PLUGINS_DIR: path.join(os.tmpdir(), "secops-plugins")
     });
 
     expect(config.modelConfigPath).toBe(path.resolve(path.join(os.tmpdir(), "custom-model.json")));
+    expect(config.toolVisibilityPath).toBe(path.resolve(path.join(os.tmpdir(), "custom-tool-visibility.json")));
     expect(config.pluginsDir).toBe(path.resolve(path.join(os.tmpdir(), "secops-plugins")));
   });
 

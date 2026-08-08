@@ -26,6 +26,9 @@ describe("shuffle MCP server", () => {
       expect(tools.tools.map((tool) => tool.name)).toContain("secops_shuffle_workflow_execute");
       expect(tools.tools.map((tool) => tool.name)).toContain("secops_shuffle_wazuh_integration_render");
       expect(tools.tools.map((tool) => tool.name)).toContain("secops_shuffle_wazuh_alert_forward");
+      expect(tools.tools.find((tool) => tool.name === "secops_shuffle_config_status")?._meta).toMatchObject({
+        deferLoading: true
+      });
 
       const status = await client.callTool({
         name: "secops_shuffle_config_status",

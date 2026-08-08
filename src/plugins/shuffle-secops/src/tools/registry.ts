@@ -567,6 +567,7 @@ function manifest(input: {
   return {
     ...input,
     skillPackId: "secops-shuffle",
+    deferLoading: true,
     mcpCompatible: true
   };
 }

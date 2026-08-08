@@ -31,6 +31,7 @@ export function testConfig(env: NodeJS.ProcessEnv = {}, options: TestConfigOptio
   return getConfig({
     SECOPS_RUNTIME_CONFIG_PATH: path.resolve("runtime", "tests", testRunId, "settings.json"),
     SECOPS_MODEL_CONFIG_PATH: modelConfigPath,
+    SECOPS_TOOL_VISIBILITY_PATH: path.resolve("runtime", "tests", testRunId, "toolVisibility.json"),
     SECOPS_PLUGINS_DIR: path.resolve("runtime", "tests", testRunId, "plugins"),
     SECOPS_AUDIT_LOG_PATH: path.resolve("runtime", "tests", testRunId, "events.jsonl"),
     SECOPS_APPROVAL_STORE_PATH: path.resolve("runtime", "tests", testRunId, "pending-approvals.json"),

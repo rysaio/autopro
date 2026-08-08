@@ -16,6 +16,7 @@ export class ToolRegistry {
   /** 外部（插件）注册的工具，重载插件时整体移除。 */
   private readonly externalApiNames = new Set<string>();
   private readonly externalManifestIds = new Set<string>();
+  private readonly deferLoadingOverrides = new Map<string, boolean>();
 
   constructor(
     tools: SecOpsTool[] = [
@@ -76,8 +77,26 @@ export class ToolRegistry {
     this.autoApproveHighRisk = value;
   }
 
+  setDeferLoadingOverride(id: string, deferLoading: boolean): boolean {
+    if (!this.byManifestId.has(id)) {
+      return false;
+    }
+    this.deferLoadingOverrides.set(id, deferLoading);
+    return true;
+  }
+
+  clearDeferLoadingOverride(id: string): boolean {
+    if (!this.byManifestId.has(id)) {
+      return false;
+    }
+    return this.deferLoadingOverrides.delete(id);
+  }
+
   manifests(): SkillManifest[] {
-    return [...this.byManifestId.values()].map((tool) => tool.manifest);
+    return [...this.byManifestId.values()].map((tool) => ({
+      ...tool.manifest,
+      deferLoading: this.deferLoadingOverrides.get(tool.manifest.id) ?? tool.manifest.deferLoading
+    }));
   }
 
   skillPacks() {
@@ -249,7 +268,7 @@ export class ToolRegistry {
   }
 
   private resolveEnabled(enabledManifestIds?: string[]): SecOpsTool[] {
-    if (!enabledManifestIds?.length) {
+    if (enabledManifestIds === undefined) {
       return [...this.byManifestId.values()];
     }
     return enabledManifestIds

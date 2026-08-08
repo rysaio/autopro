@@ -13,6 +13,20 @@ const context = {
 };
 
 describe("ToolRegistry", () => {
+  it("applies and clears deferLoading overrides without mutating declarations", () => {
+    const registry = new ToolRegistry();
+
+    expect(registry.manifests().find((manifest) => manifest.id === "report.generate")?.deferLoading).toBe(true);
+    expect(registry.setDeferLoadingOverride("report.generate", false)).toBe(true);
+    expect(registry.manifests().find((manifest) => manifest.id === "report.generate")?.deferLoading).toBe(false);
+
+    expect(registry.clearDeferLoadingOverride("report.generate")).toBe(true);
+    expect(registry.manifests().find((manifest) => manifest.id === "report.generate")?.deferLoading).toBe(true);
+    expect(registry.clearDeferLoadingOverride("report.generate")).toBe(false);
+    expect(registry.setDeferLoadingOverride("missing.tool", false)).toBe(false);
+    expect(registry.clearDeferLoadingOverride("missing.tool")).toBe(false);
+  });
+
   it("exposes MCP-compatible skill manifests with action tools gated by risk", () => {
     const registry = new ToolRegistry();
     const manifests = registry.manifests();
@@ -381,6 +395,7 @@ function testManifest(id: string, name: string): SkillManifest {
     description: "Test tool.",
     toolClass: "perception",
     risk: "low",
+    deferLoading: false,
     tags: ["test"],
     mcpCompatible: true,
     inputSchema: {

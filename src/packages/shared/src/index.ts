@@ -59,6 +59,8 @@ export interface SkillManifest {
   description: string;
   toolClass: ToolClass;
   risk: ToolRisk;
+  /** false=triage 与 deep 均暴露；true=仅在 deep 阶段按需暴露。 */
+  deferLoading: boolean;
   inputSchema: ToolSchema;
   tags: string[];
   mcpCompatible: boolean;

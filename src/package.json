@@ -12,7 +12,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "dev": "concurrently -n server,web -c cyan,green \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
+    "dev": "node scripts/dev.mjs",
     "stop:dev": "node scripts/stop-dev.mjs",
     "dev:server": "npm run dev -w apps/server",
     "dev:web": "npm run dev -w apps/web",
@@ -23,7 +23,6 @@
     "lint": "npm run typecheck"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
     "typescript": "^5.9.3"
   }
 }

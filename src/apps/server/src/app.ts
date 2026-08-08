@@ -27,6 +27,7 @@ import { ApprovalStore } from "./runtime/approvalStore.js";
 import { PostgresSessionStore } from "./runtime/postgresSessionStore.js";
 import { isAutomationLevel, RuntimeSettingsStore } from "./runtime/runtimeSettings.js";
 import { NoopSessionStateStore, type SessionStateStore } from "./runtime/sessionStateStore.js";
+import { ToolVisibilityStore } from "./runtime/toolVisibilityStore.js";
 import { createSecOpsMcpServer, mcpContext, mcpToolSummaries } from "./mcp/secopsMcpServer.js";
 import { registerStreamableMcpRoutes } from "./mcp/streamableHttp.js";
 import { ToolRegistry } from "./tools/registry.js";
@@ -55,6 +56,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   // 运行时开关同步到 ToolRegistry（auto 模式下高危 action 是否仍审批）
   registry.setAutoApproveHighRisk(runtimeSettings.get().autoApproveHighRisk ?? true);
   const modelConfigStore = new ModelConfigStore(config.modelConfigPath);
+  const toolVisibilityStore = new ToolVisibilityStore(config.toolVisibilityPath);
   const pluginManager = new PluginManager({
     pluginsDir: config.pluginsDir,
     registry,
@@ -88,6 +90,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     await durableSessionStore?.migrate();
     // 启动时按基座顺序加载：settings/models 构造即加载，插件扫描加载；单插件失败不影响启动
     await environment.loadAll();
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
   });
   app.addHook("onClose", async () => {
     await pluginManager.disconnectAll();
@@ -211,6 +214,33 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     tools: registry.manifests()
   }));
 
+  app.get("/api/tools/visibility", async () => ({
+    visibility: toolVisibilityStore.get()
+  }));
+
+  app.put("/api/tools/visibility/:id", async (request, reply) => {
+    const params = request.params as { id: string };
+    const body = coerceRecord(request.body);
+    if (typeof body.deferLoading !== "boolean") {
+      return reply.code(400).send({ error: "deferLoading must be a boolean" });
+    }
+    if (!hasManifest(registry, params.id)) {
+      return reply.code(404).send({ error: `No tool found for ${params.id}` });
+    }
+    toolVisibilityStore.set(params.id, body.deferLoading);
+    registry.setDeferLoadingOverride(params.id, body.deferLoading);
+    return { visibility: toolVisibilityStore.get() };
+  });
+
+  app.delete("/api/tools/visibility/:id", async (request, reply) => {
+    const params = request.params as { id: string };
+    if (!hasManifest(registry, params.id) || !toolVisibilityStore.clear(params.id)) {
+      return reply.code(404).send({ error: `No tool visibility override found for ${params.id}` });
+    }
+    registry.clearDeferLoadingOverride(params.id);
+    return { visibility: toolVisibilityStore.get() };
+  });
+
   app.get("/api/skills", async () => ({
     skills: registry.skillPacks()
   }));
@@ -222,6 +252,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
 
   app.post("/api/plugins/reload", async (): Promise<{ plugins: PluginSummary[] }> => {
     await pluginManager.reload();
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
     return { plugins: pluginManager.status() };
   });
 
@@ -418,6 +449,16 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   });
 
   return app;
+}
+
+function applyToolVisibilityOverrides(registry: ToolRegistry, store: ToolVisibilityStore): void {
+  for (const [id, deferLoading] of Object.entries(store.get())) {
+    registry.setDeferLoadingOverride(id, deferLoading);
+  }
+}
+
+function hasManifest(registry: ToolRegistry, id: string): boolean {
+  return registry.manifests().some((manifest) => manifest.id === id);
 }
 
 function createRuntime(
