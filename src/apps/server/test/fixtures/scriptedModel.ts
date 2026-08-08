@@ -10,6 +10,32 @@ export function createScriptedModel(latestUserText: string): LanguageModel {
   return new ScriptedLanguageModel(latestUserText);
 }
 
+export function streamResultFromGenerateResult(result: LanguageModelV3GenerateResult): LanguageModelV3StreamResult {
+  return {
+    stream: new ReadableStream({
+      start(controller) {
+        controller.enqueue({ type: "stream-start", warnings: result.warnings });
+        for (const content of result.content) {
+          if (content.type === "text") {
+            const id = `text_${crypto.randomUUID()}`;
+            controller.enqueue({ type: "text-start", id });
+            controller.enqueue({ type: "text-delta", id, delta: content.text });
+            controller.enqueue({ type: "text-end", id });
+          } else if (content.type === "tool-call") {
+            controller.enqueue(content);
+          }
+        }
+        controller.enqueue({
+          type: "finish",
+          usage: result.usage,
+          finishReason: result.finishReason
+        });
+        controller.close();
+      }
+    })
+  };
+}
+
 class ScriptedLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = "v3";
   readonly provider = "test-provider";
@@ -54,8 +80,8 @@ class ScriptedLanguageModel implements LanguageModelV3 {
     };
   }
 
-  async doStream(_options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
-    throw new Error("Streaming is not implemented for the scripted test model.");
+  async doStream(options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
+    return streamResultFromGenerateResult(await this.doGenerate(options));
   }
 }
 

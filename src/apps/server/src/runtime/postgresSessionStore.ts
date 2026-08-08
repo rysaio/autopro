@@ -168,6 +168,15 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
     );
   }
 
+  async finalizeRunSnapshot(sessionId: string, run: AgentRun, completionEvent: AgentRunEvent): Promise<void> {
+    await this.db.query(
+      `UPDATE secops_runs
+       SET run = $3::jsonb || jsonb_build_object('lastEvent', $4::jsonb)
+       WHERE id = $1 AND session_id = $2`,
+      [run.id, sessionId, JSON.stringify(run), JSON.stringify(completionEvent)]
+    );
+  }
+
   async restoreSession(sessionId: string): Promise<RestoredSession | undefined> {
     const session = await this.db.query<SessionRow>(
       `SELECT id, created_at, updated_at FROM secops_sessions WHERE id = $1`,
