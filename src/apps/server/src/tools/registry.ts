@@ -1,7 +1,8 @@
 import { jsonSchema, type ToolSet } from "ai";
-import type { ToolManifest, ToolInvocation } from "@secops-agent/shared";
+import type { EvidenceArtifact, ToolManifest, ToolInvocation, ToolInvocationCacheTrace } from "@secops-agent/shared";
 import type { ModelToolCall } from "../providers/types.js";
 import { approvalResult, ApprovalStore, type PendingApprovalStore } from "../runtime/approvalStore.js";
+import { ToolCache, type ToolCacheKeyInput } from "../runtime/toolCache.js";
 import { createActionTools } from "./actionTools.js";
 import { isRecoverableToolResult } from "./guidance.js";
 import { validateToolInput } from "./inputValidation.js";
@@ -24,7 +25,8 @@ export class ToolRegistry {
     ],
     private readonly approvals: PendingApprovalStore = new ApprovalStore(),
     /** auto 模式下 risk=high 的 action 工具是否仍需审批（默认 true，保守）。 */
-    private autoApproveHighRisk = true
+    private autoApproveHighRisk = true,
+    private readonly resultCache: ToolCache = new ToolCache()
   ) {
     for (const tool of tools) {
       this.registerInternal(tool);
@@ -93,6 +95,10 @@ export class ToolRegistry {
   /** 设置 auto 模式下 risk=high 的 action 工具是否仍需审批（运行时热更新）。 */
   setAutoApproveHighRisk(value: boolean): void {
     this.autoApproveHighRisk = value;
+  }
+
+  cacheStats() {
+    return this.resultCache.stats();
   }
 
   setDeferLoadingOverride(id: string, deferLoading: boolean): boolean {
@@ -189,7 +195,8 @@ export class ToolRegistry {
           startedAt,
           completedAt: new Date().toISOString()
         },
-        artifacts: []
+        artifacts: [],
+        metrics: emptyExecutionMetrics()
       };
     }
 
@@ -197,16 +204,25 @@ export class ToolRegistry {
     if (!validation.ok) {
       return {
         invocation: {
-          ...invocation(tool, callId, parsedArgs, "failed", startedAt),
+          ...invocation(tool, callId, parsedArgs, "failed", startedAt, undefined, bypass("invalid_arguments")),
           error: validation.error ?? `Invalid arguments for ${tool.manifest.id}`
         },
-        artifacts: []
+        artifacts: [],
+        metrics: emptyExecutionMetrics()
       };
     }
 
     const policy = decidePolicy(tool, context, callId, this.autoApproveHighRisk);
     if (policy.status !== "executed") {
-      const pendingInvocation = invocation(tool, callId, parsedArgs, policy.status, startedAt);
+      const pendingInvocation = invocation(
+        tool,
+        callId,
+        parsedArgs,
+        policy.status,
+        startedAt,
+        undefined,
+        bypass(policy.status)
+      );
       if (policy.status === "pending_approval") {
         await this.approvals.add({
           apiName,
@@ -220,32 +236,125 @@ export class ToolRegistry {
           ...pendingInvocation,
           error: policy.reason
         },
-        artifacts: []
+        artifacts: [],
+        metrics: emptyExecutionMetrics()
       };
     }
+
+    const cachePolicy = tool.manifest.resultCache;
+    const cacheKey = cachePolicy && tool.manifest.toolClass !== "action"
+      ? createCacheKey(tool.manifest, parsedArgs, context)
+      : undefined;
+    let lookupExpiredEntries = 0;
+    if (cacheKey && cachePolicy) {
+      const cached = this.resultCache.get(cacheKey);
+      lookupExpiredEntries = cached.expiredEntries;
+      if (cached.status === "hit") {
+        const cacheTrace: ToolInvocationCacheTrace = {
+          status: "hit",
+          sourceInvocationId: cached.value.sourceInvocationId,
+          originalCreatedAt: cached.originalCreatedAt,
+          ageMs: cached.ageMs,
+          avoidedToolDurationMs: cached.value.handlerDurationMs
+        };
+        return {
+          invocation: invocation(
+            tool,
+            callId,
+            parsedArgs,
+            "executed",
+            startedAt,
+            cached.value.result,
+            cacheTrace
+          ),
+          artifacts: freshCachedArtifacts(cached.value.artifacts, cached.ageMs),
+          metrics: {
+            ...emptyExecutionMetrics(),
+            expiredEntries: lookupExpiredEntries,
+            avoidedToolDurationMs: cached.value.handlerDurationMs
+          }
+        };
+      }
+    }
+
+    const handlerStartedAt = performance.now();
     try {
       const result = await tool.execute(parsedArgs, context);
+      const handlerDurationMs = roundDuration(performance.now() - handlerStartedAt);
       if (isRecoverableToolResult(result.output)) {
         return {
           invocation: {
-            ...invocation(tool, callId, parsedArgs, "failed", startedAt, result.output),
+            ...invocation(
+              tool,
+              callId,
+              parsedArgs,
+              "failed",
+              startedAt,
+              result.output,
+              bypass("recoverable_guidance")
+            ),
             error: "Recoverable tool guidance returned",
             guidance: result.output.guidance
           },
-          artifacts: result.artifacts ?? []
+          artifacts: result.artifacts ?? [],
+          metrics: {
+            ...emptyExecutionMetrics(),
+            handlerCalled: true,
+            handlerDurationMs,
+            expiredEntries: lookupExpiredEntries
+          }
         };
       }
+
+      const artifacts = result.artifacts ?? [];
+      let evictions = 0;
+      let expiredEntries = lookupExpiredEntries;
+      let invalidatedEntries = 0;
+      let cacheTrace = cacheKey && cachePolicy
+        ? { status: "miss" as const }
+        : bypass(tool.manifest.toolClass === "action" ? "action" : "not_enabled");
+      if (cacheKey && cachePolicy) {
+        const write = this.resultCache.set(cacheKey, {
+          result: result.output,
+          artifacts,
+          sourceInvocationId: callId,
+          handlerDurationMs
+        }, cachePolicy.ttlMs);
+        evictions = write.evictions;
+        expiredEntries += write.expiredEntries;
+        if (!write.stored) {
+          cacheTrace = bypass("result_not_cloneable");
+        }
+      }
+      if (tool.manifest.toolClass === "action") {
+        invalidatedEntries = this.resultCache.invalidateAll();
+      }
       return {
-        invocation: invocation(tool, callId, parsedArgs, "executed", startedAt, result.output),
-        artifacts: result.artifacts ?? []
+        invocation: invocation(tool, callId, parsedArgs, "executed", startedAt, result.output, cacheTrace),
+        artifacts,
+        metrics: {
+          handlerCalled: true,
+          handlerDurationMs,
+          evictions,
+          expiredEntries,
+          invalidatedEntries,
+          avoidedToolDurationMs: 0
+        }
       };
     } catch (error) {
+      const handlerDurationMs = roundDuration(performance.now() - handlerStartedAt);
       return {
         invocation: {
-          ...invocation(tool, callId, parsedArgs, "failed", startedAt),
+          ...invocation(tool, callId, parsedArgs, "failed", startedAt, undefined, bypass("execution_failed")),
           error: error instanceof Error ? error.message : String(error)
         },
-        artifacts: []
+        artifacts: [],
+        metrics: {
+          ...emptyExecutionMetrics(),
+          handlerCalled: true,
+          handlerDurationMs,
+          expiredEntries: lookupExpiredEntries
+        }
       };
     }
   }
@@ -362,7 +471,8 @@ function invocation(
   args: Record<string, unknown>,
   status: ToolInvocation["status"],
   startedAt: string,
-  result?: unknown
+  result?: unknown,
+  cache?: ToolInvocationCacheTrace
 ): ToolInvocation {
   return {
     id,
@@ -372,7 +482,58 @@ function invocation(
     risk: tool.manifest.risk,
     arguments: args,
     result,
+    ...(cache ? { cache } : {}),
     startedAt,
     completedAt: new Date().toISOString()
   };
+}
+
+function createCacheKey(
+  manifest: ToolManifest,
+  args: Record<string, unknown>,
+  context: ToolContext
+): ToolCacheKeyInput {
+  const policy = manifest.resultCache;
+  if (!policy) {
+    throw new Error(`Cache policy missing for ${manifest.id}`);
+  }
+  return {
+    toolId: manifest.id,
+    toolVersion: policy.version,
+    dataSource: policy.dataSource,
+    workspaceRoot: context.workspaceRoot,
+    args
+  };
+}
+
+function freshCachedArtifacts(artifacts: EvidenceArtifact[], ageMs: number): EvidenceArtifact[] {
+  return artifacts.map((artifact) => ({
+    ...structuredClone(artifact),
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    cacheSource: {
+      artifactId: artifact.id,
+      originalCreatedAt: artifact.createdAt,
+      ageMs
+    }
+  }));
+}
+
+function bypass(reason: string): ToolInvocationCacheTrace {
+  return { status: "bypass", reason };
+}
+
+function emptyExecutionMetrics(): ToolExecutionRecord["metrics"] {
+  return {
+    handlerCalled: false,
+    handlerDurationMs: 0,
+    evictions: 0,
+    expiredEntries: 0,
+    invalidatedEntries: 0,
+    avoidedToolDurationMs: 0
+  };
+}
+
+function roundDuration(value: number): number {
+  return Math.round(Math.max(0, value) * 100) / 100;
 }

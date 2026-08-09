@@ -76,12 +76,17 @@ async function runBenchmark({ baseUrl, runs }) {
       },
       tools: {
         callCount: distribution(samples.map((run) => run.metrics.tools.callCount)),
+        handlerCallCount: distribution(samples.map((run) => run.metrics.tools.handlerCallCount)),
         totalDurationMs: distribution(samples.map((run) => run.metrics.tools.totalDurationMs))
       },
       cache: {
         hits: distribution(samples.map((run) => run.metrics.cache.hits)),
         misses: distribution(samples.map((run) => run.metrics.cache.misses)),
-        bypasses: distribution(samples.map((run) => run.metrics.cache.bypasses))
+        bypasses: distribution(samples.map((run) => run.metrics.cache.bypasses)),
+        evictions: distribution(samples.map((run) => run.metrics.cache.evictions)),
+        expiredEntries: distribution(samples.map((run) => run.metrics.cache.expiredEntries)),
+        invalidatedEntries: distribution(samples.map((run) => run.metrics.cache.invalidatedEntries)),
+        avoidedToolDurationMs: distribution(samples.map((run) => run.metrics.cache.avoidedToolDurationMs))
       },
       persistence: {
         operationCount: distribution(samples.map((run) => run.metrics.persistence.operationCount)),
@@ -199,6 +204,8 @@ function formatReport(report) {
     formatDistribution("Provider requests", report.summary.provider.requestCount, ""),
     formatDistribution("Provider retries", report.summary.provider.retryCount, ""),
     formatDistribution("Tool calls", report.summary.tools.callCount, ""),
+    formatDistribution("Real tool handler calls", report.summary.tools.handlerCallCount, ""),
+    formatDistribution("Avoided tool duration", report.summary.cache.avoidedToolDurationMs, "ms"),
     formatDistribution("Persistence operations", report.summary.persistence.operationCount, ""),
     formatDistribution("Input tokens", report.summary.tokens.input, ""),
     formatDistribution("Output tokens", report.summary.tokens.output, "")

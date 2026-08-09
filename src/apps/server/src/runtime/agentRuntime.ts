@@ -17,7 +17,6 @@ import { roundDurationMs, RunTimingRecorder } from "./runTimingRecorder.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
 import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP, SYSTEM_PROMPT_FINAL } from "./systemPrompt.js";
 import { systemPromptWithSkills } from "./systemPrompt.js";
-import { ToolCache, type ToolCacheCategory } from "./toolCache.js";
 import { toolRouter } from "./toolRouter.js";
 import type { SkillCatalog } from "../skills/catalog.js";
 
@@ -45,20 +44,7 @@ export interface AgentRuntimeOptions {
 type AgentRunContext = Parameters<ToolRegistry["aiSdkTools"]>[0];
 export type AgentRunEventSink = (event: AgentRunEvent) => void;
 
-// ── 工具分类到缓存类别的映射 ──
-function cacheCategory(toolClass: string): ToolCacheCategory {
-  switch (toolClass) {
-    case "perception": return "perception";
-    case "reasoning": return "reasoning";
-    case "evidence": return "evidence";
-    case "action": return "action";
-    default: return "perception";
-  }
-}
-
 export class AgentRuntime {
-  private readonly toolCache = new ToolCache();
-
   constructor(private readonly options: AgentRuntimeOptions) {}
 
   async run(request: AgentRunRequest, onEvent?: AgentRunEventSink): Promise<AgentRun> {
@@ -118,7 +104,6 @@ export class AgentRuntime {
       ?? (this.options.enableLayeredRouting === true ? "layered" : "deterministic");
     const useLayeredRouting = routingMode === "layered";
     const modelMetrics = new ModelMetricsRecorder(runTiming);
-    const cacheStatsAtStart = this.toolCache.stats();
     let localRoutingDurationMs = 0;
     const measureRouting = <Result>(operation: () => Result): Result => {
       const startedAt = performance.now();
@@ -209,7 +194,7 @@ export class AgentRuntime {
         "Tool result",
         record.invocation.guidance
           ? `${record.invocation.displayName} returned recoverable guidance: ${record.invocation.guidance.message}`
-          : `${record.invocation.displayName} ${record.invocation.status}.`,
+          : `${record.invocation.displayName} ${record.invocation.status}. ${cacheAuditDetail(record.invocation)}`,
         record.invocation.guidance ? "warn" : "info"
       );
       audit.push(requestedAudit, policyAudit, resultAudit);
@@ -229,23 +214,6 @@ export class AgentRuntime {
       persist(() => stateStore.appendMessage(sessionId, runId, toolMessage));
       emit({ type: "message", message: toolMessage });
 
-      // ── 缓存写入（创新点） ──
-      if (record.invocation.status === "executed" && record.invocation.result) {
-        const recordManifest = this.options.registry.manifests().find((m) => m.id === record.invocation.toolName);
-        if (recordManifest) {
-          this.toolCache.set(
-            record.invocation.toolName,
-            record.invocation.arguments,
-            cacheCategory(recordManifest.toolClass),
-            record.invocation.result,
-            record.artifacts
-          );
-          // Action 执行后使缓存失效（状态可能已变更）
-          if (recordManifest.toolClass === "action") {
-            this.toolCache.invalidateAfterAction();
-          }
-        }
-      }
     };
     const startToolTiming = () => {
       const timing = runTiming.start("tool");
@@ -405,7 +373,7 @@ export class AgentRuntime {
         const responseAudit = event(
           "model_response",
           "Model response",
-          `Layered routing complete: Phase 1 (${triageResult.steps.length} steps, ${triageResult.steps.reduce((c, s) => c + s.toolResults.length, 0)} tool results) + Phase 2 (${deepResult.steps.length} steps, ${deepResult.steps.reduce((c, s) => c + s.toolResults.length, 0)} tool results). Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${deepResult.finishReason}.${deepResult.finishReason === "tool-calls" ? " Max tool rounds reached." : ""}`
+          `Layered routing complete: Phase 1 (${triageResult.steps.length} steps, ${triageResult.steps.reduce((c, s) => c + s.toolResults.length, 0)} tool results) + Phase 2 (${deepResult.steps.length} steps, ${deepResult.steps.reduce((c, s) => c + s.toolResults.length, 0)} tool results). Total: ${totalSteps} steps, ${totalToolResults} tool results. Finish: ${deepResult.finishReason}.${deepResult.finishReason === "tool-calls" ? " Max tool rounds reached." : ""}`
         );
         audit.push(responseAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, responseAudit));
@@ -504,15 +472,10 @@ export class AgentRuntime {
       ));
     }
 
-    // ── 缓存统计 ──
-    const cacheStats = this.toolCache.stats();
-    const cacheHits = counterDelta(cacheStats.hits, cacheStatsAtStart.hits);
-    const cacheMisses = counterDelta(cacheStats.misses, cacheStatsAtStart.misses);
-    if (cacheHits > 0) {
-      const cacheLookups = cacheHits + cacheMisses;
-      const hitRate = cacheLookups === 0 ? 0 : cacheHits / cacheLookups;
-      console.log(`[ToolCache] Run ${runId}: ${cacheHits} hits, ${cacheMisses} misses, hit rate ${Math.round(hitRate * 100)}%, ~${counterDelta(cacheStats.savedTokensEstimate, cacheStatsAtStart.savedTokensEstimate)} tokens saved`);
-    }
+    const cacheStats = this.options.registry.cacheStats();
+    const cacheHits = toolRecords.filter((record) => record.invocation.cache?.status === "hit").length;
+    const cacheMisses = toolRecords.filter((record) => record.invocation.cache?.status === "miss").length;
+    const cacheBypasses = toolRecords.filter((record) => record.invocation.cache?.status === "bypass").length;
 
     const run: AgentRun = {
       id: runId,
@@ -540,13 +503,18 @@ export class AgentRuntime {
         model: modelMetrics.snapshot(),
         tools: {
           callCount: toolRecords.length,
+          handlerCallCount: toolRecords.filter((record) => record.metrics.handlerCalled).length,
           totalDurationMs: runTiming.totalDurationMs("tool")
         },
         cache: {
           hits: cacheHits,
           misses: cacheMisses,
-          bypasses: toolRecords.length,
-          size: cacheStats.size
+          bypasses: cacheBypasses,
+          size: cacheStats.size,
+          evictions: sumToolMetric(toolRecords, "evictions"),
+          expiredEntries: sumToolMetric(toolRecords, "expiredEntries"),
+          invalidatedEntries: sumToolMetric(toolRecords, "invalidatedEntries"),
+          avoidedToolDurationMs: roundDurationMs(sumToolMetric(toolRecords, "avoidedToolDurationMs"))
         },
         persistence: {
           operationCount: persistenceOperationCount,
@@ -584,8 +552,22 @@ async function consumeTextGeneration(
   return { text, steps, response, finishReason };
 }
 
-function counterDelta(current: number, initial: number): number {
-  return Math.max(0, current - initial);
+function sumToolMetric(
+  records: ToolExecutionRecord[],
+  key: "evictions" | "expiredEntries" | "invalidatedEntries" | "avoidedToolDurationMs"
+): number {
+  return records.reduce((total, record) => total + record.metrics[key], 0);
+}
+
+function cacheAuditDetail(invocation: ToolInvocation): string {
+  const cache = invocation.cache;
+  if (!cache) {
+    return "Cache status unavailable.";
+  }
+  if (cache.status !== "hit") {
+    return `Cache ${cache.status}${cache.reason ? ` (${cache.reason})` : ""}.`;
+  }
+  return `Cache hit from invocation ${cache.sourceInvocationId ?? "unknown"}, created ${cache.originalCreatedAt ?? "unknown"}, age ${cache.ageMs ?? 0} ms.`;
 }
 
 function toModelMessages(request: AgentRunRequest) {

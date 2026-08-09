@@ -54,6 +54,14 @@ export interface ToolSchema {
   additionalProperties?: boolean;
 }
 
+export interface ToolResultCachePolicy {
+  /** Changes whenever the handler or its result contract changes. */
+  version: string;
+  /** Identity of the backing data source included in the isolation key. */
+  dataSource: string;
+  ttlMs: number;
+}
+
 export interface ToolManifest {
   id: string;
   name: string;
@@ -65,6 +73,17 @@ export interface ToolManifest {
   inputSchema: ToolSchema;
   tags: string[];
   mcpCompatible: boolean;
+  /** Missing means disabled. Only explicitly approved read-only tools may opt in. */
+  resultCache?: ToolResultCachePolicy;
+}
+
+export interface ToolInvocationCacheTrace {
+  status: "hit" | "miss" | "bypass";
+  reason?: string;
+  sourceInvocationId?: string;
+  originalCreatedAt?: string;
+  ageMs?: number;
+  avoidedToolDurationMs?: number;
 }
 
 export type SkillSource = "standalone" | "plugin";
@@ -96,6 +115,7 @@ export interface ToolInvocation {
   result?: unknown;
   error?: string;
   guidance?: ToolGuidance;
+  cache?: ToolInvocationCacheTrace;
   startedAt: string;
   completedAt?: string;
 }
@@ -138,6 +158,11 @@ export interface EvidenceArtifact {
   summary: string;
   data: unknown;
   createdAt: string;
+  cacheSource?: {
+    artifactId: string;
+    originalCreatedAt: string;
+    ageMs: number;
+  };
 }
 
 export interface AgentModelUsageMetrics {
@@ -195,6 +220,7 @@ export interface AgentRunMetrics {
   model: AgentModelMetrics;
   tools: {
     callCount: number;
+    handlerCallCount: number;
     totalDurationMs: number;
   };
   cache: {
@@ -202,6 +228,10 @@ export interface AgentRunMetrics {
     misses: number;
     bypasses: number;
     size: number;
+    evictions: number;
+    expiredEntries: number;
+    invalidatedEntries: number;
+    avoidedToolDurationMs: number;
   };
   persistence: {
     operationCount: number;

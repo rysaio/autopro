@@ -78,12 +78,17 @@ describe("agent benchmark CLI", () => {
         },
         tools: {
           callCount: { median: 0, p95: 0 },
+          handlerCallCount: { median: 0, p95: 0 },
           totalDurationMs: { median: 0, p95: 0 }
         },
         cache: {
           hits: { median: 0, p95: 0 },
           misses: { median: 0, p95: 0 },
-          bypasses: { median: 0, p95: 0 }
+          bypasses: { median: 0, p95: 0 },
+          evictions: { median: 0, p95: 0 },
+          expiredEntries: { median: 0, p95: 0 },
+          invalidatedEntries: { median: 0, p95: 0 },
+          avoidedToolDurationMs: { median: 0, p95: 0 }
         },
         persistence: {
           operationCount: { median: 5, p95: 5 },
@@ -148,8 +153,17 @@ function runFixture() {
           }
         }]
       },
-      tools: { callCount: 0, totalDurationMs: 0 },
-      cache: { hits: 0, misses: 0, bypasses: 0, size: 0 },
+      tools: { callCount: 0, handlerCallCount: 0, totalDurationMs: 0 },
+      cache: {
+        hits: 0,
+        misses: 0,
+        bypasses: 0,
+        size: 0,
+        evictions: 0,
+        expiredEntries: 0,
+        invalidatedEntries: 0,
+        avoidedToolDurationMs: 0
+      },
       persistence: { operationCount: 5, totalDurationMs: 4, failureCount: 0 }
     }
   };

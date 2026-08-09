@@ -301,8 +301,17 @@ function metricsFixture(totalDurationMs: number, persistenceOperationCount: numb
     localRoutingDurationMs: 0,
     text: { measurement: "unavailable" },
     model: { measurement: "unavailable", requests: [] },
-    tools: { callCount: 0, totalDurationMs: 0 },
-    cache: { hits: 0, misses: 0, bypasses: 0, size: 0 },
+    tools: { callCount: 0, handlerCallCount: 0, totalDurationMs: 0 },
+    cache: {
+      hits: 0,
+      misses: 0,
+      bypasses: 0,
+      size: 0,
+      evictions: 0,
+      expiredEntries: 0,
+      invalidatedEntries: 0,
+      avoidedToolDurationMs: 0
+    },
     persistence: {
       operationCount: persistenceOperationCount,
       totalDurationMs: 0,
