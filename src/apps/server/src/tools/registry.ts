@@ -146,15 +146,19 @@ export class ToolRegistry {
           risk: secOpsTool.manifest.risk,
           toolClass: secOpsTool.manifest.toolClass
         },
-        execute: async (input) => {
+        execute: async (input, { abortSignal }) => {
           const endTiming = startTiming?.();
           let record: ToolExecutionRecord;
           try {
+            const executionContext: ToolContext = { ...context };
+            if (abortSignal) {
+              executionContext.signal = abortSignal;
+            }
             record = await this.executeApiTool(
               secOpsTool.apiName,
               crypto.randomUUID(),
               coerceRecord(input),
-              context
+              executionContext
             );
           } finally {
             endTiming?.();
@@ -180,6 +184,7 @@ export class ToolRegistry {
     parsedArgs: Record<string, unknown>,
     context: ToolContext
   ): Promise<ToolExecutionRecord> {
+    context.signal?.throwIfAborted();
     const startedAt = new Date().toISOString();
     const tool = this.byApiName.get(apiName);
     if (!tool) {
@@ -224,10 +229,11 @@ export class ToolRegistry {
         bypass(policy.status)
       );
       if (policy.status === "pending_approval") {
+        const { signal: _signal, ...approvalContext } = context;
         await this.approvals.add({
           apiName,
           args: parsedArgs,
-          context,
+          context: approvalContext,
           invocation: pendingInvocation
         });
       }
@@ -279,7 +285,9 @@ export class ToolRegistry {
 
     const handlerStartedAt = performance.now();
     try {
-      const result = await tool.execute(parsedArgs, context);
+      context.signal?.throwIfAborted();
+      const operation = tool.execute(parsedArgs, context);
+      const result = await executeWithSignal(operation, context.signal);
       const handlerDurationMs = roundDuration(performance.now() - handlerStartedAt);
       if (isRecoverableToolResult(result.output)) {
         return {
@@ -342,6 +350,9 @@ export class ToolRegistry {
         }
       };
     } catch (error) {
+      if (context.signal?.aborted) {
+        throw context.signal.reason;
+      }
       const handlerDurationMs = roundDuration(performance.now() - handlerStartedAt);
       return {
         invocation: {
@@ -405,6 +416,27 @@ export class ToolRegistry {
       .map((id) => this.byManifestId.get(id))
       .filter((tool): tool is SecOpsTool => Boolean(tool));
   }
+}
+
+function executeWithSignal<Result>(operation: Promise<Result>, signal: AbortSignal | undefined): Promise<Result> {
+  if (!signal) {
+    return operation;
+  }
+  signal.throwIfAborted();
+  return new Promise<Result>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (result) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    );
+  });
 }
 
 function decidePolicy(

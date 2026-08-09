@@ -61,4 +61,12 @@ describe("config loading", () => {
 
     expect(config.durableSessionMode).toBe("disabled");
   });
+
+  it("loads a bounded agent run timeout", () => {
+    const configured = getConfig({ SECOPS_AGENT_RUN_TIMEOUT_MS: "1234" });
+    const invalid = getConfig({ SECOPS_AGENT_RUN_TIMEOUT_MS: "0" });
+
+    expect(configured.agentRunTimeoutMs).toBe(1234);
+    expect(invalid.agentRunTimeoutMs).toBe(5 * 60 * 1000);
+  });
 });

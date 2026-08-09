@@ -1,8 +1,8 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
-import type { ChatMessage, ToolGuidance, ToolInvocation, ToolManifest } from "@secops-agent/shared";
-import { clampSidebarWidth, conversationTitle, reconcileEnabledTools, ToolCallCard } from "../src/App.js";
+import type { AgentRunEvent, ChatMessage, ToolGuidance, ToolInvocation, ToolManifest } from "@secops-agent/shared";
+import { applyMessageEvent, clampSidebarWidth, conversationTitle, reconcileEnabledTools, ToolCallCard } from "../src/App.js";
 import { McpServerConfigView } from "../src/McpServerConfigView.js";
 import { PluginView } from "../src/PluginView.js";
 import { SkillView } from "../src/SkillView.js";
@@ -233,16 +233,60 @@ const nextTools = [
   toolManifest("new-default", "low"),
   toolManifest("new-high-risk", "high")
 ];
-const reconciled = reconcileEnabledTools(new Set(["kept", "removed"]), previousTools, nextTools);
+const reconciledTools = reconcileEnabledTools(new Set(["kept", "removed"]), previousTools, nextTools);
 for (const expected of ["kept", "new-default"]) {
-  if (!reconciled.has(expected)) {
+  if (!reconciledTools.has(expected)) {
     throw new Error(`Expected refreshed tool selection to include ${expected}.`);
   }
 }
 for (const unexpected of ["removed", "new-high-risk"]) {
-  if (reconciled.has(unexpected)) {
+  if (reconciledTools.has(unexpected)) {
     throw new Error(`Expected refreshed tool selection to exclude ${unexpected}.`);
   }
+}
+
+const baseMessages: ChatMessage[] = [{
+  id: "user-1",
+  role: "user",
+  content: "Investigate this signal.",
+  createdAt: now
+}];
+const firstDelta: AgentRunEvent = {
+  id: "event-1",
+  runId: "run-1",
+  type: "text_delta",
+  messageId: "assistant-1",
+  delta: "Partial ",
+  createdAt: now
+};
+const secondDelta: AgentRunEvent = {
+  ...firstDelta,
+  id: "event-2",
+  delta: "answer"
+};
+const finalMessage: AgentRunEvent = {
+  id: "event-3",
+  runId: "run-1",
+  type: "message",
+  createdAt: now,
+  message: {
+    id: "assistant-1",
+    role: "assistant",
+    content: "Partial answer.",
+    createdAt: now
+  }
+};
+const afterFirstDelta = applyMessageEvent(baseMessages, firstDelta);
+const afterSecondDelta = applyMessageEvent(afterFirstDelta, secondDelta);
+const reconciledMessages = applyMessageEvent(afterSecondDelta, finalMessage);
+if (afterFirstDelta.at(-1)?.content !== "Partial ") {
+  throw new Error("Expected the first text delta to render immediately.");
+}
+if (afterSecondDelta.at(-1)?.content !== "Partial answer") {
+  throw new Error("Expected text deltas to append to the same assistant message.");
+}
+if (reconciledMessages.length !== 2 || reconciledMessages.at(-1)?.content !== "Partial answer.") {
+  throw new Error("Expected the final message to reconcile without duplicating streamed text.");
 }
 
 function invocation(input: Partial<ToolInvocation> & Pick<ToolInvocation, "id" | "status">): ToolInvocation {

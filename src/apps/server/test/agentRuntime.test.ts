@@ -8,7 +8,7 @@ import type {
   LanguageModelV3StreamResult
 } from "@ai-sdk/provider";
 import type { LanguageModel } from "ai";
-import type { ChatMessage, EvidenceArtifact, ToolManifest, ToolGuidance } from "@secops-agent/shared";
+import type { AgentRunEvent, ChatMessage, EvidenceArtifact, ToolManifest, ToolGuidance } from "@secops-agent/shared";
 import type { ModelTool } from "../src/providers/types.js";
 import { AgentRuntime } from "../src/runtime/agentRuntime.js";
 import { MemorySessionStateStore } from "../src/runtime/sessionStateStore.js";
@@ -355,6 +355,102 @@ describe("AgentRuntime", () => {
     }));
     expect(sessionStateStore.events.find((event) => event.type === "run_completed")?.run?.metrics).toEqual(run.metrics);
   });
+
+  it("emits partial text and a cancelled terminal snapshot when the caller aborts", async () => {
+    const config = testConfig();
+    const runtime = new AgentRuntime({
+      model: new BlockingTextModel(),
+      registry: new ToolRegistry(),
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      enableLayeredRouting: false
+    });
+    const controller = new AbortController();
+    const events: AgentRunEvent[] = [];
+
+    const run = await runtime.run({
+      messages: [{ role: "user", content: "Start a long investigation." }],
+      enabledTools: []
+    }, (event) => {
+      events.push(event);
+      if (event.type === "text_delta") {
+        controller.abort({ status: "cancelled", message: "Cancelled by test analyst." });
+      }
+    }, { signal: controller.signal });
+
+    const delta = events.find((event) => event.type === "text_delta");
+    const finalMessage = events.find((event) => event.type === "message" && event.message.role === "assistant");
+    expect(run.status).toBe("cancelled");
+    expect(run.terminalReason).toBe("Cancelled by test analyst.");
+    expect(run.audit).toContainEqual(expect.objectContaining({ label: "Run cancelled", severity: "warn" }));
+    expect(finalMessage?.message.id).toBe(delta?.messageId);
+    expect(finalMessage?.message.content).toContain("Partial evidence");
+    expect(events.at(-1)?.type).toBe("run_completed");
+  });
+
+  it("records a timed_out terminal state when the run deadline elapses", async () => {
+    const config = testConfig();
+    const runtime = new AgentRuntime({
+      model: new BlockingTextModel(),
+      registry: new ToolRegistry(),
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      enableLayeredRouting: false,
+      runTimeoutMs: 20
+    });
+
+    const run = await runtime.run({
+      messages: [{ role: "user", content: "Start a slow investigation." }],
+      enabledTools: []
+    });
+
+    expect(run.status).toBe("timed_out");
+    expect(run.terminalReason).toContain("20 ms");
+    expect(run.audit).toContainEqual(expect.objectContaining({ label: "Run timed out", severity: "error" }));
+  });
+
+  it("propagates the run abort signal through an active tool boundary", async () => {
+    const config = testConfig();
+    let receivedSignal = false;
+    let observedAbort = false;
+    const registry = new ToolRegistry([
+      new TestTool("test_blocking_tool", testManifest("test.blocking", "Blocking Tool"), async (_args, context) => {
+        receivedSignal = Boolean(context.signal);
+        return new Promise((_resolve, reject) => {
+          context.signal?.addEventListener("abort", () => {
+            observedAbort = true;
+            reject(context.signal?.reason);
+          }, { once: true });
+        });
+      })
+    ]);
+    const runtime = new AgentRuntime({
+      model: createScriptedModel("Call the blocking tool."),
+      registry,
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      enableLayeredRouting: false,
+      runTimeoutMs: 20
+    });
+
+    const run = await runtime.run({
+      messages: [{ role: "user", content: "Call the blocking tool." }],
+      enabledTools: ["test.blocking"]
+    });
+
+    expect(run.status).toBe("timed_out");
+    expect(receivedSignal).toBe(true);
+    expect(observedAbort).toBe(true);
+  });
 });
 
 class FailOnceMemorySessionStateStore extends MemorySessionStateStore {
@@ -366,6 +462,36 @@ class FailOnceMemorySessionStateStore extends MemorySessionStateStore {
       throw new Error("simulated business-write failure");
     }
     await super.appendMessage(sessionId, runId, message);
+  }
+}
+
+class BlockingTextModel implements LanguageModelV3 {
+  readonly specificationVersion = "v3";
+  readonly provider = "test-provider";
+  readonly modelId = "blocking-text-model";
+  readonly supportedUrls = {};
+
+  async doGenerate(_options: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> {
+    throw new Error("BlockingTextModel only supports streaming");
+  }
+
+  async doStream(options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
+    return {
+      stream: new ReadableStream({
+        start(controller) {
+          const textId = "blocking-text";
+          controller.enqueue({ type: "stream-start", warnings: [] });
+          controller.enqueue({ type: "text-start", id: textId });
+          controller.enqueue({ type: "text-delta", id: textId, delta: "Partial evidence" });
+          const abort = () => controller.error(options.abortSignal?.reason ?? new Error("aborted"));
+          if (options.abortSignal?.aborted) {
+            abort();
+          } else {
+            options.abortSignal?.addEventListener("abort", abort, { once: true });
+          }
+        }
+      })
+    };
   }
 }
 

@@ -1782,6 +1782,14 @@ h3 {
   border-color: var(--interaction-primary-hover);
 }
 
+.send-button.stop {
+  background: #b42318;
+}
+
+.send-button.stop:hover:not(:disabled) {
+  background: #912018;
+}
+
 .send-button:disabled {
   color: var(--text-tertiary);
   border-color: var(--border-passive);

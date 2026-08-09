@@ -116,6 +116,7 @@ function runFixture() {
     id: "run-1",
     sessionId: "session-1",
     status: "completed",
+    terminalReason: "Model execution completed.",
     provider: "fixture-provider",
     model: "fixture-model",
     startedAt: "2026-08-08T00:00:00.000Z",

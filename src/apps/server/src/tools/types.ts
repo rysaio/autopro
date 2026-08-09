@@ -16,6 +16,7 @@ export interface ToolContext {
   sessionId?: string;
   approvedToolCallIds?: string[];
   stateMarkers?: string[];
+  signal?: AbortSignal;
 }
 
 export interface ToolExecutionResult {

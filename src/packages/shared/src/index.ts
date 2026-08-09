@@ -256,10 +256,13 @@ export interface AgentRoutingDecision {
   };
 }
 
+export type AgentRunStatus = "completed" | "failed" | "needs_approval" | "cancelled" | "timed_out";
+
 export interface AgentRun {
   id: string;
   sessionId?: string;
-  status: "completed" | "failed" | "needs_approval";
+  status: AgentRunStatus;
+  terminalReason: string;
   provider: string;
   model: string;
   startedAt: string;
@@ -302,17 +305,22 @@ export interface AgentSessionDetail extends AgentSessionSummary {
   }>;
 }
 
-export interface AgentRunEvent {
+export interface AgentRunEventBase {
   id: string;
   runId: string;
-  type: "run_started" | "audit" | "tool" | "artifact" | "message" | "run_completed";
   createdAt: string;
-  audit?: AuditEvent;
-  invocation?: ToolInvocation;
-  artifact?: EvidenceArtifact;
-  message?: ChatMessage;
-  run?: AgentRun;
 }
+
+export type AgentRunEventPayload =
+  | { type: "run_started" }
+  | { type: "text_delta"; messageId: string; delta: string }
+  | { type: "audit"; audit: AuditEvent }
+  | { type: "tool"; invocation: ToolInvocation }
+  | { type: "artifact"; artifact: EvidenceArtifact }
+  | { type: "message"; message: ChatMessage }
+  | { type: "run_completed"; run: AgentRun };
+
+export type AgentRunEvent = AgentRunEventBase & AgentRunEventPayload;
 
 export interface AgentRunRequest {
   /** 消息需携带原始 id（如有），服务端持久化按 id 去重，避免历史消息重复入库。 */

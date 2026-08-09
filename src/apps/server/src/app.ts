@@ -28,7 +28,7 @@ import { AgentEnvironment } from "./runtime/agentEnvironment.js";
 import { ModelConfigStore, type ModelConnection } from "./runtime/modelConfigStore.js";
 import { McpServerManager, type McpServerInput, type McpServerManagerOptions, type McpServerUpdate } from "./runtime/mcpServerManager.js";
 import { PluginManager, type PluginManagerOptions, type ResolvedMcpServer, type McpClientHandle } from "./plugins/pluginManager.js";
-import { AgentRuntime } from "./runtime/agentRuntime.js";
+import { AgentRuntime, type AgentRunAbortReason } from "./runtime/agentRuntime.js";
 import { AuditLog } from "./runtime/auditLog.js";
 import { ApprovalStore } from "./runtime/approvalStore.js";
 import { PostgresSessionStore } from "./runtime/postgresSessionStore.js";
@@ -97,6 +97,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       )
     ]
   });
+  const activeRuns = new Map<string, AbortController>();
 
   app.addHook("onRequest", async (request, reply) => {
     const host = normalizeHost(request.headers.host);
@@ -148,8 +149,8 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       },
       capabilities: {
         tools: modelStatus.configured,
-        streaming: false,
-        toolStreaming: false
+        streaming: modelStatus.configured,
+        toolStreaming: modelStatus.configured
       }
     };
     if (modelStatus.baseUrl) {
@@ -569,6 +570,20 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     }
   });
 
+  app.post("/api/agent/runs/:runId/cancel", async (request, reply): Promise<unknown> => {
+    const runId = stringField((request.params as { runId?: unknown }).runId);
+    const controller = activeRuns.get(runId);
+    if (!controller) {
+      return reply.code(404).send({ error: `Active run ${runId} was not found.` });
+    }
+    const requestedReason = stringField(coerceRecord(request.body).reason);
+    const reason: AgentRunAbortReason = requestedReason === "timed_out"
+      ? { status: "timed_out", message: "The client stream deadline elapsed." }
+      : { status: "cancelled", message: "The analyst cancelled the active run." };
+    controller.abort(reason);
+    return { runId, status: reason.status };
+  });
+
   app.post("/api/agent/events", async (request, reply): Promise<unknown> => {
     const body = request.body as Partial<AgentRunRequest> | undefined;
     const runRequest = coerceRunRequest(body);
@@ -579,22 +594,51 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!connection) {
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection);
+  const runtime = createRuntime(config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection);
+  const controller = new AbortController();
+    let activeRunId: string | undefined;
+    const abortForDisconnect = () => {
+      if (!reply.raw.writableEnded && !controller.signal.aborted) {
+        controller.abort({
+          status: "cancelled",
+          message: "The SSE client disconnected before the run completed."
+        } satisfies AgentRunAbortReason);
+      }
+    };
+  request.raw.once("aborted", abortForDisconnect);
+  reply.raw.once("close", abortForDisconnect);
+  const requestOrigin = normalizeOrigin(request.headers.origin);
     reply.hijack();
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
-      connection: "keep-alive"
+      connection: "keep-alive",
+      ...(requestOrigin && isAllowed(requestOrigin, config.allowedOrigins)
+        ? { "access-control-allow-origin": requestOrigin, vary: "Origin" }
+        : {})
     });
     try {
       await runtime.run(runRequest, (event) => {
-        auditLog.append(event);
-        reply.raw.write(`event: ${event.type}\n`);
-        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
-      });
+        if (event.type === "run_started") {
+          activeRunId = event.runId;
+          activeRuns.set(event.runId, controller);
+        }
+        if (event.type !== "text_delta") {
+          auditLog.append(event);
+        }
+        if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+          reply.raw.write(`event: ${event.type}\n`);
+          reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+        }
+      }, { signal: controller.signal });
     } catch (error) {
       request.log.error({ err: error }, "Agent event stream failed");
     } finally {
+      request.raw.off("aborted", abortForDisconnect);
+      reply.raw.off("close", abortForDisconnect);
+      if (activeRunId) {
+        activeRuns.delete(activeRunId);
+      }
       if (!reply.raw.destroyed && !reply.raw.writableEnded) {
         reply.raw.end();
       }
@@ -661,6 +705,7 @@ function createRuntime(
     sandboxRoot: config.sandboxRoot,
     workspaceRoot: config.workspaceRoot,
     sessionStateStore,
+    runTimeoutMs: config.agentRunTimeoutMs,
     agentRoutingMode: options.agentRoutingMode
       ?? (options.enableLayeredRouting === undefined
         ? config.agentRoutingMode

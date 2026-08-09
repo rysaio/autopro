@@ -95,6 +95,7 @@ describe("PostgresSessionStore", () => {
     const run: AgentRun = {
       id: runId,
       status: "completed",
+      terminalReason: "Model execution completed.",
       provider: "test-provider",
       model: "test-model",
       startedAt,

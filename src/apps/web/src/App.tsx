@@ -26,6 +26,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Square,
   Trash2,
   XCircle,
   Wrench
@@ -55,6 +56,7 @@ import type {
 import {
   approveToolCall,
   archiveSession,
+  cancelAgentRun,
   callMcpTool,
   deleteSession,
   denyToolCall,
@@ -177,6 +179,7 @@ interface SessionEntry {
   streamToolInvocations: ToolInvocation[];
   prompt: string;
   isRunning: boolean;
+  isCancelling: boolean;
   mcpResult: McpCallResult | null;
   error: string | null;
 }
@@ -192,6 +195,7 @@ function emptySessionEntry(id: string): SessionEntry {
     streamToolInvocations: [],
     prompt: "",
     isRunning: false,
+    isCancelling: false,
     mcpResult: null,
     error: null
   };
@@ -232,6 +236,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<InspectorTab>("plan");
   const [activePanel, setActivePanel] = useState<WorkbenchPanel | null>(null);
+  const activeRunIdsRef = useRef<Map<string, string>>(new Map());
+  const streamControllersRef = useRef<Map<string, AbortController>>(new Map());
   const [toolWorkspaceTab, setToolWorkspaceTab] = useState<"scope" | "mcp">("scope");
   const [workspaceHeight, setWorkspaceHeight] = useState<number>(() =>
     defaultWorkspaceHeight(null, typeof window === "undefined" ? WORKSPACE_FALLBACK_MAX : Math.max(WORKSPACE_MIN_HEIGHT, window.innerHeight - 280))
@@ -267,6 +273,7 @@ export function App() {
   const mcpResult = activeEntry.mcpResult;
   const prompt = activeEntry.prompt;
   const isRunning = activeEntry.isRunning;
+  const isCancelling = activeEntry.isCancelling;
   const sessionError = activeEntry.error;
 
   useEffect(() => {
@@ -843,7 +850,7 @@ export function App() {
     if (!entry.prompt.trim() || entry.isRunning) {
       return;
     }
-    updateSession(sessionId, { error: null, isRunning: true });
+    updateSession(sessionId, { error: null, isRunning: true, isCancelling: false });
     const nextMessages: ChatMessage[] = [
       ...entry.messages,
       {
@@ -862,6 +869,10 @@ export function App() {
       streamToolInvocations: [],
       prompt: ""
     });
+    const streamController = new AbortController();
+    activeRunIdsRef.current.delete(sessionId);
+    streamControllersRef.current.set(sessionId, streamController);
+    let finalSessionId = sessionId;
     try {
       const run = await streamAgent({
         messages: nextMessages.map((message) => ({
@@ -873,15 +884,16 @@ export function App() {
         sessionId,
         enabledTools: enabledToolList,
         permissionMode: effectivePermissionMode
-      }, (runEvent) => applyRunEvent(runEvent, sessionId));
-      const finalSessionId = run.sessionId ?? sessionId;
+      }, (runEvent) => applyRunEvent(runEvent, sessionId), { signal: streamController.signal });
+      finalSessionId = run.sessionId ?? sessionId;
       const settled: Partial<SessionEntry> = {
         lastRun: run,
         messages: run.messages,
         streamAudit: run.audit,
         streamArtifacts: run.artifacts,
         streamToolInvocations: run.toolInvocations,
-        isRunning: false
+        isRunning: false,
+        isCancelling: false
       };
       if (finalSessionId !== sessionId) {
         // 防御：服务器返回不同会话 id 时迁移条目，避免状态丢失
@@ -905,6 +917,39 @@ export function App() {
     } catch (caught) {
       updateSession(sessionId, {
         isRunning: false,
+        isCancelling: false,
+        error: caught instanceof Error ? caught.message : String(caught)
+      });
+    } finally {
+      if (streamControllersRef.current.get(sessionId) === streamController) {
+        streamControllersRef.current.delete(sessionId);
+      }
+      activeRunIdsRef.current.delete(sessionId);
+      updateSession(finalSessionId, { isRunning: false, isCancelling: false });
+    }
+  }
+
+  async function cancelActiveRun() {
+    if (!isRunning || isCancelling) {
+      return;
+    }
+    const sessionId = currentSessionId;
+    updateSession(sessionId, { isCancelling: true, error: null });
+    const runId = activeRunIdsRef.current.get(sessionId);
+    if (!runId) {
+      const controller = streamControllersRef.current.get(sessionId);
+      if (controller) {
+        controller.abort();
+      } else {
+        updateSession(sessionId, { isCancelling: false, error: "No active stream was found for this session." });
+      }
+      return;
+    }
+    try {
+      await cancelAgentRun(runId);
+    } catch (caught) {
+      updateSession(sessionId, {
+        isCancelling: false,
         error: caught instanceof Error ? caught.message : String(caught)
       });
     }
@@ -922,27 +967,30 @@ export function App() {
   }
 
   function applyRunEvent(event: AgentRunEvent, sessionId: string) {
-    const audit = event.audit;
-    const artifact = event.artifact;
-    const invocation = event.invocation;
-    const message = event.message;
-    if (event.type === "audit" && audit) {
-      updateSession(sessionId, (entry) => ({ ...entry, streamAudit: [...entry.streamAudit, audit] }));
+    if (event.type === "run_started") {
+      activeRunIdsRef.current.set(sessionId, event.runId);
       return;
     }
-    if (event.type === "artifact" && artifact) {
-      updateSession(sessionId, (entry) => ({ ...entry, streamArtifacts: [...entry.streamArtifacts, artifact] }));
+    if (event.type === "audit") {
+      updateSession(sessionId, (entry) => ({ ...entry, streamAudit: [...entry.streamAudit, event.audit] }));
       return;
     }
-    if (event.type === "tool" && invocation) {
+    if (event.type === "artifact") {
+      updateSession(sessionId, (entry) => ({ ...entry, streamArtifacts: [...entry.streamArtifacts, event.artifact] }));
+      return;
+    }
+    if (event.type === "tool") {
       updateSession(sessionId, (entry) => ({
         ...entry,
-        streamToolInvocations: upsertInvocation(entry.streamToolInvocations, invocation)
+        streamToolInvocations: upsertInvocation(entry.streamToolInvocations, event.invocation)
       }));
       return;
     }
-    if (event.type === "message" && message) {
-      updateSession(sessionId, (entry) => ({ ...entry, messages: [...entry.messages, message] }));
+    if (event.type === "text_delta" || event.type === "message") {
+      updateSession(sessionId, (entry) => ({
+        ...entry,
+        messages: applyMessageEvent(entry.messages, event)
+      }));
     }
   }
 
@@ -1896,9 +1944,19 @@ async function handleGenerateReport() {
                 </div>
               ) : null}
             </div>
-            <button className="send-button" disabled={isRunning || !prompt.trim()} id="composer-submit" type="submit">
-              {isRunning ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
-              <span>运行</span>
+            <button
+              className={`send-button${isRunning ? " stop" : ""}`}
+              disabled={isRunning ? isCancelling : !prompt.trim()}
+              id="composer-submit"
+              onClick={isRunning ? () => void cancelActiveRun() : undefined}
+              type={isRunning ? "button" : "submit"}
+            >
+              {isRunning
+                ? isCancelling
+                  ? <Loader2 className="spin" size={18} aria-hidden="true" />
+                  : <Square size={18} aria-hidden="true" />
+                : <Send size={18} aria-hidden="true" />}
+              <span>{isRunning ? isCancelling ? "停止中" : "停止" : "运行"}</span>
             </button>
           </div>
           <div
@@ -2265,8 +2323,8 @@ function labelForRole(role: ChatMessage["role"]) {
 
 function auditEventsFromRunEvents(events: AgentRunEvent[]): AuditEvent[] {
   return events
-    .map((event) => event.audit)
-    .filter((event): event is AuditEvent => Boolean(event));
+    .filter((event) => event.type === "audit")
+    .map((event) => event.audit);
 }
 
 function defaultEnabledToolIds(tools: ToolManifest[]): string[] {
@@ -2302,6 +2360,34 @@ function mergeMessages(current: ChatMessage[], nextMessages: ChatMessage[]): Cha
     ...current,
     ...nextMessages.filter((message) => !seen.has(message.id))
   ];
+}
+
+export function applyMessageEvent(current: ChatMessage[], event: AgentRunEvent): ChatMessage[] {
+  if (event.type === "text_delta") {
+    const index = current.findIndex((message) => message.id === event.messageId);
+    if (index === -1) {
+      return [
+        ...current,
+        {
+          id: event.messageId,
+          role: "assistant",
+          content: event.delta,
+          createdAt: event.createdAt
+        }
+      ];
+    }
+    return current.map((message, messageIndex) => messageIndex === index
+      ? { ...message, content: message.content + event.delta }
+      : message);
+  }
+  if (event.type !== "message") {
+    return current;
+  }
+  const index = current.findIndex((message) => message.id === event.message.id);
+  if (index === -1) {
+    return [...current, event.message];
+  }
+  return current.map((message, messageIndex) => messageIndex === index ? event.message : message);
 }
 
 // 会话标题统一方案：取首个用户输入的开头，超过 20 字截断
