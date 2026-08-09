@@ -11,7 +11,7 @@ import { stepCountIs, streamText, type LanguageModel } from "ai";
 import { ToolRegistry } from "../tools/registry.js";
 import type { ToolExecutionRecord } from "../tools/types.js";
 import { ModelMetricsRecorder } from "./modelMetrics.js";
-import { RunTimingRecorder } from "./runTimingRecorder.js";
+import { roundDurationMs, RunTimingRecorder } from "./runTimingRecorder.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
 import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP } from "./systemPrompt.js";
 import { ToolCache, type ToolCacheCategory } from "./toolCache.js";
@@ -60,11 +60,27 @@ export class AgentRuntime {
     const sessionId = request.sessionId ?? crypto.randomUUID();
     const startedAt = new Date().toISOString();
     const stateStore = this.options.sessionStateStore ?? new NoopSessionStateStore();
+    const recordsPersistence = !(stateStore instanceof NoopSessionStateStore);
     let persistence = Promise.resolve();
     let persistenceOperationCount = 0;
     let persistenceDurationMs = 0;
     let persistenceFailureCount = 0;
-    const measurePersistence = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
+    let persistenceFailure: unknown;
+    const measurePersistenceWait = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
+      if (!recordsPersistence) {
+        return operation();
+      }
+      const timing = runTiming.start("persistence");
+      try {
+        return await operation();
+      } finally {
+        timing.end();
+      }
+    };
+    const measurePersistenceWrite = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
+      if (!recordsPersistence) {
+        return operation();
+      }
       persistenceOperationCount += 1;
       const timing = runTiming.start("persistence");
       try {
@@ -77,7 +93,13 @@ export class AgentRuntime {
       }
     };
     const persist = (operation: () => Promise<void>) => {
-      persistence = persistence.then(() => measurePersistence(operation));
+      persistence = persistence.then(async () => {
+        try {
+          await measurePersistenceWrite(operation);
+        } catch (error) {
+          persistenceFailure ??= error;
+        }
+      });
     };
     const audit: AuditEvent[] = [];
     const toolInvocations: ToolInvocation[] = [];
@@ -89,6 +111,14 @@ export class AgentRuntime {
     const modelMetrics = new ModelMetricsRecorder(runTiming);
     const cacheStatsAtStart = this.toolCache.stats();
     let localRoutingDurationMs = 0;
+    const measureRouting = <Result>(operation: () => Result): Result => {
+      const startedAt = performance.now();
+      try {
+        return operation();
+      } finally {
+        localRoutingDurationMs += performance.now() - startedAt;
+      }
+    };
     let timeToFirstTextMs: number | undefined;
     let status: AgentRun["status"] = "completed";
     const toolRecords: ToolExecutionRecord[] = [];
@@ -98,11 +128,11 @@ export class AgentRuntime {
     const effectiveEnabledTools = this.options.actionLevel === "full-access"
       ? undefined
       : request.enabledTools;
-    await measurePersistence(() => stateStore.startRun({ sessionId, runId, startedAt }));
+    await measurePersistenceWrite(() => stateStore.startRun({ sessionId, runId, startedAt }));
     for (const message of messages) {
       persist(() => stateStore.appendMessage(sessionId, runId, message));
     }
-    const storedMarkers = await measurePersistence(() => stateStore.listStateMarkers(sessionId));
+    const storedMarkers = await measurePersistenceWait(() => stateStore.listStateMarkers(sessionId));
     const context = toolContext({
       runId,
       permissionMode: effectivePermissionMode,
@@ -205,9 +235,7 @@ export class AgentRuntime {
 
     try {
       // ── 初始化工具路由器 ──
-      const routeStartedAt = performance.now();
-      toolRouter.build(this.options.registry);
-      localRoutingDurationMs += performance.now() - routeStartedAt;
+      measureRouting(() => toolRouter.build(this.options.registry));
 
       let finalText = "";
       let totalSteps = 0;
@@ -217,7 +245,7 @@ export class AgentRuntime {
         // ══════════════════════════════════════════════════════════════
         // Phase 1: TRIAGE — 仅核心工具（~7个，~1100 tokens）
         // ══════════════════════════════════════════════════════════════
-        const triageCategory = toolRouter.getCategorySummary()["core-triage"];
+        const triageCategory = measureRouting(() => toolRouter.getCategorySummary()["core-triage"]);
         const triageAudit = event(
           "model_request",
           "Phase 1: Triage",
@@ -229,7 +257,13 @@ export class AgentRuntime {
 
         // 使用 registry 直接生成 triage 工具集，带上 onRecord 以追踪结果
         const triageOnRecord = createOnRecord();
-        const triageToolIds = toolRouter.getTriageToolIds();
+        const triageToolIds = measureRouting(() => toolRouter.getTriageToolIds());
+        const triageTools = measureRouting(() => this.options.registry.aiSdkTools(
+          context,
+          triageToolIds,
+          triageOnRecord,
+          startToolTiming
+        ));
         const triageGeneration = streamText({
           model: modelMetrics.wrap(this.options.model, "triage", triageToolIds.length),
           system: SYSTEM_PROMPT_TRIAGE,
@@ -239,7 +273,7 @@ export class AgentRuntime {
               role: message.role === "assistant" ? "assistant" as const : "user" as const,
               content: message.content
             })),
-          tools: this.options.registry.aiSdkTools(context, triageToolIds, triageOnRecord, startToolTiming),
+          tools: triageTools,
           stopWhen: stepCountIs(maxTriageRounds),
           temperature: 0.2
         });
@@ -259,15 +293,17 @@ export class AgentRuntime {
           .filter((m) => m.role === "user")
           .map((m) => m.content)
           .join(" ");
-        const inferenceStartedAt = performance.now();
-        const inferredCategories = toolRouter.inferCategories(triageToolCalls, userMessage);
-        localRoutingDurationMs += performance.now() - inferenceStartedAt;
-        const savedTokens = toolRouter.estimateTokenSavings(inferredCategories);
+        const inferredCategories = measureRouting(() => toolRouter.inferCategories(triageToolCalls, userMessage));
+        const savedTokens = measureRouting(() => toolRouter.estimateTokenSavings(inferredCategories));
+        const categorySummary = measureRouting(() => toolRouter.getCategorySummary());
+        const specializedToolCount = measureRouting(() => inferredCategories
+          .filter((category) => category !== "core-triage")
+          .reduce((sum, category) => sum + (categorySummary[category]?.count ?? 0), 0));
 
         const routeAudit = event(
           "model_request",
           "Phase 2: Deep Dive",
-          `Routing: inferred categories [${inferredCategories.join(", ")}], estimated token savings: ~${savedTokens} tokens (${toolRouter.getCategorySummary()["core-triage"]?.count ?? 0} core + ${inferredCategories.filter((c) => c !== "core-triage").reduce((sum, c) => sum + (toolRouter.getCategorySummary()[c]?.count ?? 0), 0)} specialized tools)`
+          `Routing: inferred categories [${inferredCategories.join(", ")}], estimated token savings: ~${savedTokens} tokens (${categorySummary["core-triage"]?.count ?? 0} core + ${specializedToolCount} specialized tools)`
         );
         audit.push(routeAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, routeAudit));
@@ -281,7 +317,13 @@ export class AgentRuntime {
         // 不依赖关键词推断（“拉黑/记笔记”等说法可能不在推断表内）
         const deepCategories = new Set(inferredCategories);
         deepCategories.add("sandbox-actions");
-        const deepToolIds = toolRouter.getDeepToolIds([...deepCategories]);
+        const deepToolIds = measureRouting(() => toolRouter.getDeepToolIds([...deepCategories]));
+        const deepTools = measureRouting(() => this.options.registry.aiSdkTools(
+          context,
+          deepToolIds,
+          deepOnRecord,
+          startToolTiming
+        ));
 
         // 使用 Phase 1 的完整消息历史作为 Phase 2 的输入
         const phase1Messages = triageResult.response.messages;
@@ -290,7 +332,7 @@ export class AgentRuntime {
           model: modelMetrics.wrap(this.options.model, "deep", deepToolIds.length),
           system: SYSTEM_PROMPT_DEEP,
           messages: phase1Messages,
-          tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord, startToolTiming),
+          tools: deepTools,
           stopWhen: stepCountIs(maxDeepRounds),
           temperature: 0.2
         });
@@ -335,12 +377,12 @@ export class AgentRuntime {
         persist(() => stateStore.recordAuditEvent(sessionId, runId, requestAudit));
         emit({ type: "audit", audit: requestAudit });
 
-        const singleTools = this.options.registry.aiSdkTools(
+        const singleTools = measureRouting(() => this.options.registry.aiSdkTools(
           context,
           effectiveEnabledTools,
           createOnRecord(),
           startToolTiming
-        );
+        ));
         const generation = streamText({
           model: modelMetrics.wrap(
             this.options.model,
@@ -395,6 +437,15 @@ export class AgentRuntime {
 
     // Flush all queued state writes before taking the run-level snapshot.
     await persistence;
+    if (persistenceFailure !== undefined) {
+      status = "failed";
+      audit.push(event(
+        "model_response",
+        "Persistence error",
+        persistenceFailure instanceof Error ? persistenceFailure.message : String(persistenceFailure),
+        "error"
+      ));
+    }
 
     // ── 缓存统计 ──
     const cacheStats = this.toolCache.stats();
@@ -424,7 +475,7 @@ export class AgentRuntime {
         mode: useLayeredRouting ? "layered" : "single",
         totalDurationMs: 0,
         localOrchestrationDurationMs: 0,
-        localRoutingDurationMs: roundedMs(localRoutingDurationMs),
+        localRoutingDurationMs: roundDurationMs(localRoutingDurationMs),
         text: timeToFirstTextMs === undefined
           ? { measurement: "unavailable" }
           : { timeToFirstTextMs, measurement: "provider-stream" },
@@ -441,7 +492,7 @@ export class AgentRuntime {
         },
         persistence: {
           operationCount: persistenceOperationCount,
-          totalDurationMs: roundedMs(persistenceDurationMs),
+          totalDurationMs: roundDurationMs(persistenceDurationMs),
           failureCount: persistenceFailureCount
         }
       }
@@ -449,14 +500,10 @@ export class AgentRuntime {
     const completionEvent = createRunEvent({ type: "run_completed", run });
     Object.assign(run.metrics, runTiming.snapshot());
     // The completion export is intentionally outside the metrics snapshot boundary.
-    await measurePersistence(() => stateStore.commitRunCompletion(sessionId, run, completionEvent));
+    await measurePersistenceWait(() => stateStore.commitRunCompletion(sessionId, run, completionEvent));
     onEvent?.(completionEvent);
     return run;
   }
-}
-
-function roundedMs(value: number): number {
-  return Math.round(value * 100) / 100;
 }
 
 async function consumeTextGeneration(

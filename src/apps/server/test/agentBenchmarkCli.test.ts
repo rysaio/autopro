@@ -96,7 +96,9 @@ describe("agent benchmark CLI", () => {
           cacheRead: { median: 20, p95: 20 },
           cacheWrite: { median: 3, p95: 3 },
           reasoning: { median: 6, p95: 6 }
-        }
+        },
+        inputTokens: { median: 140, p95: 140 },
+        outputTokens: { median: 34, p95: 34 }
       }
     });
     expect(`${stdout}${stderr}`).not.toContain(token);

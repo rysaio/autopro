@@ -13,10 +13,21 @@ import type {
   LanguageModelV3Usage
 } from "@ai-sdk/provider";
 import { wrapLanguageModel, type LanguageModel } from "ai";
-import type { RunTimingRecorder } from "./runTimingRecorder.js";
+import {
+  roundDurationMs,
+  type RunTimingRecorder,
+  type RunTimingSpan
+} from "./runTimingRecorder.js";
 
 type ModelPhase = AgentModelRequestMetrics["phase"];
 type StreamPart = LanguageModelV2StreamPart | LanguageModelV3StreamPart;
+
+interface ProviderAttemptContext {
+  phase: ModelPhase;
+  exposedToolCount: number;
+  startedAt: number;
+  timing: RunTimingSpan | undefined;
+}
 
 export class ModelMetricsRecorder {
   private readonly requests: AgentModelRequestMetrics[] = [];
@@ -65,7 +76,7 @@ export class ModelMetricsRecorder {
     return {
       measurement: "provider-attempts",
       requestCount: this.requests.length,
-      totalDurationMs: roundedMs(this.requests.reduce((total, request) => total + request.durationMs, 0)),
+      totalDurationMs: roundDurationMs(this.requests.reduce((total, request) => total + request.durationMs, 0)),
       retryCount: retryCount(this.requests),
       requests: [...this.requests]
     };
@@ -107,24 +118,17 @@ export class ModelMetricsRecorder {
     exposedToolCount: number,
     metrics: (result: Result) => { finishReason: string; usage: AgentModelUsageMetrics }
   ): Promise<Result> {
-    const timing = this.runTiming?.start("provider");
-    const startedAt = performance.now();
+    const attempt = this.startAttempt(phase, exposedToolCount);
     try {
       const result = await generate();
       const measured = metrics(result);
-      this.recordCompleted(
-        phase,
-        exposedToolCount,
-        startedAt,
-        measured.finishReason,
-        measured.usage
-      );
+      this.recordCompleted(attempt, measured.finishReason, measured.usage);
       return result;
     } catch (error) {
-      this.recordFailed(phase, exposedToolCount, startedAt);
+      this.recordFailed(attempt);
       throw error;
     } finally {
-      timing?.end();
+      attempt.timing?.end();
     }
   }
 
@@ -140,9 +144,8 @@ export class ModelMetricsRecorder {
       usage: AgentModelUsageMetrics;
     }
   ): Promise<Result> {
-    const startedAt = performance.now();
-    const timing = this.runTiming?.start("provider");
-    const finishTiming = () => timing?.end();
+    const attempt = this.startAttempt(phase, exposedToolCount);
+    const finishTiming = () => attempt.timing?.end();
     try {
       const result = await stream();
       return {
@@ -150,50 +153,51 @@ export class ModelMetricsRecorder {
         stream: observeStream(result.stream, {
           onFinish: (part) => {
             const measured = metrics(part);
-            this.recordCompleted(
-              phase,
-              exposedToolCount,
-              startedAt,
-              measured.finishReason,
-              measured.usage
-            );
+            this.recordCompleted(attempt, measured.finishReason, measured.usage);
             finishTiming();
           },
           onFailure: () => {
-            this.recordFailed(phase, exposedToolCount, startedAt);
+            this.recordFailed(attempt);
             finishTiming();
           }
         })
       };
     } catch (error) {
-      this.recordFailed(phase, exposedToolCount, startedAt);
+      this.recordFailed(attempt);
       finishTiming();
       throw error;
     }
   }
 
+  private startAttempt(phase: ModelPhase, exposedToolCount: number): ProviderAttemptContext {
+    return {
+      phase,
+      exposedToolCount,
+      startedAt: performance.now(),
+      timing: this.runTiming?.start("provider")
+    };
+  }
+
   private recordCompleted(
-    phase: ModelPhase,
-    exposedToolCount: number,
-    startedAt: number,
+    attempt: ProviderAttemptContext,
     finishReason: string,
     usage: AgentModelUsageMetrics
   ): void {
     this.requests.push({
-      phase,
-      durationMs: elapsedMs(startedAt),
-      exposedToolCount,
+      phase: attempt.phase,
+      durationMs: elapsedMs(attempt.startedAt),
+      exposedToolCount: attempt.exposedToolCount,
       outcome: "completed",
       finishReason,
       usage
     });
   }
 
-  private recordFailed(phase: ModelPhase, exposedToolCount: number, startedAt: number): void {
+  private recordFailed(attempt: ProviderAttemptContext): void {
     this.requests.push({
-      phase,
-      durationMs: elapsedMs(startedAt),
-      exposedToolCount,
+      phase: attempt.phase,
+      durationMs: elapsedMs(attempt.startedAt),
+      exposedToolCount: attempt.exposedToolCount,
       outcome: "failed",
       usage: {}
     });
@@ -285,9 +289,5 @@ function setNumber(
 }
 
 function elapsedMs(startedAt: number): number {
-  return roundedMs(performance.now() - startedAt);
-}
-
-function roundedMs(value: number): number {
-  return Math.round(value * 100) / 100;
+  return roundDurationMs(performance.now() - startedAt);
 }

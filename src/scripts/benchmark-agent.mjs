@@ -51,6 +51,7 @@ async function runBenchmark({ baseUrl, runs }) {
       completedRuns: samples.filter((run) => run.status === "completed").length,
       clientObservedDurationMs: distribution(samples.map((run) => run.clientObservedDurationMs)),
       serverTotalDurationMs: distribution(samples.map((run) => run.metrics.totalDurationMs)),
+      // Preserve the v1 aliases while exposing the explicit Issue #2 fields above.
       totalDurationMs: distribution(samples.map((run) => run.metrics.totalDurationMs)),
       localOrchestrationDurationMs: distribution(samples.map((run) => run.metrics.localOrchestrationDurationMs)),
       localRoutingDurationMs: distribution(samples.map((run) => run.metrics.localRoutingDurationMs)),
