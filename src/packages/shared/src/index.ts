@@ -172,8 +172,14 @@ export type AgentModelMetrics =
 
 export interface AgentRunMetrics {
   schemaVersion: 1;
+  /** Metrics are sealed before the completion snapshot is exported to storage and clients. */
+  measurementBoundary: "before-completion-export";
   mode: "layered" | "single";
+  /** Monotonic elapsed time from run start until the terminal snapshot is fully constructed. */
   totalDurationMs: number;
+  /** Total duration excluding the union of provider, tool, and business-persistence wait intervals. */
+  localOrchestrationDurationMs: number;
+  /** Local subset spent building and applying the current tool-routing decision. */
   localRoutingDurationMs: number;
   text: AgentTextMetrics;
   model: AgentModelMetrics;
@@ -189,6 +195,7 @@ export interface AgentRunMetrics {
   };
   persistence: {
     operationCount: number;
+    /** Business-state writes completed before terminal snapshot export; excludes the export itself. */
     totalDurationMs: number;
     failureCount: number;
   };

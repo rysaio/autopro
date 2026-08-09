@@ -8,7 +8,7 @@ import { isRecoverableToolResult } from "./guidance.js";
 import { validateToolInput } from "./inputValidation.js";
 import { createReportTools } from "./reportTools.js";
 import { createSecOpsTools } from "./secopsTools.js";
-import type { SecOpsTool, ToolContext, ToolExecutionRecord } from "./types.js";
+import type { SecOpsTool, ToolContext, ToolExecutionRecord, ToolTimingScopeFactory } from "./types.js";
 
 export class ToolRegistry {
   private readonly byApiName = new Map<string, SecOpsTool>();
@@ -111,7 +111,8 @@ export class ToolRegistry {
   aiSdkTools(
     context: ToolContext,
     enabledManifestIds?: string[],
-    onRecord?: (record: ToolExecutionRecord) => void
+    onRecord?: (record: ToolExecutionRecord) => void,
+    startTiming?: ToolTimingScopeFactory
   ): ToolSet {
     const tools: ToolSet = {};
     for (const secOpsTool of this.resolveEnabled(enabledManifestIds)) {
@@ -126,12 +127,18 @@ export class ToolRegistry {
           toolClass: secOpsTool.manifest.toolClass
         },
         execute: async (input) => {
-          const record = await this.executeApiTool(
-            secOpsTool.apiName,
-            crypto.randomUUID(),
-            coerceRecord(input),
-            context
-          );
+          const endTiming = startTiming?.();
+          let record: ToolExecutionRecord;
+          try {
+            record = await this.executeApiTool(
+              secOpsTool.apiName,
+              crypto.randomUUID(),
+              coerceRecord(input),
+              context
+            );
+          } finally {
+            endTiming?.();
+          }
           onRecord?.(record);
           return record.invocation.result ?? {
             status: record.invocation.status,

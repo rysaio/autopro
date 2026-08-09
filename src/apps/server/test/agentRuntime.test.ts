@@ -265,7 +265,9 @@ describe("AgentRuntime", () => {
         }
       }
     ]);
-    expect(sessionStateStore.events.some((event) => event.type === "run_completed")).toBe(true);
+    const completionEvent = sessionStateStore.events.find((event) => event.type === "run_completed");
+    expect(completionEvent?.run?.metrics).toEqual(run.metrics);
+    expect(sessionStateStore.runs[0]?.completed?.metrics).toEqual(run.metrics);
     expect(sessionStateStore.audit.some((event) => event.type === "tool_result")).toBe(true);
   });
 });

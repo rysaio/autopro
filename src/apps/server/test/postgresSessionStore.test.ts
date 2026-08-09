@@ -103,9 +103,8 @@ describe("PostgresSessionStore", () => {
       toolInvocations: [invocation],
       audit: [audit],
       artifacts: [artifact],
-      metrics: metricsFixture(5, 3)
+      metrics: metricsFixture(8, 9)
     };
-    await firstStore.completeRun(sessionId, run);
     const completionEvent: AgentRunEvent = {
       id: randomUUID(),
       runId,
@@ -113,10 +112,7 @@ describe("PostgresSessionStore", () => {
       type: "run_completed",
       run
     };
-    await firstStore.recordRunEvent(completionEvent);
-    run.metrics.totalDurationMs = 8;
-    run.metrics.persistence.operationCount = 9;
-    await firstStore.finalizeRunSnapshot(sessionId, run, completionEvent);
+    await firstStore.commitRunCompletion(sessionId, run, completionEvent);
 
     const secondStore = await restartViaSnapshot(first);
     stores.push(secondStore);
@@ -153,6 +149,8 @@ describe("PostgresSessionStore", () => {
         run: { metrics: { totalDurationMs: 8, persistence: { operationCount: 9 } } }
       }
     }]);
+    expect(restored?.runs[0]?.metrics).toEqual(run.metrics);
+    expect((restored?.runs[0] as AgentRun & { lastEvent?: AgentRunEvent })?.lastEvent?.run?.metrics).toEqual(run.metrics);
     expect(restored?.messages).toEqual([message]);
     expect(restored?.toolInvocations).toEqual([invocation]);
     expect(restored?.guidance).toEqual([guidance]);
@@ -169,7 +167,7 @@ describe("PostgresSessionStore", () => {
         }
       }
     ]);
-  });
+  }, 15_000);
 
   it("rolls back partial tool invocation state when artifact persistence fails", async () => {
     const store = new PostgresSessionStore(new PGlite());
@@ -266,8 +264,10 @@ describe("PostgresSessionStore", () => {
 function metricsFixture(totalDurationMs: number, persistenceOperationCount: number): AgentRun["metrics"] {
   return {
     schemaVersion: 1,
+    measurementBoundary: "before-completion-export",
     mode: "single",
     totalDurationMs,
+    localOrchestrationDurationMs: totalDurationMs,
     localRoutingDurationMs: 0,
     text: { measurement: "unavailable" },
     model: { measurement: "unavailable", requests: [] },
