@@ -5,13 +5,17 @@ import { scriptedModelForRequest, testConfig } from "./fixtures/testConfig.js";
 describe("agent run event stream", () => {
   it("streams run lifecycle events and final run payload", async () => {
     const app = buildServer(testConfig({
-      SECOPS_ACTION_LEVEL: "sandbox"
+      SECOPS_ACTION_LEVEL: "sandbox",
+      SECOPS_DURABLE_SESSIONS: "on",
+      SECOPS_DATA_DIR: "memory://"
     }), { createModel: scriptedModelForRequest });
+    const sessionId = "session-sse-metrics";
 
     const response = await app.inject({
       method: "POST",
       url: "/api/agent/events",
       payload: {
+        sessionId,
         messages: [
           {
             role: "user",
@@ -33,6 +37,16 @@ describe("agent run event stream", () => {
     expect(response.body).toContain('"status":"completed"');
     expect(response.body).toContain('"toolName":"ioc.enrich"');
     expect(response.body).toContain('"sessionId"');
+    const completionEvent = response.body
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice("data: ".length)))
+      .find((event) => event.type === "run_completed");
+    expect(completionEvent?.run.metrics.measurementBoundary).toBe("before-completion-export");
+    const restored = await app.inject({ method: "GET", url: `/api/sessions/${sessionId}` });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().runs[0].metrics).toEqual(completionEvent.run.metrics);
+    expect(restored.json().runs[0].lastEvent.run.metrics).toEqual(completionEvent.run.metrics);
 
     await app.close();
   });

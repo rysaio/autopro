@@ -151,21 +151,32 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
     }));
   }
 
-  async completeRun(sessionId: string, run: AgentRun): Promise<void> {
-    await this.db.query(
-      `UPDATE secops_runs
-       SET status = $3,
-           provider = $4,
-           model = $5,
-           completed_at = $6,
-           run = $7::jsonb
-       WHERE id = $1 AND session_id = $2`,
-      [run.id, sessionId, run.status, run.provider, run.model, run.completedAt, JSON.stringify(run)]
-    );
-    await this.db.query(
-      `UPDATE secops_sessions SET updated_at = $2 WHERE id = $1`,
-      [sessionId, run.completedAt]
-    );
+  async commitRunCompletion(sessionId: string, run: AgentRun, completionEvent: AgentRunEvent): Promise<void> {
+    await withTransaction(this.db, async (client) => {
+      await client.query(
+        `UPDATE secops_runs
+         SET status = $3,
+             provider = $4,
+             model = $5,
+             completed_at = $6,
+             run = $7::jsonb || jsonb_build_object('lastEvent', $8::jsonb)
+         WHERE id = $1 AND session_id = $2`,
+        [
+          run.id,
+          sessionId,
+          run.status,
+          run.provider,
+          run.model,
+          run.completedAt,
+          JSON.stringify(run),
+          JSON.stringify(completionEvent)
+        ]
+      );
+      await client.query(
+        `UPDATE secops_sessions SET updated_at = $2 WHERE id = $1`,
+        [sessionId, run.completedAt]
+      );
+    });
   }
 
   async restoreSession(sessionId: string): Promise<RestoredSession | undefined> {

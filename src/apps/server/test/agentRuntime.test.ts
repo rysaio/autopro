@@ -8,16 +8,41 @@ import type {
   LanguageModelV3StreamResult
 } from "@ai-sdk/provider";
 import type { LanguageModel } from "ai";
-import type { EvidenceArtifact, SkillManifest, ToolGuidance } from "@secops-agent/shared";
+import type { ChatMessage, EvidenceArtifact, SkillManifest, ToolGuidance } from "@secops-agent/shared";
 import type { ModelTool } from "../src/providers/types.js";
 import { AgentRuntime } from "../src/runtime/agentRuntime.js";
 import { MemorySessionStateStore } from "../src/runtime/sessionStateStore.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/types.js";
-import { createScriptedModel } from "./fixtures/scriptedModel.js";
+import { createScriptedModel, streamResultFromGenerateResult } from "./fixtures/scriptedModel.js";
 import { testConfig } from "./fixtures/testConfig.js";
 
 describe("AgentRuntime", () => {
+  it("does not report persistence work for the disabled no-op store", async () => {
+    const config = testConfig();
+    const runtime = new AgentRuntime({
+      model: createScriptedModel("Reply without calling a tool."),
+      registry: new ToolRegistry(),
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      enableLayeredRouting: false
+    });
+
+    const run = await runtime.run({
+      messages: [{ role: "user", content: "Reply without calling a tool." }],
+      enabledTools: []
+    });
+
+    expect(run.metrics.persistence).toEqual({
+      operationCount: 0,
+      totalDurationMs: 0,
+      failureCount: 0
+    });
+  });
+
   it("executes model-requested tools and returns audit evidence", async () => {
     const config = testConfig({
       SECOPS_ACTION_LEVEL: "sandbox"
@@ -265,10 +290,82 @@ describe("AgentRuntime", () => {
         }
       }
     ]);
-    expect(sessionStateStore.events.some((event) => event.type === "run_completed")).toBe(true);
+    const completionEvent = sessionStateStore.events.find((event) => event.type === "run_completed");
+    expect(completionEvent?.run?.metrics).toEqual(run.metrics);
+    expect(sessionStateStore.runs[0]?.completed?.metrics).toEqual(run.metrics);
     expect(sessionStateStore.audit.some((event) => event.type === "tool_result")).toBe(true);
   });
+
+  it("counts business writes without counting the state-marker recovery read", async () => {
+    const config = testConfig();
+    const sessionStateStore = new MemorySessionStateStore();
+    const runtime = new AgentRuntime({
+      model: createScriptedModel("Reply without calling a tool."),
+      registry: new ToolRegistry(),
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      sessionStateStore,
+      enableLayeredRouting: false
+    });
+
+    const run = await runtime.run({
+      messages: [{ role: "user", content: "Reply without calling a tool." }],
+      enabledTools: []
+    });
+    const recordedEvents = sessionStateStore.events.filter((event) => event.type !== "run_completed").length;
+    const completedBusinessWrites = 1
+      + sessionStateStore.messages.length
+      + sessionStateStore.audit.length
+      + recordedEvents;
+
+    expect(run.metrics.persistence.operationCount).toBe(completedBusinessWrites);
+    expect(run.metrics.persistence.failureCount).toBe(0);
+  });
+
+  it("exports queued business-write failures in the terminal snapshot", async () => {
+    const config = testConfig();
+    const sessionStateStore = new FailOnceMemorySessionStateStore();
+    const runtime = new AgentRuntime({
+      model: createScriptedModel("Reply without calling a tool."),
+      registry: new ToolRegistry(),
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      sessionStateStore,
+      enableLayeredRouting: false
+    });
+
+    const run = await runtime.run({
+      messages: [{ role: "user", content: "Reply without calling a tool." }],
+      enabledTools: []
+    });
+
+    expect(run.status).toBe("failed");
+    expect(run.metrics.persistence.failureCount).toBe(1);
+    expect(run.audit).toContainEqual(expect.objectContaining({
+      label: "Persistence error",
+      severity: "error"
+    }));
+    expect(sessionStateStore.events.find((event) => event.type === "run_completed")?.run?.metrics).toEqual(run.metrics);
+  });
 });
+
+class FailOnceMemorySessionStateStore extends MemorySessionStateStore {
+  private shouldFail = true;
+
+  override async appendMessage(sessionId: string, runId: string, message: ChatMessage): Promise<void> {
+    if (this.shouldFail) {
+      this.shouldFail = false;
+      throw new Error("simulated business-write failure");
+    }
+    await super.appendMessage(sessionId, runId, message);
+  }
+}
 
 class TestTool implements SecOpsTool {
   constructor(
@@ -358,8 +455,8 @@ class TwoStepToolModel implements LanguageModelV3 {
     };
   }
 
-  async doStream(_options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
-    throw new Error("Streaming is not implemented for the two-step test model.");
+  async doStream(options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
+    return streamResultFromGenerateResult(await this.doGenerate(options));
   }
 }
 

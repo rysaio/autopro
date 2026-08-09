@@ -130,6 +130,77 @@ export interface EvidenceArtifact {
   createdAt: string;
 }
 
+export interface AgentModelUsageMetrics {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+}
+
+export interface AgentModelRequestMetrics {
+  phase: "triage" | "deep" | "single";
+  durationMs: number;
+  exposedToolCount: number;
+  outcome: "completed" | "failed";
+  finishReason?: string;
+  usage: AgentModelUsageMetrics;
+}
+
+export type AgentTextMetrics =
+  | {
+      measurement: "provider-stream";
+      timeToFirstTextMs: number;
+    }
+  | {
+      measurement: "unavailable";
+    };
+
+export type AgentModelMetrics =
+  | {
+      measurement: "provider-attempts";
+      requestCount: number;
+      totalDurationMs: number;
+      retryCount: number;
+      requests: AgentModelRequestMetrics[];
+    }
+  | {
+      measurement: "unavailable";
+      requests: [];
+    };
+
+export interface AgentRunMetrics {
+  schemaVersion: 1;
+  /** Metrics are sealed before the completion snapshot is exported to storage and clients. */
+  measurementBoundary: "before-completion-export";
+  mode: "layered" | "single";
+  /** Monotonic elapsed time from run start until the terminal snapshot is fully constructed. */
+  totalDurationMs: number;
+  /** Total duration excluding the union of provider, tool, and business-persistence wait intervals. */
+  localOrchestrationDurationMs: number;
+  /** Local subset spent building and applying the current tool-routing decision. */
+  localRoutingDurationMs: number;
+  text: AgentTextMetrics;
+  model: AgentModelMetrics;
+  tools: {
+    callCount: number;
+    totalDurationMs: number;
+  };
+  cache: {
+    hits: number;
+    misses: number;
+    bypasses: number;
+    size: number;
+  };
+  persistence: {
+    operationCount: number;
+    /** Business-state writes completed before terminal snapshot export; excludes the export itself. */
+    totalDurationMs: number;
+    failureCount: number;
+  };
+}
+
 export interface AgentRun {
   id: string;
   sessionId?: string;
@@ -142,6 +213,7 @@ export interface AgentRun {
   toolInvocations: ToolInvocation[];
   audit: AuditEvent[];
   artifacts: EvidenceArtifact[];
+  metrics: AgentRunMetrics;
 }
 
 export interface AgentSessionSummary {
