@@ -12,6 +12,15 @@ describe("config loading", () => {
     expect(config.modelConfigPath.endsWith(path.join("runtime", "config", "model.json"))).toBe(true);
     expect(config.toolVisibilityPath.endsWith(path.join("runtime", "config", "toolVisibility.json"))).toBe(true);
     expect(config.pluginsDir.endsWith(path.join("runtime", "plugins"))).toBe(true);
+    expect(config.agentRoutingMode).toBe("deterministic");
+  });
+
+  it("enables the temporary layered rollback mode explicitly", () => {
+    const config = getConfig({
+      SECOPS_AGENT_ROUTING_MODE: "layered"
+    });
+
+    expect(config.agentRoutingMode).toBe("layered");
   });
 
   it("respects explicit model, tool visibility, and plugin path overrides", () => {

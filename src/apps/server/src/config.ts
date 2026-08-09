@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { AutomationLevel } from "@secops-agent/shared";
+import type { AgentRoutingMode, AutomationLevel } from "@secops-agent/shared";
 
 const discoveredWorkspaceRoot = findWorkspaceRoot(process.cwd());
 dotenv.config({ path: path.join(discoveredWorkspaceRoot, ".env") });
@@ -14,6 +14,7 @@ export interface AppConfig {
   port: number;
   bindHost: string;
   actionLevel: AutomationLevel;
+  agentRoutingMode: AgentRoutingMode;
   sandboxRoot: string;
   workspaceRoot: string;
   skillsDir: string;
@@ -40,6 +41,7 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: Number(env.PORT) || 4317,
     bindHost: env.SECOPS_BIND_HOST?.trim() || "127.0.0.1",
     actionLevel,
+    agentRoutingMode: parseAgentRoutingMode(env.SECOPS_AGENT_ROUTING_MODE),
     sandboxRoot: resolveWorkspacePath(env.SECOPS_SANDBOX_ROOT, workspaceRoot, path.join("runtime", "sandbox")),
     skillsDir: resolveWorkspacePath(env.SECOPS_SKILLS_DIR, workspaceRoot, path.join("runtime", "skills")),
     workspaceRoot,
@@ -102,6 +104,10 @@ function parseActionLevel(value: string | undefined): AutomationLevel {
     return value;
   }
   return "sandbox";
+}
+
+function parseAgentRoutingMode(value: string | undefined): AgentRoutingMode {
+  return value?.trim().toLowerCase() === "layered" ? "layered" : "deterministic";
 }
 
 function parseCsv(value: string | undefined): string[] | undefined {

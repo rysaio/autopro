@@ -4,46 +4,39 @@
 
 本研究在传统安全编排自动化与响应(SOAR) Agent架构基础上，提出两项关键算法创新，显著降低大语言模型(LLM)推理成本：
 
-### 创新一：分层工具路由 (Layered Tool Routing)
+### 创新一：确定性本地预路由 (Deterministic Local Pre-routing)
 
-这个改进把“工具何时暴露给模型”从路由器硬编码，改成了“工具声明默认值 + 用户运行时覆盖”。
-
-**改进前**
-
-路由器主要依赖工具名称和插件前缀分类，例如 `wazuh.*`、`shuffle.*`：
-
-- 已知插件可以进入对应 deep 类别
-- 未知第三方插件会落入 `core-triage`
-- 这些工具在 triage 阶段可能被全部发送给模型，导致 token 优化失效
-- 用户无法调整单个工具的暴露阶段
-
-**改进后**
-
-每个工具通过 manifest 的 `deferLoading` 字段声明暴露阶段：
-
-- `false`：常驻工具，triage 和 deep 都可见
-- `true`：按需工具，triage 不可见，只在 deep 阶段按推断类别加载
-
-默认策略如下：
-
-- Core 工具：`false`，继续承担分诊
-- 报告和动作工具：`true`
-- Wazuh、Shuffle 内置插件工具：`true`
-- 第三方 MCP 工具未声明时：`false`，保持兼容性
-
-插件通过 MCP `_meta.deferLoading` 向主服务透传声明。运行时工具集合按以下流程生成：
+默认执行路径不再无条件串行调用 triage 和 deep 两个模型阶段。服务先在本地根据最新用户意图、必要的最近对话、当前工具 manifest、`enabledTools` 和权限策略生成路由决策，然后启动一次最终模型执行。
 
 ```text
-工具声明 + 用户覆盖
-        ↓
-triage = 所有 deferLoading=false 的工具
-        ↓
-根据用户问题推断 Wazuh / Shuffle / Reporting 等类别
-        ↓
-deep = 所有常驻工具 + 命中类别的 deferLoading=true 工具
+最新用户意图 + 有效对话上下文 + 工具目录 + 启用集合 + 权限策略
+                              ↓
+                    确定性本地路由决策
+                              ↓
+                  一次最终模型执行（含工具循环）
 ```
 
-动作工具仍固定加入 deep 的 `sandbox-actions` 类别，因此不会因为用户措辞没有命中关键词而不可达。
+每个 `AgentRun.routing` 都记录：
+
+- 最终选择的 manifest 工具 ID
+- 命中的路由分组
+- 置信度等级和分数
+- 可复现的选择原因
+- 是否使用额外模型阶段及其原因
+
+`enabledTools` 在所有模式下都是上限：路由输出必须与它取交集，显式空数组表示不向模型暴露任何工具。Action 工具还必须同时满足用户已启用、意图相关、部署级 `actionLevel` 允许和请求级 `permissionMode` 允许；可见性本身不会绕过执行时的审批。
+
+高置信度单域请求直接选择对应分组。跨域请求由本地规则合并分组，不自动增加远程路由调用。未知或低置信度请求使用明确的本地回退，只考虑已启用、非 action 的常驻工具，并在路由结果中记录低置信度；它不会静默恢复双阶段执行。
+
+旧的双阶段路径仅作为临时回滚模式保留：
+
+```powershell
+$env:SECOPS_AGENT_ROUTING_MODE = "layered"
+```
+
+未设置或设为其他值时使用 `deterministic`。回滚模式同样严格应用 `enabledTools`、action 策略和原始消息保留规则。
+
+每个工具的 `deferLoading` 声明继续用于常驻/按需暴露：`false` 表示常驻，`true` 表示只有命中对应路由分组时才加载。插件通过 MCP `_meta.deferLoading` 透传默认值，用户可通过 API 覆盖任意已注册工具：
 
 用户可以通过 API 覆盖任意已注册工具：
 
@@ -56,7 +49,7 @@ Content-Type: application/json
 { "deferLoading": false }
 ```
 
-上述覆盖会让 `wazuh.alerts.search` 从按需工具变成常驻工具，立即进入 triage。清除覆盖后恢复工具原始声明：
+上述覆盖会让 `wazuh.alerts.search` 从按需工具变成常驻工具。清除覆盖后恢复工具原始声明：
 
 ```http
 DELETE /api/tools/visibility/wazuh.alerts.search
@@ -64,15 +57,6 @@ DELETE /api/tools/visibility/wazuh.alerts.search
 
 覆盖持久化在 `runtime/config/toolVisibility.json`，服务重启或插件 reload 后仍然生效。
 `GET /api/tools` 返回应用覆盖后的最终 `deferLoading` 状态。
-
-**改进效果**
-
-- 第三方插件不再依赖主服务增加硬编码前缀
-- triage 只携带真正需要常驻的工具，降低 tool schema token 消耗
-- deep 只增加当前类别需要的按需工具，减少无关工具的注意力干扰
-- 用户可以根据实际工作流提升或延迟任意工具
-- 插件 reload 后覆盖不会丢失
-- 暴露级别与执行权限完全独立：工具可见不代表可以执行，审批、风险和 `actionLevel` 策略保持不变
 
 ### 创新二：语义工具缓存 (Semantic Tool Cache)
 
@@ -101,12 +85,10 @@ DELETE /api/tools/visibility/wazuh.alerts.search
 
 ### 技术架构
 
-```
-请求 → Phase 1: Triage (常驻工具) → 意图推断 → Phase 2: Deep Dive (常驻 + 按需工具)
-                ↓                                    ↓
-           ToolCache.Get()                     ToolCache.Set()
-                ↓                                    ↓
-           命中→返回缓存结果                    结果写入缓存
+```text
+请求 → 本地预路由 → 最终模型执行 → 工具策略/执行 → 最终响应
+                         ↓               ↓
+                    模型调用指标      工具与缓存指标
 ```
 
 ## 源码开发流程
@@ -325,6 +307,7 @@ DELETE /api/tools/visibility/:id       # 清除覆盖，回退到工具声明值
 | `SECOPS_SKILL_VISIBILITY_PATH` | `runtime/config/skillVisibility.json` | 技能功能开关文件（禁用技能对模型不可见） |
 | `SECOPS_PLUGINS_DIR` | `runtime/plugins` | 插件目录 |
 | `SECOPS_ACTION_LEVEL` | `sandbox` | 默认自动化级别（observe/sandbox/full-access） |
+| `SECOPS_AGENT_ROUTING_MODE` | `deterministic` | Agent 路由模式；临时回滚旧双阶段路径时设为 `layered` |
 | `SECOPS_RUNTIME_CONFIG_PATH` | `runtime/config/settings.json` | 运行时设置文件 |
 | `SECOPS_SANDBOX_ROOT` | `runtime/sandbox` | 沙箱目录 |
 | `SECOPS_AUDIT_LOG_PATH` | `runtime/audit/events.jsonl` | 审计日志 |

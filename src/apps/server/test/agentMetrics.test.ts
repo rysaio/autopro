@@ -39,7 +39,7 @@ describe("agent run metrics", () => {
     expect(response.json().metrics).toMatchObject({
       schemaVersion: 1,
       measurementBoundary: "before-completion-export",
-      mode: "single",
+      mode: "deterministic",
       totalDurationMs: expect.any(Number),
       localOrchestrationDurationMs: expect.any(Number),
       localRoutingDurationMs: expect.any(Number),
@@ -53,7 +53,7 @@ describe("agent run metrics", () => {
         totalDurationMs: expect.any(Number),
         retryCount: 0,
         requests: [{
-          phase: "single",
+          phase: "final",
           durationMs: expect.any(Number),
           exposedToolCount: 0,
           outcome: "completed",
@@ -90,7 +90,10 @@ describe("agent run metrics", () => {
   });
 
   it("counts every provider request made by a layered tool loop", async () => {
-    const app = buildServer(testConfig(), { createModel: scriptedModelForRequest });
+    const app = buildServer(testConfig(), {
+      createModel: scriptedModelForRequest,
+      agentRoutingMode: "layered"
+    });
 
     const response = await app.inject({
       method: "POST",
@@ -142,7 +145,7 @@ describe("agent run metrics", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json().metrics.model.requests).toMatchObject([
-      { phase: "single", exposedToolCount: 0 }
+      { phase: "final", exposedToolCount: 0 }
     ]);
 
     await app.close();
@@ -169,8 +172,8 @@ describe("agent run metrics", () => {
       requestCount: 2,
       retryCount: 1,
       requests: [
-        { outcome: "failed", phase: "single" },
-        { outcome: "completed", phase: "single", finishReason: "stop" }
+        { outcome: "failed", phase: "final" },
+        { outcome: "completed", phase: "final", finishReason: "stop" }
       ]
     });
 

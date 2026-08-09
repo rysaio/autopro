@@ -8,6 +8,8 @@ export type ToolClass = "perception" | "reasoning" | "evidence" | "action";
 
 export type AutomationLevel = "observe" | "sandbox" | "full-access";
 
+export type AgentRoutingMode = "deterministic" | "layered";
+
 export type ToolGuidanceKind = "precondition" | "missing_context" | "policy" | "validation";
 
 export interface ToolGuidanceNextTool {
@@ -122,7 +124,7 @@ export interface ApprovalDecisionResult {
 
 export interface AuditEvent {
   id: string;
-  type: "model_request" | "model_response" | "tool_requested" | "tool_result" | "policy_decision";
+  type: "routing_decision" | "model_request" | "model_response" | "tool_requested" | "tool_result" | "policy_decision";
   label: string;
   detail: string;
   createdAt: string;
@@ -148,7 +150,7 @@ export interface AgentModelUsageMetrics {
 }
 
 export interface AgentModelRequestMetrics {
-  phase: "triage" | "deep" | "single";
+  phase: "triage" | "deep" | "final" | "single";
   durationMs: number;
   exposedToolCount: number;
   outcome: "completed" | "failed";
@@ -182,7 +184,7 @@ export interface AgentRunMetrics {
   schemaVersion: 1;
   /** Metrics are sealed before the completion snapshot is exported to storage and clients. */
   measurementBoundary: "before-completion-export";
-  mode: "layered" | "single";
+  mode: AgentRoutingMode | "single";
   /** Monotonic elapsed time from run start until the terminal snapshot is fully constructed. */
   totalDurationMs: number;
   /** Total duration excluding the union of provider, tool, and business-persistence wait intervals. */
@@ -209,6 +211,21 @@ export interface AgentRunMetrics {
   };
 }
 
+export interface AgentRoutingDecision {
+  mode: AgentRoutingMode;
+  selectedToolIds: string[];
+  groups: string[];
+  confidence: {
+    level: "high" | "medium" | "low";
+    score: number;
+  };
+  reasons: string[];
+  additionalModelStage: {
+    used: boolean;
+    reason: string;
+  };
+}
+
 export interface AgentRun {
   id: string;
   sessionId?: string;
@@ -221,6 +238,7 @@ export interface AgentRun {
   toolInvocations: ToolInvocation[];
   audit: AuditEvent[];
   artifacts: EvidenceArtifact[];
+  routing: AgentRoutingDecision;
   metrics: AgentRunMetrics;
 }
 

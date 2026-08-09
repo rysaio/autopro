@@ -69,7 +69,7 @@ describe("agent benchmark CLI", () => {
           requestCount: { median: 1, p95: 1 },
           retryCount: { median: 0, p95: 0 },
           phases: {
-            single: {
+            final: {
               durationMs: { median: 850, p95: 850 },
               exposedToolCount: { median: 0, p95: 0 },
               finishReasons: { stop: 1 }
@@ -122,7 +122,7 @@ function runFixture() {
     metrics: {
       schemaVersion: 1,
       measurementBoundary: "before-completion-export",
-      mode: "layered",
+      mode: "deterministic",
       totalDurationMs: 1200,
       localOrchestrationDurationMs: 340,
       localRoutingDurationMs: 2,
@@ -133,7 +133,7 @@ function runFixture() {
         totalDurationMs: 850,
         retryCount: 0,
         requests: [{
-          phase: "single",
+          phase: "final",
           durationMs: 850,
           exposedToolCount: 0,
           outcome: "completed",

@@ -1,17 +1,15 @@
+import type {
+  AgentRoutingDecision,
+  AgentRunRequest,
+  AutomationLevel,
+  PermissionMode,
+  ToolManifest
+} from "@secops-agent/shared";
 import type { ToolSet } from "ai";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 
-/**
- * 分层工具路由器 (Layered Tool Router)
- *
- * 创新点：将 37 个工具按语义分类，采用"先路由后加载"的两阶段策略：
- *  Phase 1 (Triage): 仅发送 5 个核心分诊工具（~800 tokens），快速确定意图
- *  Phase 2 (Specialized): 根据 Phase 1 结果，动态加载对应领域的专用工具
- *
- * 相比传统"一股脑全塞进去"的做法（37 工具 ~6000 tokens），
- * Phase 1 节省 ~85% 的 tool schema token 开销。
- */
+/** Deterministic local router plus helpers for the temporary layered rollback path. */
 
 /** 工具分类定义 */
 export type ToolCategory =
@@ -21,6 +19,13 @@ export type ToolCategory =
   | "reporting"        // 报告生成：事件报告、证据导出
   | "sandbox-actions"; // 沙箱操作：案例笔记、沙箱命令、全权限执行
 
+export interface RouteInput {
+  registry: ToolRegistry;
+  messages: AgentRunRequest["messages"];
+  enabledTools?: string[] | undefined;
+  permissionMode: PermissionMode;
+  actionLevel: AutomationLevel;
+}
 const CATEGORY_PATTERNS: [string, ToolCategory][] = [
   ["wazuh.", "wazuh-platform"],
   ["shuffle.", "shuffle-soar"],
@@ -31,7 +36,6 @@ export class ToolRouter {
   private categoryMap: Map<ToolCategory, string[]> = new Map();
   private alwaysVisibleIds: string[] = [];
   private deferredIds: string[] = [];
-  private initialized = false;
 
   /**
    * 从 ToolRegistry 构建分类映射
@@ -59,7 +63,8 @@ export class ToolRouter {
       }
       // 动作工具
       if (m.toolClass === "action") {
-        this.categoryMap.get("sandbox-actions")!.push(m.id);
+        const platformCategory = CATEGORY_PATTERNS.find(([prefix]) => m.id.startsWith(prefix))?.[1];
+        this.categoryMap.get(platformCategory ?? "sandbox-actions")!.push(m.id);
         continue;
       }
       // 按前缀匹配
@@ -76,14 +81,132 @@ export class ToolRouter {
         this.categoryMap.get("core-triage")!.push(m.id);
       }
     }
-    this.initialized = true;
+  }
+
+  /** Build a deterministic local route before the final model execution. */
+  route(input: RouteInput): AgentRoutingDecision {
+    this.build(input.registry);
+    const latestUserMessage = [...input.messages].reverse().find((message) => message.role === "user");
+    const latestIntent = latestUserMessage?.content.trim() ?? "";
+    const usesConversationContext = shouldUseConversationContext(latestIntent);
+    const context = usesConversationContext
+      ? input.messages
+        .filter((message) => message !== latestUserMessage && (message.role === "user" || message.role === "assistant"))
+        .slice(-4)
+        .map((message) => message.content)
+        .join(" ")
+      : "";
+    const routingText = `${context} ${latestIntent}`.trim();
+    const groups = inferIntentCategories(routingText);
+    const reasons: string[] = [];
+    let candidateIds: string[] = [];
+    let confidence: AgentRoutingDecision["confidence"];
+
+    if (input.enabledTools?.length === 0) {
+      confidence = { level: "high", score: 1 };
+      reasons.push("The request explicitly enabled an empty tool set, so no tools can be exposed.");
+    } else if (isExplicitNoToolRequest(latestIntent)) {
+      confidence = { level: "high", score: 0.99 };
+      reasons.push("The latest user intent explicitly requests a response without tools.");
+    } else if (groups.length === 1) {
+      candidateIds = this.getIntentToolIds(groups, input.registry, routingText);
+      confidence = { level: "high", score: 0.9 };
+      reasons.push(`The latest user intent maps deterministically to ${groups[0]}.`);
+    } else if (groups.length > 1) {
+      candidateIds = this.getIntentToolIds(groups, input.registry, routingText);
+      confidence = { level: "medium", score: 0.68 };
+      reasons.push(`The request spans ${groups.join(", ")}; the cross-domain route was resolved locally.`);
+    } else if (isClearlyNoToolRequest(latestIntent)) {
+      confidence = { level: "high", score: 0.88 };
+      reasons.push("The latest user intent is conversational or explanatory and has no operational tool signal.");
+    } else {
+      candidateIds = [...this.alwaysVisibleIds];
+      confidence = { level: "low", score: 0.35 };
+      reasons.push("No deterministic domain matched; fallback exposes only eligible non-action resident tools.");
+    }
+
+    if (usesConversationContext) {
+      reasons.push("Recent valid user and assistant context was used to resolve a follow-up intent.");
+    }
+
+    const selectedToolIds = this.filterEligibleToolIds(candidateIds, input, routingText);
+    if (candidateIds.length > selectedToolIds.length) {
+      reasons.push("The candidate route was intersected with enabled tools and current action policy.");
+    }
+
+    return {
+      mode: "deterministic",
+      selectedToolIds,
+      groups,
+      confidence,
+      reasons,
+      additionalModelStage: {
+        used: false,
+        reason: confidence.level === "low"
+          ? "Low confidence remains on the documented local fallback; no routing model is invoked."
+          : groups.length > 1
+            ? "Cross-domain intent was resolved by deterministic rules; no routing model is needed."
+            : "The deterministic route is sufficient."
+      }
+    };
+  }
+
+  filterEligibleToolIds(
+    toolIds: string[],
+    input: Pick<RouteInput, "registry" | "enabledTools" | "permissionMode" | "actionLevel">,
+    intentText: string
+  ): string[] {
+    const enabled = input.enabledTools === undefined ? undefined : new Set(input.enabledTools);
+    const manifests = new Map(input.registry.manifests().map((manifest) => [manifest.id, manifest]));
+    const selected: string[] = [];
+
+    for (const id of new Set(toolIds)) {
+      const manifest = manifests.get(id);
+      if (!manifest || (enabled && !enabled.has(id))) {
+        continue;
+      }
+      if (manifest.toolClass === "action" && !isActionExposable(manifest, input, intentText)) {
+        continue;
+      }
+      selected.push(id);
+    }
+    return selected;
+  }
+
+  getCategoryToolIds(categories: ToolCategory[]): string[] {
+    const toolIds = new Set<string>();
+    for (const category of categories) {
+      for (const id of this.categoryMap.get(category) ?? []) {
+        toolIds.add(id);
+      }
+    }
+    return [...toolIds];
+  }
+
+  private getIntentToolIds(categories: ToolCategory[], registry: ToolRegistry, intentText: string): string[] {
+    const manifests = new Map(registry.manifests().map((manifest) => [manifest.id, manifest]));
+    const selected = new Set<string>();
+    for (const category of categories) {
+      const categoryIds = this.getCategoryToolIds([category]);
+      const scored = categoryIds.map((id) => ({
+        id,
+        score: toolRelevanceScore(manifests.get(id), intentText)
+      }));
+      const highestScore = Math.max(0, ...scored.map((item) => item.score));
+      const narrowed = highestScore === 0
+        ? categoryIds
+        : scored.filter((item) => item.score === highestScore).map((item) => item.id);
+      for (const id of narrowed) {
+        selected.add(id);
+      }
+    }
+    return [...selected];
   }
 
   /**
    * 获取 Phase 1 分诊工具 ID 列表（所有常驻工具）
    */
   getTriageToolIds(): string[] {
-    this.build(null!); // 确保已初始化（build 在 registry 可用时调用）
     return [...this.alwaysVisibleIds];
   }
 
@@ -169,12 +292,7 @@ export class ToolRouter {
    * 获取 Phase 2 专用工具 ID 列表
    */
   getSpecializedToolIds(categories: ToolCategory[]): string[] {
-    this.build(null!);
-    const toolIds = new Set<string>();
-    for (const cat of categories) {
-      const ids = this.categoryMap.get(cat) ?? [];
-      for (const id of ids) toolIds.add(id);
-    }
+    const toolIds = new Set(this.getCategoryToolIds(categories));
     if (toolIds.size === 0) {
       // 兜底：返回全部工具
       const all = new Set<string>();
@@ -236,6 +354,145 @@ export class ToolRouter {
     const loadedCount = categories.reduce((sum, cat) => sum + (this.categoryMap.get(cat)?.length ?? 0), 0);
     return (allToolCount - loadedCount) * AVG_TOKENS_PER_TOOL;
   }
+}
+
+function inferIntentCategories(value: string): ToolCategory[] {
+  const text = value.toLowerCase();
+  const categories = new Set<ToolCategory>();
+  if (matches(text, [
+    "ioc", "indicator", "hash", "domain", "url", "threat intel", "威胁情报", "指标",
+    "asset", "inventory", "host", "资产", "主机", "sigma", "detection rule", "检测规则",
+    "mitre", "attack technique", "攻击技术", "playbook", "剧本"
+  ]) || /\b(?:\d{1,3}\.){3}\d{1,3}\b/.test(text) || /\b[a-f0-9]{32,64}\b/.test(text)) {
+    categories.add("core-triage");
+  }
+  if (matches(text, [
+    "wazuh", "告警", "agent", "端口", "进程", "横向", "active response",
+    "封禁", "拉黑", "拦截", "入侵", "网络暴露"
+  ])) {
+    categories.add("wazuh-platform");
+  }
+  if (matches(text, ["shuffle", "soar", "workflow", "工作流", "webhook", "编排"])) {
+    categories.add("shuffle-soar");
+  }
+  if (matches(text, ["report", "报告", "export", "导出", "evidence pack", "证据包"])) {
+    categories.add("reporting");
+  }
+  if (matches(text, [
+    "write note", "add note", "case note", "记录笔记", "写笔记", "添加笔记",
+    "run command", "execute command", "执行命令", "运行命令", "full access", "全权限"
+  ])) {
+    categories.add("sandbox-actions");
+  }
+  return [...categories];
+}
+
+function toolRelevanceScore(manifest: ToolManifest | undefined, intentText: string): number {
+  if (!manifest) {
+    return 0;
+  }
+  const searchable = [manifest.id, manifest.name, ...manifest.tags].join(" ").toLowerCase();
+  return intentSignals(intentText).reduce(
+    (score, signal) => score + (searchable.includes(signal) ? 1 : 0),
+    0
+  );
+}
+
+function intentSignals(value: string): string[] {
+  const text = value.toLowerCase();
+  const ignored = new Set([
+    "agent", "wazuh", "shuffle", "secops", "investigate", "investigation", "please",
+    "with", "this", "that", "from", "into", "tool", "tools"
+  ]);
+  const signals = new Set(
+    text.match(/[a-z0-9][a-z0-9_-]{2,}/g)?.filter((token) => !ignored.has(token)) ?? []
+  );
+  const aliases: Array<[string, string[]]> = [
+    ["告警", ["alert", "alerts"]],
+    ["端口", ["port", "ports"]],
+    ["进程", ["process", "processes"]],
+    ["横向", ["lateral"]],
+    ["封禁", ["block"]],
+    ["拉黑", ["block"]],
+    ["配置", ["config", "configuration"]],
+    ["状态", ["status", "health"]],
+    ["工作流", ["workflow"]],
+    ["报告", ["report"]],
+    ["导出", ["export"]],
+    ["证据", ["evidence"]],
+    ["资产", ["asset", "inventory"]],
+    ["主机", ["host", "asset", "agent"]],
+    ["检测规则", ["detection", "rule", "sigma"]],
+    ["威胁情报", ["threat-intel", "ioc"]]
+  ];
+  for (const [term, mapped] of aliases) {
+    if (text.includes(term)) {
+      mapped.forEach((signal) => signals.add(signal));
+    }
+  }
+  if (/\b(?:\d{1,3}\.){3}\d{1,3}\b/.test(text) || /\b[a-f0-9]{32,64}\b/.test(text)) {
+    signals.add("ioc");
+  }
+  return [...signals];
+}
+
+function isActionExposable(
+  manifest: ToolManifest,
+  policy: Pick<RouteInput, "permissionMode" | "actionLevel">,
+  intentText: string
+): boolean {
+  if (policy.actionLevel === "observe" || (policy.actionLevel !== "full-access" && policy.permissionMode === "deny")) {
+    return false;
+  }
+  if (manifest.id === "full_access.exec" && policy.actionLevel !== "full-access") {
+    return false;
+  }
+  const text = intentText.toLowerCase();
+  if (manifest.id === "case.note.write") {
+    return matches(text, ["write note", "add note", "case note", "记录笔记", "写笔记", "添加笔记"]);
+  }
+  if (manifest.id === "command.run.sandbox") {
+    return matches(text, ["run command", "execute command", "执行命令", "运行命令", "git status", "node version"]);
+  }
+  if (manifest.id === "full_access.exec") {
+    return matches(text, ["full access", "full-access", "全权限"]);
+  }
+  if (manifest.id.includes("block") || manifest.tags.some((tag) => tag.includes("block") || tag === "active-response")) {
+    return matches(text, ["block", "封禁", "拉黑", "拦截", "active response"]);
+  }
+  if (manifest.id.includes("workflow") || manifest.tags.includes("workflow")) {
+    return matches(text, ["execute workflow", "run workflow", "执行工作流", "运行工作流", "触发工作流"]);
+  }
+  const actionRequested = matches(text, ["execute", "run", "write", "create", "执行", "运行", "写入", "创建", "触发"]);
+  const manifestTerms = [...manifest.tags, manifest.id, manifest.name]
+    .flatMap((term) => term.toLowerCase().split(/[^a-z0-9\u4e00-\u9fff]+/))
+    .filter((term) => term.length >= 3 && term !== "action");
+  return actionRequested && manifestTerms.some((term) => text.includes(term));
+}
+
+function isExplicitNoToolRequest(value: string): boolean {
+  return /\b(no tools?|without (?:calling|using) (?:a )?tools?|do not (?:call|use) tools?|don't (?:call|use) tools?)\b/i.test(value)
+    || /不要(?:调用|使用)工具|无需工具|不使用工具/.test(value);
+}
+
+function isClearlyNoToolRequest(value: string): boolean {
+  const text = value.trim().toLowerCase();
+  return text.length === 0
+    || /^(hi|hello|hey|thanks|thank you|ok|okay|acknowledge)\b/.test(text)
+    || /^(你好|您好|谢谢|确认|收到)/.test(text)
+    || matches(text, ["explain", "define", "translate", "what is", "解释", "定义", "翻译", "是什么"]);
+}
+
+function shouldUseConversationContext(value: string): boolean {
+  const text = value.trim().toLowerCase();
+  return text.length < 80 && (
+    /\b(it|that|this|those|them|same|also|then|continue)\b/.test(text)
+    || /(这个|那个|它|它们|上述|同样|继续|接着|然后|也)/.test(text)
+  );
+}
+
+function matches(value: string, terms: string[]): boolean {
+  return terms.some((term) => value.includes(term));
 }
 
 /** 全局单例 */
