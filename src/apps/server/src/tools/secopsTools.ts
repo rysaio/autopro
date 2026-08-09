@@ -232,6 +232,11 @@ export function createSecOpsTools(): SecOpsTool[] {
         toolClass: "perception",
         risk: "low",
         tags: ["threat-intel", "ioc", "read-only", "mitre"],
+        resultCache: {
+          version: "1",
+          dataSource: "built-in-threat-intel-kb-v1",
+          ttlMs: 5 * 60 * 1000
+        },
         inputSchema: {
           type: "object",
           properties: {
@@ -428,13 +433,16 @@ function manifest(input: {
   toolClass: ToolClass;
   risk: ToolRisk;
   tags: string[];
+  resultCache?: SkillManifest["resultCache"];
   inputSchema: SkillManifest["inputSchema"];
 }): SkillManifest {
+  const { resultCache, ...manifestInput } = input;
   return {
-    ...input,
+    ...manifestInput,
     skillPackId: "secops-core",
     deferLoading: false,
-    mcpCompatible: true
+    mcpCompatible: true,
+    ...(resultCache ? { resultCache } : {})
   };
 }
 

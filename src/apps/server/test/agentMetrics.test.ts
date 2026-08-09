@@ -128,6 +128,49 @@ describe("agent run metrics", () => {
     await app.close();
   });
 
+  it("reports real handler calls and avoided tool work across separate agent runs", async () => {
+    const app = buildServer(testConfig(), {
+      createModel: scriptedModelForRequest,
+      enableLayeredRouting: false
+    });
+    const payload = {
+      messages: [{ role: "user", content: "Investigate IOC 198.51.100.23." }],
+      enabledTools: ["threat.intel.lookup"]
+    };
+
+    const firstResponse = await app.inject({ method: "POST", url: "/api/agent/run", payload });
+    const secondResponse = await app.inject({ method: "POST", url: "/api/agent/run", payload });
+    const first = firstResponse.json();
+    const second = secondResponse.json();
+
+    expect(first.metrics).toMatchObject({
+      tools: { callCount: 1, handlerCallCount: 1 },
+      cache: { hits: 0, misses: 1, bypasses: 0 }
+    });
+    expect(second.metrics).toMatchObject({
+      tools: { callCount: 1, handlerCallCount: 0 },
+      cache: {
+        hits: 1,
+        misses: 0,
+        bypasses: 0,
+        avoidedToolDurationMs: expect.any(Number)
+      }
+    });
+    expect(second.toolInvocations[0]).toMatchObject({
+      cache: {
+        status: "hit",
+        sourceInvocationId: first.toolInvocations[0].id,
+        originalCreatedAt: expect.any(String),
+        ageMs: expect.any(Number)
+      }
+    });
+    expect(second.toolInvocations[0].id).not.toBe(first.toolInvocations[0].id);
+    expect(second.artifacts[0].id).not.toBe(first.artifacts[0].id);
+    expect(second.audit.some((entry: { detail: string }) => entry.detail.includes("Cache hit from invocation"))).toBe(true);
+
+    await app.close();
+  });
+
   it("counts only tool schemas that are actually exposed to the model", async () => {
     const app = buildServer(testConfig(), {
       createModel: scriptedModelForRequest,

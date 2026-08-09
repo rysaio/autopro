@@ -1,5 +1,6 @@
 ﻿import { describe, expect, it } from "vitest";
 import type { EvidenceArtifact, SkillManifest, ToolGuidance, ToolInvocation } from "@secops-agent/shared";
+import { ToolCache } from "../src/runtime/toolCache.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { ModelTool } from "../src/providers/types.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/types.js";
@@ -362,6 +363,185 @@ describe("ToolRegistry", () => {
     expect(action.invocation.status).toBe("denied");
     expect(action.invocation.error).toContain("Action tool execution denied by permission policy");
   });
+
+  it("opts in only the approved built-in threat intelligence lookup", () => {
+    const policies = new ToolRegistry().manifests()
+      .filter((manifest) => manifest.resultCache)
+      .map((manifest) => [manifest.id, manifest.resultCache]);
+
+    expect(policies).toEqual([[
+      "threat.intel.lookup",
+      {
+        version: "1",
+        dataSource: "built-in-threat-intel-kb-v1",
+        ttlMs: 5 * 60 * 1000
+      }
+    ]]);
+  });
+
+  it("reuses an approved read-only result across runs with fresh audit identities", async () => {
+    let handlerCalls = 0;
+    const artifact: EvidenceArtifact = {
+      id: "original-artifact",
+      title: "Cached evidence",
+      kind: "ioc",
+      summary: "Evidence summary",
+      data: { nested: { value: true } },
+      createdAt: "2026-08-09T00:00:00.000Z"
+    };
+    const registry = new ToolRegistry([
+      new TestTool("test_cached_lookup", cacheableManifest(), async () => {
+        handlerCalls += 1;
+        return { output: { handlerCalls }, artifacts: [artifact] };
+      })
+    ]);
+
+    const first = await registry.executeApiTool(
+      "test_cached_lookup",
+      "call-one",
+      { query: { b: 2, a: 1 }, values: ["one", "two"] },
+      { ...context, runId: "run-one" }
+    );
+    const second = await registry.executeApiTool(
+      "test_cached_lookup",
+      "call-two",
+      { values: ["one", "two"], query: { a: 1, b: 2 } },
+      { ...context, runId: "run-two" }
+    );
+
+    expect(handlerCalls).toBe(1);
+    expect(first.invocation.cache).toEqual({ status: "miss" });
+    expect(second.invocation).toMatchObject({
+      id: "call-two",
+      result: { handlerCalls: 1 },
+      cache: {
+        status: "hit",
+        sourceInvocationId: "call-one",
+        originalCreatedAt: expect.any(String),
+        ageMs: expect.any(Number),
+        avoidedToolDurationMs: expect.any(Number)
+      }
+    });
+    expect(second.artifacts[0]?.id).not.toBe(first.artifacts[0]?.id);
+    expect(second.artifacts[0]?.cacheSource).toEqual({
+      artifactId: "original-artifact",
+      originalCreatedAt: artifact.createdAt,
+      ageMs: expect.any(Number)
+    });
+    expect(second.artifacts[0]?.data).toEqual(first.artifacts[0]?.data);
+  });
+
+  it("executes again for different arguments, TTL expiry, and a new service cache", async () => {
+    let now = 1_000;
+    let handlerCalls = 0;
+    const tool = new TestTool("test_cached_lookup", cacheableManifest(50), async () => {
+      handlerCalls += 1;
+      return { output: { handlerCalls } };
+    });
+    const firstRegistry = new ToolRegistry([tool], undefined, true, new ToolCache({ now: () => now }));
+
+    await firstRegistry.executeApiTool("test_cached_lookup", "one", { query: "alpha" }, context);
+    await firstRegistry.executeApiTool("test_cached_lookup", "two", { query: "beta" }, context);
+    now = 1_050;
+    await firstRegistry.executeApiTool("test_cached_lookup", "three", { query: "alpha" }, context);
+    const restartedRegistry = new ToolRegistry([tool], undefined, true, new ToolCache({ now: () => now }));
+    await restartedRegistry.executeApiTool("test_cached_lookup", "four", { query: "alpha" }, context);
+
+    expect(handlerCalls).toBe(4);
+    expect(firstRegistry.cacheStats()).toMatchObject({ expiredEntries: 2 });
+  });
+
+  it("does not cache failures or recoverable guidance", async () => {
+    let failedCalls = 0;
+    let guidedCalls = 0;
+    const guidance: ToolGuidance = {
+      kind: "precondition",
+      message: "Collect context first.",
+      recoverable: true
+    };
+    const registry = new ToolRegistry([
+      new TestTool("test_cached_failure", cacheableManifest(1_000, "test.cached.failure"), async () => {
+        failedCalls += 1;
+        throw new Error("upstream failed");
+      }),
+      new TestTool("test_cached_guidance", cacheableManifest(1_000, "test.cached.guidance"), async () => {
+        guidedCalls += 1;
+        return { output: { status: "needs_precondition", guidance } };
+      })
+    ]);
+
+    const failures = await Promise.all([
+      registry.executeApiTool("test_cached_failure", "failed-one", { query: "same" }, context),
+      registry.executeApiTool("test_cached_failure", "failed-two", { query: "same" }, context)
+    ]);
+    const guided = await Promise.all([
+      registry.executeApiTool("test_cached_guidance", "guided-one", { query: "same" }, context),
+      registry.executeApiTool("test_cached_guidance", "guided-two", { query: "same" }, context)
+    ]);
+
+    expect(failedCalls).toBe(2);
+    expect(guidedCalls).toBe(2);
+    expect(failures.every((record) => record.invocation.cache?.status === "bypass")).toBe(true);
+    expect(guided.every((record) => record.invocation.cache?.status === "bypass")).toBe(true);
+    expect(registry.cacheStats().size).toBe(0);
+  });
+
+  it("never caches actions and globally invalidates read results after success", async () => {
+    let readCalls = 0;
+    let actionCalls = 0;
+    const readTool = new TestTool("test_cached_lookup", cacheableManifest(), async () => {
+      readCalls += 1;
+      return { output: { readCalls } };
+    });
+    const actionTool = new TestTool(
+      "test_cached_action",
+      { ...cacheableManifest(), id: "test.cached.action", toolClass: "action", risk: "medium" },
+      async () => {
+        actionCalls += 1;
+        return { output: { actionCalls } };
+      }
+    );
+    const registry = new ToolRegistry([readTool, actionTool]);
+    const autoContext = { ...context, permissionMode: "auto" as const };
+
+    await registry.executeApiTool("test_cached_lookup", "read-one", { query: "same" }, context);
+    await registry.executeApiTool("test_cached_lookup", "read-two", { query: "same" }, context);
+    const firstAction = await registry.executeApiTool("test_cached_action", "action-one", { query: "same" }, autoContext);
+    const secondAction = await registry.executeApiTool("test_cached_action", "action-two", { query: "same" }, autoContext);
+    await registry.executeApiTool("test_cached_lookup", "read-three", { query: "same" }, context);
+
+    expect(readCalls).toBe(2);
+    expect(actionCalls).toBe(2);
+    expect(firstAction.invocation.cache).toEqual({ status: "bypass", reason: "action" });
+    expect(secondAction.invocation.cache).toEqual({ status: "bypass", reason: "action" });
+    expect(firstAction.metrics.invalidatedEntries).toBe(1);
+  });
+
+  it("checks action approval before any cache access", async () => {
+    let handlerCalls = 0;
+    const action = new TestTool(
+      "test_cached_action",
+      { ...cacheableManifest(), id: "test.cached.action", toolClass: "action", risk: "medium" },
+      async () => {
+        handlerCalls += 1;
+        return { output: { ok: true } };
+      }
+    );
+    const registry = new ToolRegistry([action]);
+
+    const pending = await registry.executeApiTool("test_cached_action", "pending", { query: "same" }, context);
+    const denied = await registry.executeApiTool(
+      "test_cached_action",
+      "denied",
+      { query: "same" },
+      { ...context, permissionMode: "deny" }
+    );
+
+    expect(pending.invocation).toMatchObject({ status: "pending_approval", cache: { status: "bypass" } });
+    expect(denied.invocation).toMatchObject({ status: "denied", cache: { status: "bypass" } });
+    expect(handlerCalls).toBe(0);
+    expect(registry.cacheStats()).toMatchObject({ hits: 0, misses: 0, size: 0 });
+  });
 });
 
 class TestTool implements SecOpsTool {
@@ -402,6 +582,25 @@ function testManifest(id: string, name: string): SkillManifest {
       type: "object",
       properties: {},
       required: [],
+      additionalProperties: false
+    }
+  };
+}
+
+function cacheableManifest(ttlMs = 1_000, id = "test.cached.lookup"): SkillManifest {
+  return {
+    ...testManifest(id, "Cached Lookup"),
+    resultCache: {
+      version: "1",
+      dataSource: "test-source",
+      ttlMs
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {},
+        values: { type: "array" }
+      },
       additionalProperties: false
     }
   };

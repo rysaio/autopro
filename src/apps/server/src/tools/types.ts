@@ -33,6 +33,14 @@ export interface SecOpsTool {
 export interface ToolExecutionRecord {
   invocation: ToolInvocation;
   artifacts: EvidenceArtifact[];
+  metrics: {
+    handlerCalled: boolean;
+    handlerDurationMs: number;
+    evictions: number;
+    expiredEntries: number;
+    invalidatedEntries: number;
+    avoidedToolDurationMs: number;
+  };
 }
 
 export type ToolTimingScopeFactory = () => () => void;
