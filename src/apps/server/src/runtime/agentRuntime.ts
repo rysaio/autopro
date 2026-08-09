@@ -11,6 +11,7 @@ import { stepCountIs, streamText, type LanguageModel } from "ai";
 import { ToolRegistry } from "../tools/registry.js";
 import type { ToolExecutionRecord } from "../tools/types.js";
 import { ModelMetricsRecorder } from "./modelMetrics.js";
+import { RunTimingRecorder } from "./runTimingRecorder.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
 import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP } from "./systemPrompt.js";
 import { systemPromptWithSkills } from "./systemPrompt.js";
@@ -57,7 +58,7 @@ export class AgentRuntime {
   constructor(private readonly options: AgentRuntimeOptions) {}
 
   async run(request: AgentRunRequest, onEvent?: AgentRunEventSink): Promise<AgentRun> {
-    const runStartedAt = performance.now();
+    const runTiming = new RunTimingRecorder();
     const runId = crypto.randomUUID();
     const sessionId = request.sessionId ?? crypto.randomUUID();
     const startedAt = new Date().toISOString();
@@ -68,14 +69,14 @@ export class AgentRuntime {
     let persistenceFailureCount = 0;
     const measurePersistence = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
       persistenceOperationCount += 1;
-      const operationStartedAt = performance.now();
+      const timing = runTiming.start("persistence");
       try {
         return await operation();
       } catch (error) {
         persistenceFailureCount += 1;
         throw error;
       } finally {
-        persistenceDurationMs += performance.now() - operationStartedAt;
+        persistenceDurationMs += timing.end();
       }
     };
     const persist = (operation: () => Promise<void>) => {
@@ -88,7 +89,7 @@ export class AgentRuntime {
     const maxTriageRounds = this.options.maxTriageRounds ?? 3;
     const maxDeepRounds = this.options.maxDeepRounds ?? 8;
     const useLayeredRouting = this.options.enableLayeredRouting !== false;
-    const modelMetrics = new ModelMetricsRecorder();
+    const modelMetrics = new ModelMetricsRecorder(runTiming);
     const cacheStatsAtStart = this.toolCache.stats();
     let localRoutingDurationMs = 0;
     let timeToFirstTextMs: number | undefined;
@@ -199,6 +200,12 @@ export class AgentRuntime {
         }
       }
     };
+    const startToolTiming = () => {
+      const timing = runTiming.start("tool");
+      return () => {
+        timing.end();
+      };
+    };
 
     try {
       // ── 初始化工具路由器 ──
@@ -236,7 +243,7 @@ export class AgentRuntime {
               role: message.role === "assistant" ? "assistant" as const : "user" as const,
               content: message.content
             })),
-          tools: this.options.registry.aiSdkTools(context, triageToolIds, triageOnRecord),
+          tools: this.options.registry.aiSdkTools(context, triageToolIds, triageOnRecord, startToolTiming),
           stopWhen: stepCountIs(maxTriageRounds),
           temperature: 0.2
         });
@@ -287,12 +294,12 @@ export class AgentRuntime {
           model: modelMetrics.wrap(this.options.model, "deep", deepToolIds.length),
           system: systemPromptWithSkills(SYSTEM_PROMPT_DEEP, skillSummary),
           messages: phase1Messages,
-          tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord),
+          tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord, startToolTiming),
           stopWhen: stepCountIs(maxDeepRounds),
           temperature: 0.2
         });
         const deepResult = await consumeTextGeneration(deepGeneration, () => {
-          timeToFirstTextMs ??= elapsedMs(runStartedAt);
+          timeToFirstTextMs ??= runTiming.elapsedMs();
         });
 
         totalSteps += deepResult.steps.length;
@@ -335,7 +342,8 @@ export class AgentRuntime {
         const singleTools = this.options.registry.aiSdkTools(
           context,
           effectiveEnabledTools,
-          createOnRecord()
+          createOnRecord(),
+          startToolTiming
         );
         const generation = streamText({
           model: modelMetrics.wrap(
@@ -355,7 +363,7 @@ export class AgentRuntime {
           temperature: 0.2
         });
         const result = await consumeTextGeneration(generation, () => {
-          timeToFirstTextMs ??= elapsedMs(runStartedAt);
+          timeToFirstTextMs ??= runTiming.elapsedMs();
         });
 
         if (toolRecords.some((record) => record.invocation.status === "pending_approval")) {
@@ -416,8 +424,10 @@ export class AgentRuntime {
       artifacts,
       metrics: {
         schemaVersion: 1,
+        measurementBoundary: "before-completion-export",
         mode: useLayeredRouting ? "layered" : "single",
-        totalDurationMs: elapsedMs(runStartedAt),
+        totalDurationMs: 0,
+        localOrchestrationDurationMs: 0,
         localRoutingDurationMs: roundedMs(localRoutingDurationMs),
         text: timeToFirstTextMs === undefined
           ? { measurement: "unavailable" }
@@ -425,7 +435,7 @@ export class AgentRuntime {
         model: modelMetrics.snapshot(),
         tools: {
           callCount: toolRecords.length,
-          totalDurationMs: roundedMs(toolRecords.reduce((total, record) => total + invocationDurationMs(record.invocation), 0))
+          totalDurationMs: runTiming.totalDurationMs("tool")
         },
         cache: {
           hits: cacheHits,
@@ -441,24 +451,12 @@ export class AgentRuntime {
       }
     };
     const completionEvent = createRunEvent({ type: "run_completed", run });
-    persist(() => stateStore.completeRun(sessionId, run));
-    persist(() => stateStore.recordRunEvent(completionEvent));
-    await persistence;
-    run.metrics.totalDurationMs = elapsedMs(runStartedAt);
-    run.metrics.persistence = {
-      operationCount: persistenceOperationCount,
-      totalDurationMs: roundedMs(persistenceDurationMs),
-      failureCount: persistenceFailureCount
-    };
-    // The exporter write is excluded from its own snapshot to avoid recursive measurement.
-    await stateStore.finalizeRunSnapshot(sessionId, run, completionEvent);
+    Object.assign(run.metrics, runTiming.snapshot());
+    // The completion export is intentionally outside the metrics snapshot boundary.
+    await measurePersistence(() => stateStore.commitRunCompletion(sessionId, run, completionEvent));
     onEvent?.(completionEvent);
     return run;
   }
-}
-
-function elapsedMs(startedAt: number): number {
-  return roundedMs(performance.now() - startedAt);
 }
 
 function roundedMs(value: number): number {
@@ -487,14 +485,6 @@ async function consumeTextGeneration(
 
 function counterDelta(current: number, initial: number): number {
   return Math.max(0, current - initial);
-}
-
-function invocationDurationMs(invocation: ToolInvocation): number {
-  if (!invocation.completedAt) {
-    return 0;
-  }
-  const duration = Date.parse(invocation.completedAt) - Date.parse(invocation.startedAt);
-  return Number.isFinite(duration) && duration > 0 ? duration : 0;
 }
 
 function toolContext(context: Omit<AgentRunContext, "approvedToolCallIds">): AgentRunContext {

@@ -13,6 +13,7 @@ import type {
   LanguageModelV3Usage
 } from "@ai-sdk/provider";
 import { wrapLanguageModel, type LanguageModel } from "ai";
+import type { RunTimingRecorder } from "./runTimingRecorder.js";
 
 type ModelPhase = AgentModelRequestMetrics["phase"];
 type StreamPart = LanguageModelV2StreamPart | LanguageModelV3StreamPart;
@@ -20,6 +21,8 @@ type StreamPart = LanguageModelV2StreamPart | LanguageModelV3StreamPart;
 export class ModelMetricsRecorder {
   private readonly requests: AgentModelRequestMetrics[] = [];
   private measurable = false;
+
+  constructor(private readonly runTiming?: RunTimingRecorder) {}
 
   wrap(model: LanguageModel, phase: ModelPhase, exposedToolCount: number): LanguageModel {
     if (typeof model !== "object" || model === null) {
@@ -104,6 +107,7 @@ export class ModelMetricsRecorder {
     exposedToolCount: number,
     metrics: (result: Result) => { finishReason: string; usage: AgentModelUsageMetrics }
   ): Promise<Result> {
+    const timing = this.runTiming?.start("provider");
     const startedAt = performance.now();
     try {
       const result = await generate();
@@ -119,6 +123,8 @@ export class ModelMetricsRecorder {
     } catch (error) {
       this.recordFailed(phase, exposedToolCount, startedAt);
       throw error;
+    } finally {
+      timing?.end();
     }
   }
 
@@ -135,6 +141,8 @@ export class ModelMetricsRecorder {
     }
   ): Promise<Result> {
     const startedAt = performance.now();
+    const timing = this.runTiming?.start("provider");
+    const finishTiming = () => timing?.end();
     try {
       const result = await stream();
       return {
@@ -149,12 +157,17 @@ export class ModelMetricsRecorder {
               measured.finishReason,
               measured.usage
             );
+            finishTiming();
           },
-          onFailure: () => this.recordFailed(phase, exposedToolCount, startedAt)
+          onFailure: () => {
+            this.recordFailed(phase, exposedToolCount, startedAt);
+            finishTiming();
+          }
         })
       };
     } catch (error) {
       this.recordFailed(phase, exposedToolCount, startedAt);
+      finishTiming();
       throw error;
     }
   }

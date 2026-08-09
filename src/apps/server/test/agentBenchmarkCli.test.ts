@@ -57,9 +57,46 @@ describe("agent benchmark CLI", () => {
       },
       summary: {
         completedRuns: 1,
+        clientObservedDurationMs: { median: expect.any(Number), p95: expect.any(Number) },
+        serverTotalDurationMs: { median: 1200, p95: 1200 },
         totalDurationMs: { median: 1200, p95: 1200 },
+        localOrchestrationDurationMs: { median: 340, p95: 340 },
+        localRoutingDurationMs: { median: 2, p95: 2 },
         timeToFirstTextMs: { median: 900, p95: 900 },
-        modelRequestCount: { median: 1, p95: 1 }
+        modelRequestCount: { median: 1, p95: 1 },
+        provider: {
+          totalDurationMs: { median: 850, p95: 850 },
+          requestCount: { median: 1, p95: 1 },
+          retryCount: { median: 0, p95: 0 },
+          phases: {
+            single: {
+              durationMs: { median: 850, p95: 850 },
+              exposedToolCount: { median: 0, p95: 0 },
+              finishReasons: { stop: 1 }
+            }
+          }
+        },
+        tools: {
+          callCount: { median: 0, p95: 0 },
+          totalDurationMs: { median: 0, p95: 0 }
+        },
+        cache: {
+          hits: { median: 0, p95: 0 },
+          misses: { median: 0, p95: 0 },
+          bypasses: { median: 0, p95: 0 }
+        },
+        persistence: {
+          operationCount: { median: 5, p95: 5 },
+          totalDurationMs: { median: 4, p95: 4 },
+          failureCount: { median: 0, p95: 0 }
+        },
+        tokens: {
+          input: { median: 140, p95: 140 },
+          output: { median: 34, p95: 34 },
+          cacheRead: { median: 20, p95: 20 },
+          cacheWrite: { median: 3, p95: 3 },
+          reasoning: { median: 6, p95: 6 }
+        }
       }
     });
     expect(`${stdout}${stderr}`).not.toContain(token);
@@ -82,8 +119,10 @@ function runFixture() {
     artifacts: [],
     metrics: {
       schemaVersion: 1,
+      measurementBoundary: "before-completion-export",
       mode: "layered",
       totalDurationMs: 1200,
+      localOrchestrationDurationMs: 340,
       localRoutingDurationMs: 2,
       text: { timeToFirstTextMs: 900, measurement: "provider-stream" },
       model: {
@@ -91,7 +130,21 @@ function runFixture() {
         requestCount: 1,
         totalDurationMs: 850,
         retryCount: 0,
-        requests: []
+        requests: [{
+          phase: "single",
+          durationMs: 850,
+          exposedToolCount: 0,
+          outcome: "completed",
+          finishReason: "stop",
+          usage: {
+            inputTokens: 140,
+            outputTokens: 34,
+            totalTokens: 174,
+            cacheReadTokens: 20,
+            cacheWriteTokens: 3,
+            reasoningTokens: 6
+          }
+        }]
       },
       tools: { callCount: 0, totalDurationMs: 0 },
       cache: { hits: 0, misses: 0, bypasses: 0, size: 0 },

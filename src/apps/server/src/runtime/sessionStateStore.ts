@@ -36,8 +36,7 @@ export interface SessionStateStore {
     markers: Array<Omit<StateMarker, "id" | "sessionId" | "runId" | "createdAt">>
   ): Promise<void>;
   listStateMarkers(sessionId: string): Promise<StateMarker[]>;
-  completeRun(sessionId: string, run: AgentRun): Promise<void>;
-  finalizeRunSnapshot(sessionId: string, run: AgentRun, completionEvent: AgentRunEvent): Promise<void>;
+  commitRunCompletion(sessionId: string, run: AgentRun, completionEvent: AgentRunEvent): Promise<void>;
 }
 
 export class NoopSessionStateStore implements SessionStateStore {
@@ -51,8 +50,7 @@ export class NoopSessionStateStore implements SessionStateStore {
   async listStateMarkers(): Promise<StateMarker[]> {
     return [];
   }
-  async completeRun(): Promise<void> {}
-  async finalizeRunSnapshot(): Promise<void> {}
+  async commitRunCompletion(): Promise<void> {}
 }
 
 export class MemorySessionStateStore implements SessionStateStore {
@@ -115,21 +113,11 @@ export class MemorySessionStateStore implements SessionStateStore {
     return this.markers.filter((marker) => marker.sessionId === sessionId);
   }
 
-  async completeRun(sessionId: string, run: AgentRun): Promise<void> {
+  async commitRunCompletion(sessionId: string, run: AgentRun, completionEvent: AgentRunEvent): Promise<void> {
     const started = this.runs.find((candidate) => candidate.sessionId === sessionId && candidate.runId === run.id);
     if (started) {
       started.completed = run;
     }
-  }
-
-  async finalizeRunSnapshot(sessionId: string, run: AgentRun, completionEvent: AgentRunEvent): Promise<void> {
-    const started = this.runs.find((candidate) => candidate.sessionId === sessionId && candidate.runId === run.id);
-    if (started) {
-      started.completed = run;
-    }
-    const eventIndex = this.events.findIndex((event) => event.id === completionEvent.id);
-    if (eventIndex >= 0) {
-      this.events[eventIndex] = completionEvent;
-    }
+    this.events.push(completionEvent);
   }
 }

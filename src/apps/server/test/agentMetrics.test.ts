@@ -15,15 +15,20 @@ import { streamResultFromGenerateResult } from "./fixtures/scriptedModel.js";
 
 describe("agent run metrics", () => {
   it("returns structured model and orchestration metrics from the run API", async () => {
-    const app = buildServer(testConfig(), {
+    const app = buildServer(testConfig({
+      SECOPS_DURABLE_SESSIONS: "on",
+      SECOPS_DATA_DIR: "memory://"
+    }), {
       createModel: scriptedModelForRequest,
       enableLayeredRouting: false
     });
+    const sessionId = "session-http-metrics";
 
     const response = await app.inject({
       method: "POST",
       url: "/api/agent/run",
       payload: {
+        sessionId,
         messages: [{ role: "user", content: "Reply without calling a tool." }],
         enabledTools: []
       }
@@ -33,8 +38,10 @@ describe("agent run metrics", () => {
     expect(response.json().status).toBe("completed");
     expect(response.json().metrics).toMatchObject({
       schemaVersion: 1,
+      measurementBoundary: "before-completion-export",
       mode: "single",
       totalDurationMs: expect.any(Number),
+      localOrchestrationDurationMs: expect.any(Number),
       localRoutingDurationMs: expect.any(Number),
       text: {
         timeToFirstTextMs: expect.any(Number),
@@ -73,6 +80,11 @@ describe("agent run metrics", () => {
         failureCount: 0
       }
     });
+    const restored = await app.inject({ method: "GET", url: `/api/sessions/${sessionId}` });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().runs).toHaveLength(1);
+    expect(restored.json().runs[0].metrics).toEqual(response.json().metrics);
+    expect(restored.json().runs[0].lastEvent.run.metrics).toEqual(response.json().metrics);
 
     await app.close();
   });

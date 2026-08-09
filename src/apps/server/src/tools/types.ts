@@ -34,3 +34,5 @@ export interface ToolExecutionRecord {
   invocation: ToolInvocation;
   artifacts: EvidenceArtifact[];
 }
+
+export type ToolTimingScopeFactory = () => () => void;

@@ -44,17 +44,55 @@ async function runBenchmark({ baseUrl, runs }) {
     samples: samples.map((run) => ({
       runId: run.id,
       status: run.status,
+      clientObservedDurationMs: run.clientObservedDurationMs,
       metrics: run.metrics
     })),
     summary: {
       completedRuns: samples.filter((run) => run.status === "completed").length,
+      clientObservedDurationMs: distribution(samples.map((run) => run.clientObservedDurationMs)),
+      serverTotalDurationMs: distribution(samples.map((run) => run.metrics.totalDurationMs)),
       totalDurationMs: distribution(samples.map((run) => run.metrics.totalDurationMs)),
+      localOrchestrationDurationMs: distribution(samples.map((run) => run.metrics.localOrchestrationDurationMs)),
+      localRoutingDurationMs: distribution(samples.map((run) => run.metrics.localRoutingDurationMs)),
       timeToFirstTextMs: distribution(samples.flatMap((run) => (
         run.metrics.text.timeToFirstTextMs === undefined ? [] : [run.metrics.text.timeToFirstTextMs]
       ))),
       modelRequestCount: distribution(samples.flatMap((run) => (
         run.metrics.model.requestCount === undefined ? [] : [run.metrics.model.requestCount]
       ))),
+      provider: {
+        totalDurationMs: distribution(samples.flatMap((run) => modelMetricValues(run, "totalDurationMs"))),
+        requestCount: distribution(samples.flatMap((run) => modelMetricValues(run, "requestCount"))),
+        retryCount: distribution(samples.flatMap((run) => modelMetricValues(run, "retryCount"))),
+        phases: {
+          triage: phaseSummary(samples, "triage"),
+          deep: phaseSummary(samples, "deep"),
+          single: phaseSummary(samples, "single")
+        },
+        finishReasons: countValues(samples.flatMap((run) => modelRequests(run)
+          .flatMap((request) => request.finishReason === undefined ? [] : [request.finishReason])))
+      },
+      tools: {
+        callCount: distribution(samples.map((run) => run.metrics.tools.callCount)),
+        totalDurationMs: distribution(samples.map((run) => run.metrics.tools.totalDurationMs))
+      },
+      cache: {
+        hits: distribution(samples.map((run) => run.metrics.cache.hits)),
+        misses: distribution(samples.map((run) => run.metrics.cache.misses)),
+        bypasses: distribution(samples.map((run) => run.metrics.cache.bypasses))
+      },
+      persistence: {
+        operationCount: distribution(samples.map((run) => run.metrics.persistence.operationCount)),
+        totalDurationMs: distribution(samples.map((run) => run.metrics.persistence.totalDurationMs)),
+        failureCount: distribution(samples.map((run) => run.metrics.persistence.failureCount))
+      },
+      tokens: {
+        input: distribution(samples.flatMap((run) => tokenValues(run, "inputTokens"))),
+        output: distribution(samples.flatMap((run) => tokenValues(run, "outputTokens"))),
+        cacheRead: distribution(samples.flatMap((run) => tokenValues(run, "cacheReadTokens"))),
+        cacheWrite: distribution(samples.flatMap((run) => tokenValues(run, "cacheWriteTokens"))),
+        reasoning: distribution(samples.flatMap((run) => tokenValues(run, "reasoningTokens")))
+      },
       inputTokens: distribution(samples.flatMap((run) => tokenValues(run, "inputTokens"))),
       outputTokens: distribution(samples.flatMap((run) => tokenValues(run, "outputTokens")))
     }
@@ -62,6 +100,7 @@ async function runBenchmark({ baseUrl, runs }) {
 }
 
 async function executeRun(baseUrl) {
+  const observedStartedAt = performance.now();
   const headers = { "content-type": "application/json" };
   const token = process.env.SECOPS_API_TOKEN?.trim();
   if (token) {
@@ -83,15 +122,51 @@ async function executeRun(baseUrl) {
   if (!run || typeof run !== "object" || !run.metrics || run.metrics.schemaVersion !== 1) {
     throw new Error("Agent run response does not contain metrics schema version 1");
   }
-  return run;
+  return {
+    ...run,
+    clientObservedDurationMs: round(performance.now() - observedStartedAt)
+  };
+}
+
+function modelMetricValues(run, key) {
+  const value = run.metrics.model[key];
+  return typeof value === "number" ? [value] : [];
+}
+
+function modelRequests(run) {
+  return Array.isArray(run.metrics.model.requests) ? run.metrics.model.requests : [];
+}
+
+function phaseSummary(samples, phase) {
+  const requestsByRun = samples.map((run) => modelRequests(run).filter((request) => request.phase === phase));
+  return {
+    requestCount: distribution(requestsByRun.map((requests) => requests.length)),
+    durationMs: distribution(requestsByRun.map((requests) => (
+      requests.reduce((total, request) => total + request.durationMs, 0)
+    ))),
+    exposedToolCount: distribution(requestsByRun.flatMap((requests) => (
+      requests.map((request) => request.exposedToolCount)
+    ))),
+    finishReasons: countValues(requestsByRun.flatMap((requests) => requests
+      .flatMap((request) => request.finishReason === undefined ? [] : [request.finishReason])))
+  };
+}
+
+function countValues(values) {
+  const counts = new Map();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return Object.fromEntries([...counts.entries()].sort(([left], [right]) => left.localeCompare(right)));
 }
 
 function tokenValues(run, key) {
-  const total = run.metrics.model.requests.reduce((sum, request) => {
+  const requests = modelRequests(run);
+  const total = requests.reduce((sum, request) => {
     const value = request.usage?.[key];
     return value === undefined ? sum : sum + value;
   }, 0);
-  return run.metrics.model.requests.some((request) => request.usage?.[key] !== undefined) ? [total] : [];
+  return requests.some((request) => request.usage?.[key] !== undefined) ? [total] : [];
 }
 
 function distribution(values) {
@@ -113,11 +188,18 @@ function formatReport(report) {
     `Scenario: ${report.scenario.id} (${report.scenario.runs} run(s))`,
     `Provider/model: ${report.environment.provider}/${report.environment.model}`,
     `Completed: ${report.summary.completedRuns}/${report.scenario.runs}`,
-    formatDistribution("Total duration", report.summary.totalDurationMs, "ms"),
+    formatDistribution("Client observed", report.summary.clientObservedDurationMs, "ms"),
+    formatDistribution("Server total", report.summary.serverTotalDurationMs, "ms"),
+    formatDistribution("Local orchestration", report.summary.localOrchestrationDurationMs, "ms"),
+    formatDistribution("Local routing", report.summary.localRoutingDurationMs, "ms"),
     formatDistribution("First text", report.summary.timeToFirstTextMs, "ms"),
-    formatDistribution("Model requests", report.summary.modelRequestCount, ""),
-    formatDistribution("Input tokens", report.summary.inputTokens, ""),
-    formatDistribution("Output tokens", report.summary.outputTokens, "")
+    formatDistribution("Provider duration", report.summary.provider.totalDurationMs, "ms"),
+    formatDistribution("Provider requests", report.summary.provider.requestCount, ""),
+    formatDistribution("Provider retries", report.summary.provider.retryCount, ""),
+    formatDistribution("Tool calls", report.summary.tools.callCount, ""),
+    formatDistribution("Persistence operations", report.summary.persistence.operationCount, ""),
+    formatDistribution("Input tokens", report.summary.tokens.input, ""),
+    formatDistribution("Output tokens", report.summary.tokens.output, "")
   ];
   return `${lines.join("\n")}\n`;
 }
