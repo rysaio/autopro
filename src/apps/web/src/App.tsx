@@ -25,6 +25,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Square,
   XCircle,
   Wrench
 } from "lucide-react";
@@ -50,6 +51,7 @@ import type {
 } from "@secops-agent/shared";
 import {
   approveToolCall,
+  cancelAgentRun,
   callMcpTool,
   denyToolCall,
   fetchApprovals,
@@ -123,6 +125,7 @@ export function App() {
   const [toolClassFilter, setToolClassFilter] = useState<ToolClassFilter>("all");
   const [toolQuery, setToolQuery] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isMcpRunning, setIsMcpRunning] = useState(false);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [isUpdatingActionLevel, setIsUpdatingActionLevel] = useState(false);
@@ -138,6 +141,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<InspectorTab>("plan");
   const [activePanel, setActivePanel] = useState<WorkbenchPanel | null>(null);
+  const activeRunIdRef = useRef<string | null>(null);
+  const streamControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -278,6 +283,7 @@ export function App() {
       return;
     }
     setIsRunning(true);
+    setIsCancelling(false);
     setError(null);
     const nextMessages: ChatMessage[] = [
       ...messages,
@@ -295,6 +301,9 @@ export function App() {
     setStreamArtifacts([]);
     setStreamToolInvocations([]);
     setPrompt("");
+    activeRunIdRef.current = null;
+    const streamController = new AbortController();
+    streamControllerRef.current = streamController;
     try {
       const run = await streamAgent({
         messages: nextMessages.map((message) => ({
@@ -306,7 +315,7 @@ export function App() {
         sessionId: currentSessionId,
         enabledTools: enabledToolList,
         permissionMode: effectivePermissionMode
-      }, applyRunEvent);
+      }, applyRunEvent, { signal: streamController.signal });
       setCurrentSessionId(run.sessionId ?? currentSessionId);
       setLastRun(run);
       setMessages(run.messages);
@@ -319,7 +328,30 @@ export function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
+      if (streamControllerRef.current === streamController) {
+        streamControllerRef.current = null;
+      }
+      activeRunIdRef.current = null;
+      setIsCancelling(false);
       setIsRunning(false);
+    }
+  }
+
+  async function cancelActiveRun() {
+    if (!isRunning || isCancelling) {
+      return;
+    }
+    setIsCancelling(true);
+    const runId = activeRunIdRef.current;
+    if (!runId) {
+      streamControllerRef.current?.abort();
+      return;
+    }
+    try {
+      await cancelAgentRun(runId);
+    } catch (caught) {
+      setIsCancelling(false);
+      setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
 
@@ -335,6 +367,10 @@ export function App() {
   }
 
   function applyRunEvent(event: AgentRunEvent) {
+    if (event.type === "run_started") {
+      activeRunIdRef.current = event.runId;
+      return;
+    }
     if (event.type === "audit" && event.audit) {
       setStreamAudit((current) => [...current, event.audit as AuditEvent]);
       return;
@@ -347,8 +383,8 @@ export function App() {
       setStreamToolInvocations((current) => upsertInvocation(current, event.invocation as ToolInvocation));
       return;
     }
-    if (event.type === "message" && event.message) {
-      setMessages((current) => [...current, event.message as ChatMessage]);
+    if (event.type === "text_delta" || event.type === "message") {
+      setMessages((current) => applyMessageEvent(current, event));
     }
   }
 
@@ -1076,12 +1112,13 @@ async function handleGenerateReport() {
             <StatusPill health={health} />
             <button
               className="icon-button"
-              disabled={isRunning || !prompt.trim()}
+              disabled={isRunning ? isCancelling : !prompt.trim()}
               form="agent-composer"
-              title="运行当前提示"
-              type="submit"
+              onClick={isRunning ? () => void cancelActiveRun() : undefined}
+              title={isRunning ? "停止当前运行" : "运行当前提示"}
+              type={isRunning ? "button" : "submit"}
             >
-              <Play size={18} aria-hidden="true" />
+              {isRunning ? <Square size={18} aria-hidden="true" /> : <Play size={18} aria-hidden="true" />}
             </button>
           </div>
         </header>
@@ -1124,9 +1161,19 @@ async function handleGenerateReport() {
             rows={3}
             value={prompt}
           />
-          <button className="send-button" disabled={isRunning || !prompt.trim()} id="composer-submit" type="submit">
-            {isRunning ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
-            <span>运行</span>
+          <button
+            className={`send-button${isRunning ? " stop" : ""}`}
+            disabled={isRunning ? isCancelling : !prompt.trim()}
+            id="composer-submit"
+            onClick={isRunning ? () => void cancelActiveRun() : undefined}
+            type={isRunning ? "button" : "submit"}
+          >
+            {isRunning
+              ? isCancelling
+                ? <Loader2 className="spin" size={18} aria-hidden="true" />
+                : <Square size={18} aria-hidden="true" />
+              : <Send size={18} aria-hidden="true" />}
+            <span>{isRunning ? isCancelling ? "停止中" : "停止" : "运行"}</span>
           </button>
         </form>
           </>
@@ -1431,8 +1478,8 @@ function labelForRole(role: ChatMessage["role"]) {
 
 function auditEventsFromRunEvents(events: AgentRunEvent[]): AuditEvent[] {
   return events
-    .map((event) => event.audit)
-    .filter((event): event is AuditEvent => Boolean(event));
+    .filter((event) => event.type === "audit")
+    .map((event) => event.audit);
 }
 
 function defaultEnabledToolIds(tools: SkillManifest[]): string[] {
@@ -1454,6 +1501,34 @@ function mergeMessages(current: ChatMessage[], nextMessages: ChatMessage[]): Cha
     ...current,
     ...nextMessages.filter((message) => !seen.has(message.id))
   ];
+}
+
+export function applyMessageEvent(current: ChatMessage[], event: AgentRunEvent): ChatMessage[] {
+  if (event.type === "text_delta") {
+    const index = current.findIndex((message) => message.id === event.messageId);
+    if (index === -1) {
+      return [
+        ...current,
+        {
+          id: event.messageId,
+          role: "assistant",
+          content: event.delta,
+          createdAt: event.createdAt
+        }
+      ];
+    }
+    return current.map((message, messageIndex) => messageIndex === index
+      ? { ...message, content: message.content + event.delta }
+      : message);
+  }
+  if (event.type !== "message") {
+    return current;
+  }
+  const index = current.findIndex((message) => message.id === event.message.id);
+  if (index === -1) {
+    return [...current, event.message];
+  }
+  return current.map((message, messageIndex) => messageIndex === index ? event.message : message);
 }
 
 function liveSessionTitle(messages: ChatMessage[]): string {

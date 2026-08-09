@@ -75,7 +75,6 @@ DELETE /api/tools/visibility/wazuh.alerts.search
                          ↓                                      ↓ 命中                    ↓
                     模型调用指标                       新 invocation + 新 artifact      工具与缓存指标
 ```
-```
 
 ## 源码开发流程
 
@@ -266,6 +265,7 @@ DELETE /api/tools/visibility/:id       # 清除覆盖，回退到工具声明值
 | `SECOPS_DATA_DIR` / `SECOPS_DURABLE_SESSIONS` | `runtime/pgdata` / `on` | 会话持久化（`memory://` 内存 / `off` 禁用） |
 | `SECOPS_ALLOWED_HOSTS` / `SECOPS_ALLOWED_ORIGINS` | localhost,127.0.0.1,::1 / http://localhost:5317,… | Host/Origin 访问控制 |
 | `SECOPS_API_TOKEN` | 空 | API Bearer 令牌（设置后所有 API 需携带） |
+| `SECOPS_AGENT_RUN_TIMEOUT_MS` | `300000` | 单次 Agent 模型与工具循环的服务端硬超时（毫秒） |
 | `PORT` / `SECOPS_BIND_HOST` | `4317` / `127.0.0.1` | 后端监听地址 |
 | `SECOPS_DEMO_MODE` | `true` | Wazuh/Shuffle 使用 mock 数据（无真实端点也可运行） |
 | `WAZUH_*` / `SHUFFLE_*` | — | 插件端点与凭据配置（`SECOPS_DEMO_MODE=true` 时可省略） |

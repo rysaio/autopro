@@ -1161,6 +1161,14 @@ h3 {
   background: #0d9488;
 }
 
+.send-button.stop {
+  background: #b42318;
+}
+
+.send-button.stop:hover:not(:disabled) {
+  background: #912018;
+}
+
 .send-button:disabled {
   opacity: 0.55;
 }

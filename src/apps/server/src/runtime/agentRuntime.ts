@@ -1,6 +1,7 @@
 import type {
   AgentRun,
   AgentRunEvent,
+  AgentRunEventPayload,
   AgentRunRequest,
   AgentRoutingDecision,
   AgentRoutingMode,
@@ -36,6 +37,17 @@ export interface AgentRuntimeOptions {
   enableLayeredRouting?: boolean;
   /** 默认 deterministic；layered 仅作为临时回滚模式。 */
   agentRoutingMode?: AgentRoutingMode;
+  /** 整个运行（模型、工具循环）的硬超时。 */
+  runTimeoutMs?: number;
+}
+
+export interface AgentRunExecutionOptions {
+  signal?: AbortSignal;
+}
+
+export interface AgentRunAbortReason {
+  status: "cancelled" | "timed_out";
+  message: string;
 }
 
 type AgentRunContext = Parameters<ToolRegistry["aiSdkTools"]>[0];
@@ -44,7 +56,11 @@ export type AgentRunEventSink = (event: AgentRunEvent) => void;
 export class AgentRuntime {
   constructor(private readonly options: AgentRuntimeOptions) {}
 
-  async run(request: AgentRunRequest, onEvent?: AgentRunEventSink): Promise<AgentRun> {
+  async run(
+    request: AgentRunRequest,
+    onEvent?: AgentRunEventSink,
+    execution: AgentRunExecutionOptions = {}
+  ): Promise<AgentRun> {
     const runTiming = new RunTimingRecorder();
     const runId = crypto.randomUUID();
     const sessionId = request.sessionId ?? crypto.randomUUID();
@@ -112,6 +128,11 @@ export class AgentRuntime {
     };
     let timeToFirstTextMs: number | undefined;
     let status: AgentRun["status"] = "completed";
+    let terminalReason = "Model execution completed.";
+    let streamingMessageId: string | undefined;
+    let streamingMessageCreatedAt: string | undefined;
+    let streamedText = "";
+    let finalAssistantMessageEmitted = false;
     const toolRecords: ToolExecutionRecord[] = [];
     const effectivePermissionMode = this.options.actionLevel === "full-access"
       ? "auto"
@@ -135,6 +156,7 @@ export class AgentRuntime {
       persist(() => stateStore.appendMessage(sessionId, runId, message));
     }
     const storedMarkers = await measurePersistenceWait(() => stateStore.listStateMarkers(sessionId));
+    const abortScope = createRunAbortScope(execution.signal, this.options.runTimeoutMs);
     const context = toolContext({
       runId,
       permissionMode: effectivePermissionMode,
@@ -142,9 +164,10 @@ export class AgentRuntime {
       sandboxRoot: this.options.sandboxRoot,
       workspaceRoot: this.options.workspaceRoot,
       sessionId,
-      stateMarkers: storedMarkers.map((marker) => marker.key)
+      stateMarkers: storedMarkers.map((marker) => marker.key),
+      signal: abortScope.signal
     });
-    const createRunEvent = (payload: Omit<AgentRunEvent, "id" | "runId" | "createdAt">): AgentRunEvent => {
+    const createRunEvent = (payload: AgentRunEventPayload): AgentRunEvent => {
       return {
         id: crypto.randomUUID(),
         runId,
@@ -152,10 +175,12 @@ export class AgentRuntime {
         ...payload
       } as AgentRunEvent;
     };
-    const emit = (payload: Omit<AgentRunEvent, "id" | "runId" | "createdAt">) => {
+    const emit = (payload: AgentRunEventPayload) => {
       const runEvent = createRunEvent(payload);
       onEvent?.(runEvent);
-      persist(() => stateStore.recordRunEvent(runEvent));
+      if (runEvent.type !== "text_delta") {
+        persist(() => stateStore.recordRunEvent(runEvent));
+      }
     };
     emit({ type: "run_started" });
 
@@ -261,7 +286,8 @@ export class AgentRuntime {
           messages: toModelMessages(request),
           tools: triageTools,
           stopWhen: stepCountIs(maxTriageRounds),
-          temperature: 0.2
+          temperature: 0.2,
+          abortSignal: abortScope.signal
         });
         const triageResult = await consumeTextGeneration(triageGeneration);
 
@@ -334,17 +360,29 @@ export class AgentRuntime {
         // the original valid conversation before the final model execution.
         const phase1Messages = [...toModelMessages(request), ...triageResult.response.messages];
 
+        streamingMessageId = crypto.randomUUID();
+        streamingMessageCreatedAt = new Date().toISOString();
+        streamedText = "";
         const deepGeneration = streamText({
           model: modelMetrics.wrap(this.options.model, "deep", deepToolIds.length),
           system: SYSTEM_PROMPT_DEEP,
           messages: phase1Messages,
           tools: deepTools,
           stopWhen: stepCountIs(maxDeepRounds),
-          temperature: 0.2
+          temperature: 0.2,
+          abortSignal: abortScope.signal
         });
-        const deepResult = await consumeTextGeneration(deepGeneration, () => {
-          timeToFirstTextMs ??= runTiming.elapsedMs();
-        });
+        const deepResult = await consumeTextGeneration(
+          deepGeneration,
+          () => {
+            timeToFirstTextMs ??= runTiming.elapsedMs();
+          },
+          (delta) => {
+            streamedText += delta;
+            emit({ type: "text_delta", messageId: streamingMessageId as string, delta });
+          }
+        );
+        abortScope.signal.throwIfAborted();
 
         totalSteps += deepResult.steps.length;
         totalToolResults += deepResult.steps.reduce((c, s) => c + s.toolResults.length, 0);
@@ -356,13 +394,16 @@ export class AgentRuntime {
         // ── 检查是否有待审批 ──
         if (toolRecords.some((record) => record.invocation.status === "pending_approval")) {
           status = "needs_approval";
+          terminalReason = "One or more tool calls require analyst approval.";
         }
 
-        const finalMessage = chat(
-          'assistant',
+        const finalMessage = streamedAssistantMessage(
+          streamingMessageId,
+          streamingMessageCreatedAt,
           finalText || 'Agent completed but did not produce a final text summary. Check the tool results above.' + deepFinish
         );
         messages.push(finalMessage);
+        finalAssistantMessageEmitted = true;
         persist(() => stateStore.appendMessage(sessionId, runId, finalMessage));
         emit({ type: "message", message: finalMessage });
 
@@ -419,19 +460,37 @@ export class AgentRuntime {
           messages: toModelMessages(request),
           tools: singleTools,
           stopWhen: stepCountIs(this.options.maxToolRounds ?? 10),
-          temperature: 0.2
+          temperature: 0.2,
+          abortSignal: abortScope.signal
         });
-        const result = await consumeTextGeneration(generation, () => {
-          timeToFirstTextMs ??= runTiming.elapsedMs();
-        });
+        streamingMessageId = crypto.randomUUID();
+        streamingMessageCreatedAt = new Date().toISOString();
+        streamedText = "";
+        const result = await consumeTextGeneration(
+          generation,
+          () => {
+            timeToFirstTextMs ??= runTiming.elapsedMs();
+          },
+          (delta) => {
+            streamedText += delta;
+            emit({ type: "text_delta", messageId: streamingMessageId as string, delta });
+          }
+        );
+        abortScope.signal.throwIfAborted();
 
         if (toolRecords.some((record) => record.invocation.status === "pending_approval")) {
           status = "needs_approval";
+          terminalReason = "One or more tool calls require analyst approval.";
         }
         finalText = result.text || result.steps.findLast((s) => s.text)?.text || '';
         const finishInfo = result.finishReason === 'tool-calls' ? ' [Agent stopped at max tool rounds - increase maxToolRounds]' : '';
-        const assistantMessage = chat('assistant', finalText || 'Agent completed but did not produce a final text summary. Check the tool results above.' + finishInfo);
+        const assistantMessage = streamedAssistantMessage(
+          streamingMessageId,
+          streamingMessageCreatedAt,
+          finalText || 'Agent completed but did not produce a final text summary. Check the tool results above.' + finishInfo
+        );
         messages.push(assistantMessage);
+        finalAssistantMessageEmitted = true;
         persist(() => stateStore.appendMessage(sessionId, runId, assistantMessage));
         emit({ type: "message", message: assistantMessage });
         totalToolResults = result.steps.reduce((count, step) => count + step.toolResults.length, 0);
@@ -445,25 +504,43 @@ export class AgentRuntime {
         emit({ type: "audit", audit: responseAudit });
       }
     } catch (error) {
-      status = "failed";
-      const errorAudit = event("model_response", "Runtime error", error instanceof Error ? error.message : String(error), "error");
+      const abortReason = abortScope.signal.aborted
+        ? normalizeAbortReason(abortScope.signal.reason)
+        : undefined;
+      status = abortReason?.status ?? "failed";
+      terminalReason = abortReason?.message ?? errorText(error);
+      const errorAudit = event(
+        "model_response",
+        status === "timed_out" ? "Run timed out" : status === "cancelled" ? "Run cancelled" : "Runtime error",
+        terminalReason,
+        status === "cancelled" ? "warn" : "error"
+      );
       audit.push(errorAudit);
       persist(() => stateStore.recordAuditEvent(sessionId, runId, errorAudit));
       emit({ type: "audit", audit: errorAudit });
-      const errorMessage = chat("assistant", `Agent run failed: ${error instanceof Error ? error.message : String(error)}`);
-      messages.push(errorMessage);
-      persist(() => stateStore.appendMessage(sessionId, runId, errorMessage));
-      emit({ type: "message", message: errorMessage });
+      if (!finalAssistantMessageEmitted) {
+        const terminalContent = status === "failed"
+          ? `Agent run failed: ${terminalReason}`
+          : terminalAssistantContent(streamedText, status, terminalReason);
+        const terminalMessage = streamingMessageId && streamingMessageCreatedAt
+          ? streamedAssistantMessage(streamingMessageId, streamingMessageCreatedAt, terminalContent)
+          : chat("assistant", terminalContent);
+        messages.push(terminalMessage);
+        finalAssistantMessageEmitted = true;
+        persist(() => stateStore.appendMessage(sessionId, runId, terminalMessage));
+        emit({ type: "message", message: terminalMessage });
+      }
     }
 
     // Flush all queued state writes before taking the run-level snapshot.
     await persistence;
     if (persistenceFailure !== undefined) {
       status = "failed";
+      terminalReason = `Persistence failed: ${errorText(persistenceFailure)}`;
       audit.push(event(
         "model_response",
         "Persistence error",
-        persistenceFailure instanceof Error ? persistenceFailure.message : String(persistenceFailure),
+        errorText(persistenceFailure),
         "error"
       ));
     }
@@ -477,6 +554,7 @@ export class AgentRuntime {
       id: runId,
       sessionId,
       status,
+      terminalReason,
       provider: this.options.providerLabel,
       model: this.options.modelName,
       startedAt,
@@ -522,21 +600,29 @@ export class AgentRuntime {
     const completionEvent = createRunEvent({ type: "run_completed", run });
     Object.assign(run.metrics, runTiming.snapshot());
     // The completion export is intentionally outside the metrics snapshot boundary.
-    await measurePersistenceWait(() => stateStore.commitRunCompletion(sessionId, run, completionEvent));
-    onEvent?.(completionEvent);
-    return run;
+    try {
+      await measurePersistenceWait(() => stateStore.commitRunCompletion(sessionId, run, completionEvent));
+      onEvent?.(completionEvent);
+      return run;
+    } finally {
+      abortScope.cleanup();
+    }
   }
 }
 
 async function consumeTextGeneration(
   generation: ReturnType<typeof streamText>,
-  onFirstText?: () => void
+  onFirstText?: () => void,
+  onTextDelta?: (delta: string) => void
 ) {
   let firstTextSeen = false;
   for await (const part of generation.fullStream) {
     if (!firstTextSeen && part.type === "text-delta" && part.text.length > 0) {
       firstTextSeen = true;
       onFirstText?.();
+    }
+    if (part.type === "text-delta" && part.text.length > 0) {
+      onTextDelta?.(part.text);
     }
   }
   const [text, steps, response, finishReason] = await Promise.all([
@@ -629,6 +715,73 @@ function chat(role: ChatMessage["role"], content: string, name?: string, toolCal
     message.toolCallId = toolCallId;
   }
   return message;
+}
+
+function streamedAssistantMessage(id: string | undefined, createdAt: string | undefined, content: string): ChatMessage {
+  return {
+    id: id ?? crypto.randomUUID(),
+    role: "assistant",
+    content,
+    createdAt: createdAt ?? new Date().toISOString()
+  };
+}
+
+function terminalAssistantContent(
+  partialText: string,
+  status: "cancelled" | "timed_out",
+  reason: string
+): string {
+  const notice = status === "timed_out" ? `Agent run timed out: ${reason}` : `Agent run cancelled: ${reason}`;
+  return partialText ? `${partialText}\n\n${notice}` : notice;
+}
+
+function createRunAbortScope(parentSignal: AbortSignal | undefined, timeoutMs: number | undefined) {
+  const controller = new AbortController();
+  const abortFromParent = () => {
+    controller.abort(parentSignal?.reason ?? {
+      status: "cancelled",
+      message: "The client cancelled the active run."
+    } satisfies AgentRunAbortReason);
+  };
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+  const timeoutId = timeoutMs && timeoutMs > 0
+    ? setTimeout(() => {
+        controller.abort({
+          status: "timed_out",
+          message: `The agent run exceeded its ${timeoutMs} ms execution limit.`
+        } satisfies AgentRunAbortReason);
+      }, timeoutMs)
+    : undefined;
+  return {
+    signal: controller.signal,
+    cleanup() {
+      parentSignal?.removeEventListener("abort", abortFromParent);
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
+  };
+}
+
+function normalizeAbortReason(reason: unknown): AgentRunAbortReason {
+  if (reason && typeof reason === "object") {
+    const candidate = reason as Partial<AgentRunAbortReason>;
+    if ((candidate.status === "cancelled" || candidate.status === "timed_out") && typeof candidate.message === "string") {
+      return { status: candidate.status, message: candidate.message };
+    }
+  }
+  return {
+    status: "cancelled",
+    message: errorText(reason) || "The client cancelled the active run."
+  };
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error ?? "Unknown error");
 }
 
 function event(

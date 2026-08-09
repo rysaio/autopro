@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ToolGuidance, ToolInvocation } from "@secops-agent/shared";
-import { ToolCallCard } from "../src/App.js";
+import type { AgentRunEvent, ChatMessage, ToolGuidance, ToolInvocation } from "@secops-agent/shared";
+import { applyMessageEvent, ToolCallCard } from "../src/App.js";
 
 const now = new Date("2026-06-19T00:00:00.000Z").toISOString();
 
@@ -78,6 +78,50 @@ for (const testCase of cases) {
       throw new Error(`Expected ${testCase.name} markup to contain ${expected}.\n${html}`);
     }
   }
+}
+
+const baseMessages: ChatMessage[] = [{
+  id: "user-1",
+  role: "user",
+  content: "Investigate this signal.",
+  createdAt: now
+}];
+const firstDelta: AgentRunEvent = {
+  id: "event-1",
+  runId: "run-1",
+  type: "text_delta",
+  messageId: "assistant-1",
+  delta: "Partial ",
+  createdAt: now
+};
+const secondDelta: AgentRunEvent = {
+  ...firstDelta,
+  id: "event-2",
+  delta: "answer"
+};
+const finalMessage: AgentRunEvent = {
+  id: "event-3",
+  runId: "run-1",
+  type: "message",
+  createdAt: now,
+  message: {
+    id: "assistant-1",
+    role: "assistant",
+    content: "Partial answer.",
+    createdAt: now
+  }
+};
+const afterFirstDelta = applyMessageEvent(baseMessages, firstDelta);
+const afterSecondDelta = applyMessageEvent(afterFirstDelta, secondDelta);
+const reconciled = applyMessageEvent(afterSecondDelta, finalMessage);
+if (afterFirstDelta.at(-1)?.content !== "Partial ") {
+  throw new Error("Expected the first text delta to render immediately.");
+}
+if (afterSecondDelta.at(-1)?.content !== "Partial answer") {
+  throw new Error("Expected text deltas to append to the same assistant message.");
+}
+if (reconciled.length !== 2 || reconciled.at(-1)?.content !== "Partial answer.") {
+  throw new Error("Expected the final message to reconcile without duplicating streamed text.");
 }
 
 function invocation(input: Partial<ToolInvocation> & Pick<ToolInvocation, "id" | "status">): ToolInvocation {

@@ -104,16 +104,34 @@ export function runAgent(request: AgentRunRequest): Promise<AgentRun> {
 
 export async function streamAgent(
   request: AgentRunRequest,
-  onEvent: (event: AgentRunEvent) => void
+  onEvent: (event: AgentRunEvent) => void,
+  options: { signal?: AbortSignal } = {}
 ): Promise<AgentRun> {
   const controller = new AbortController();
   let didTimeout = false;
+  let activeRunId: string | undefined;
+  const abortFromCaller = () => controller.abort();
+  if (options.signal?.aborted) {
+    abortFromCaller();
+  } else {
+    options.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
   const timeoutId = AGENT_STREAM_TIMEOUT_MS > 0
-    ? window.setTimeout(() => {
+    ? globalThis.setTimeout(() => {
         didTimeout = true;
-        controller.abort();
+        if (activeRunId) {
+          void cancelAgentRun(activeRunId, "timed_out").catch(() => controller.abort());
+        } else {
+          controller.abort();
+        }
       }, AGENT_STREAM_TIMEOUT_MS)
     : undefined;
+  const handleEvent = (event: AgentRunEvent) => {
+    if (event.type === "run_started") {
+      activeRunId = event.runId;
+    }
+    onEvent(event);
+  };
 
   try {
     const response = await fetch(`${API_BASE}/api/agent/events`, {
@@ -141,7 +159,7 @@ export async function streamAgent(
         break;
       }
       buffer += decoder.decode(value, { stream: true });
-      const parsed = drainSseEvents(buffer, onEvent);
+      const parsed = drainSseEvents(buffer, handleEvent);
       buffer = parsed.remainder;
       if (parsed.finalRun) {
         finalRun = parsed.finalRun;
@@ -149,7 +167,7 @@ export async function streamAgent(
     }
 
     buffer += decoder.decode();
-    const parsed = drainSseEvents(buffer, onEvent);
+    const parsed = drainSseEvents(buffer, handleEvent);
     if (parsed.finalRun) {
       finalRun = parsed.finalRun;
     }
@@ -159,14 +177,27 @@ export async function streamAgent(
     return finalRun;
   } catch (error) {
     if (didTimeout || isAbortError(error)) {
-      throw new Error(`Agent event stream timed out after ${formatTimeoutMs(AGENT_STREAM_TIMEOUT_MS)}.`);
+      throw new Error(didTimeout
+        ? `Agent event stream timed out after ${formatTimeoutMs(AGENT_STREAM_TIMEOUT_MS)}.`
+        : "Agent event stream was cancelled.");
     }
     throw error;
   } finally {
     if (timeoutId !== undefined) {
-      window.clearTimeout(timeoutId);
+      globalThis.clearTimeout(timeoutId);
     }
+    options.signal?.removeEventListener("abort", abortFromCaller);
   }
+}
+
+export function cancelAgentRun(
+  runId: string,
+  reason: "cancelled" | "timed_out" = "cancelled"
+): Promise<{ runId: string; status: "cancelled" | "timed_out" }> {
+  return postJson<{ runId: string; status: "cancelled" | "timed_out" }>(
+    `/api/agent/runs/${encodeURIComponent(runId)}/cancel`,
+    { reason }
+  );
 }
 
 export interface McpToolSummary {
