@@ -43,11 +43,11 @@ export class RunTimingRecorder {
   }
 
   elapsedMs(): number {
-    return roundedMs(Math.max(0, this.clock() - this.runStartedAtMs));
+    return roundDurationMs(Math.max(0, this.clock() - this.runStartedAtMs));
   }
 
   totalDurationMs(category: RunTimingCategory): number {
-    return roundedMs(this.intervals
+    return roundDurationMs(this.intervals
       .filter((interval) => interval.category === category)
       .reduce((total, interval) => total + interval.completedAtMs - interval.startedAtMs, 0));
   }
@@ -56,8 +56,8 @@ export class RunTimingRecorder {
     const completedAtMs = this.clock();
     const totalDurationMs = Math.max(0, completedAtMs - this.runStartedAtMs);
     return {
-      totalDurationMs: roundedMs(totalDurationMs),
-      localOrchestrationDurationMs: roundedMs(calculateLocalOrchestrationDurationMs(
+      totalDurationMs: roundDurationMs(totalDurationMs),
+      localOrchestrationDurationMs: roundDurationMs(calculateLocalOrchestrationDurationMs(
         this.runStartedAtMs,
         completedAtMs,
         this.intervals
@@ -116,6 +116,6 @@ export function mergeTimingIntervals(intervals: TimingInterval[]): TimingInterva
   return merged;
 }
 
-function roundedMs(value: number): number {
+export function roundDurationMs(value: number): number {
   return Math.round(value * 100) / 100;
 }
