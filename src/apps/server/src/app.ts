@@ -5,6 +5,7 @@ import type { LanguageModel } from "ai";
 import type {
   AgentRunEvent,
   AgentRunRequest,
+  AgentRoutingMode,
   AgentSessionDetail,
   AgentSessionSummary,
   ApprovalDecisionResult,
@@ -37,8 +38,9 @@ export interface BuildServerOptions {
   createModel?: (connection: ModelConnection, request: AgentRunRequest) => LanguageModel;
   /** 测试注入：自定义插件 MCP 客户端工厂（默认为真实 stdio 连接）。 */
   createPluginClient?: PluginManagerOptions["createClient"];
-  /** 关闭分层工具路由（测试用；默认开启）。 */
+  /** @deprecated Use agentRoutingMode. true selects the temporary layered rollback mode. */
   enableLayeredRouting?: boolean;
+  agentRoutingMode?: AgentRoutingMode;
 }
 
 export function buildServer(config: AppConfig, options: BuildServerOptions = {}) {
@@ -479,7 +481,10 @@ function createRuntime(
     sandboxRoot: config.sandboxRoot,
     workspaceRoot: config.workspaceRoot,
     sessionStateStore,
-    ...(options.enableLayeredRouting !== undefined ? { enableLayeredRouting: options.enableLayeredRouting } : {})
+    agentRoutingMode: options.agentRoutingMode
+      ?? (options.enableLayeredRouting === undefined
+        ? config.agentRoutingMode
+        : options.enableLayeredRouting ? "layered" : "deterministic")
   });
 }
 

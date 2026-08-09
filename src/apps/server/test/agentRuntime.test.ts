@@ -74,6 +74,8 @@ describe("AgentRuntime", () => {
     expect(run.audit.some((event) => event.type === "policy_decision")).toBe(true);
     expect(run.audit.some((event) => event.type === "tool_result")).toBe(true);
     expect(run.messages.at(-1)?.role).toBe("assistant");
+    expect(run.routing.selectedToolIds).toContain("ioc.enrich");
+    expect(run.routing.selectedToolIds).not.toContain("asset.inventory.lookup");
   });
 
   it("can perform a real sandboxed action through the SDK tool loop", async () => {
@@ -112,7 +114,7 @@ describe("AgentRuntime", () => {
     await rm(sandboxRoot, { recursive: true, force: true });
   });
 
-  it("ignores enabled tool filtering in full-access mode", async () => {
+  it("keeps enabled tool filtering in full-access mode", async () => {
     const sandboxRoot = path.resolve("runtime/test-full-access-scope");
     await rm(sandboxRoot, { recursive: true, force: true });
     const config = testConfig({
@@ -143,8 +145,8 @@ describe("AgentRuntime", () => {
     });
 
     expect(run.status).toBe("completed");
-    expect(run.toolInvocations[0]?.toolName).toBe("case.note.write");
-    expect(run.toolInvocations[0]?.status).toBe("executed");
+    expect(run.toolInvocations).toEqual([]);
+    expect(run.routing.selectedToolIds).toEqual([]);
     await rm(sandboxRoot, { recursive: true, force: true });
   });
 

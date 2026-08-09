@@ -43,6 +43,15 @@ describe("agent run event stream", () => {
       .map((line) => JSON.parse(line.slice("data: ".length)))
       .find((event) => event.type === "run_completed");
     expect(completionEvent?.run.metrics.measurementBoundary).toBe("before-completion-export");
+    expect(completionEvent?.run.routing).toMatchObject({
+      mode: "deterministic",
+      selectedToolIds: ["ioc.enrich"],
+      additionalModelStage: { used: false }
+    });
+    expect(completionEvent?.run.metrics.model).toMatchObject({
+      requestCount: 2,
+      requests: [{ phase: "final" }, { phase: "final" }]
+    });
     const restored = await app.inject({ method: "GET", url: `/api/sessions/${sessionId}` });
     expect(restored.statusCode).toBe(200);
     expect(restored.json().runs[0].metrics).toEqual(completionEvent.run.metrics);

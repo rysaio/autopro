@@ -206,7 +206,8 @@ describe("tool catalog API with plugins", () => {
         null,
         null
       ]),
-      createPluginClient
+      createPluginClient,
+      agentRoutingMode: "layered"
     });
 
     const initialTools = await app.inject({ method: "GET", url: "/api/tools" });
@@ -276,7 +277,8 @@ describe("tool catalog API with plugins", () => {
         { tool: "secops_wazuh_block_ip", input: { ip: "203.0.113.10" } },
         null
       ]),
-      createPluginClient
+      createPluginClient,
+      agentRoutingMode: "layered"
     });
 
     // triage 阶段模型只能看到 core 工具；deep 阶段经关键词推断加载 wazuh-platform，

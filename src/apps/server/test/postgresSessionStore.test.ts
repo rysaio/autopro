@@ -103,6 +103,14 @@ describe("PostgresSessionStore", () => {
       toolInvocations: [invocation],
       audit: [audit],
       artifacts: [artifact],
+      routing: {
+        mode: "deterministic",
+        selectedToolIds: [],
+        groups: [],
+        confidence: { level: "high", score: 1 },
+        reasons: ["fixture"],
+        additionalModelStage: { used: false, reason: "fixture" }
+      },
       metrics: metricsFixture(8, 9)
     };
     const completionEvent: AgentRunEvent = {

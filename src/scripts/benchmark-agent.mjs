@@ -68,6 +68,7 @@ async function runBenchmark({ baseUrl, runs }) {
         phases: {
           triage: phaseSummary(samples, "triage"),
           deep: phaseSummary(samples, "deep"),
+          final: phaseSummary(samples, "final"),
           single: phaseSummary(samples, "single")
         },
         finishReasons: countValues(samples.flatMap((run) => modelRequests(run)

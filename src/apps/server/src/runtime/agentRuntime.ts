@@ -2,6 +2,8 @@ import type {
   AgentRun,
   AgentRunEvent,
   AgentRunRequest,
+  AgentRoutingDecision,
+  AgentRoutingMode,
   AuditEvent,
   ChatMessage,
   EvidenceArtifact,
@@ -13,7 +15,7 @@ import type { ToolExecutionRecord } from "../tools/types.js";
 import { ModelMetricsRecorder } from "./modelMetrics.js";
 import { roundDurationMs, RunTimingRecorder } from "./runTimingRecorder.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
-import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP } from "./systemPrompt.js";
+import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP, SYSTEM_PROMPT_FINAL } from "./systemPrompt.js";
 import { ToolCache, type ToolCacheCategory } from "./toolCache.js";
 import { toolRouter } from "./toolRouter.js";
 
@@ -31,8 +33,10 @@ export interface AgentRuntimeOptions {
   maxTriageRounds?: number;
   /** 深度阶段最大工具轮数（默认 8） */
   maxDeepRounds?: number;
-  /** 启用分层工具路由（默认 true） */
+  /** @deprecated true selects the temporary layered rollback mode. */
   enableLayeredRouting?: boolean;
+  /** 默认 deterministic；layered 仅作为临时回滚模式。 */
+  agentRoutingMode?: AgentRoutingMode;
 }
 
 type AgentRunContext = Parameters<ToolRegistry["aiSdkTools"]>[0];
@@ -107,7 +111,9 @@ export class AgentRuntime {
     const messages: ChatMessage[] = normalizeMessages(request.messages);
     const maxTriageRounds = this.options.maxTriageRounds ?? 3;
     const maxDeepRounds = this.options.maxDeepRounds ?? 8;
-    const useLayeredRouting = this.options.enableLayeredRouting !== false;
+    const routingMode = this.options.agentRoutingMode
+      ?? (this.options.enableLayeredRouting === true ? "layered" : "deterministic");
+    const useLayeredRouting = routingMode === "layered";
     const modelMetrics = new ModelMetricsRecorder(runTiming);
     const cacheStatsAtStart = this.toolCache.stats();
     let localRoutingDurationMs = 0;
@@ -125,9 +131,20 @@ export class AgentRuntime {
     const effectivePermissionMode = this.options.actionLevel === "full-access"
       ? "auto"
       : request.permissionMode ?? "auto";
-    const effectiveEnabledTools = this.options.actionLevel === "full-access"
-      ? undefined
-      : request.enabledTools;
+    const effectiveEnabledTools = request.enabledTools;
+    let routing: AgentRoutingDecision = {
+      mode: routingMode,
+      selectedToolIds: [],
+      groups: [],
+      confidence: { level: "low", score: 0 },
+      reasons: ["Routing did not complete."],
+      additionalModelStage: {
+        used: useLayeredRouting,
+        reason: useLayeredRouting
+          ? "The temporary layered rollback mode was requested."
+          : "The deterministic route did not complete."
+      }
+    };
     await measurePersistenceWrite(() => stateStore.startRun({ sessionId, runId, startedAt }));
     for (const message of messages) {
       persist(() => stateStore.appendMessage(sessionId, runId, message));
@@ -234,30 +251,36 @@ export class AgentRuntime {
     };
 
     try {
-      // ── 初始化工具路由器 ──
-      measureRouting(() => toolRouter.build(this.options.registry));
-
       let finalText = "";
       let totalSteps = 0;
       let totalToolResults = 0;
 
       if (useLayeredRouting) {
+        measureRouting(() => toolRouter.build(this.options.registry));
         // ══════════════════════════════════════════════════════════════
         // Phase 1: TRIAGE — 仅核心工具（~7个，~1100 tokens）
         // ══════════════════════════════════════════════════════════════
-        const triageCategory = measureRouting(() => toolRouter.getCategorySummary()["core-triage"]);
+        const routingIntent = latestUserText(request);
+        const triageToolIds = measureRouting(() => toolRouter.filterEligibleToolIds(
+          toolRouter.getTriageToolIds(),
+          {
+            registry: this.options.registry,
+            enabledTools: effectiveEnabledTools,
+            permissionMode: effectivePermissionMode,
+            actionLevel: this.options.actionLevel
+          },
+          routingIntent
+        ));
         const triageAudit = event(
           "model_request",
           "Phase 1: Triage",
-          `Layered routing: sending core triage tools (${triageCategory?.count ?? 0} tools, ~${triageCategory?.tokens ?? 0} tokens)`
+          `Layered rollback: sending ${triageToolIds.length} enabled, relevant, and policy-eligible resident tool(s).`
         );
         audit.push(triageAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, triageAudit));
         emit({ type: "audit", audit: triageAudit });
 
-        // 使用 registry 直接生成 triage 工具集，带上 onRecord 以追踪结果
         const triageOnRecord = createOnRecord();
-        const triageToolIds = measureRouting(() => toolRouter.getTriageToolIds());
         const triageTools = measureRouting(() => this.options.registry.aiSdkTools(
           context,
           triageToolIds,
@@ -267,12 +290,7 @@ export class AgentRuntime {
         const triageGeneration = streamText({
           model: modelMetrics.wrap(this.options.model, "triage", triageToolIds.length),
           system: SYSTEM_PROMPT_TRIAGE,
-          messages: request.messages
-            .filter((message) => message.role === "user" || message.role === "assistant")
-            .map((message) => ({
-              role: message.role === "assistant" ? "assistant" as const : "user" as const,
-              content: message.content
-            })),
+          messages: toModelMessages(request),
           tools: triageTools,
           stopWhen: stepCountIs(maxTriageRounds),
           temperature: 0.2
@@ -289,35 +307,54 @@ export class AgentRuntime {
             triageToolCalls.push(tc.toolName);
           }
         }
-        const userMessage = request.messages
-          .filter((m) => m.role === "user")
-          .map((m) => m.content)
-          .join(" ");
-        const inferredCategories = measureRouting(() => toolRouter.inferCategories(triageToolCalls, userMessage));
+        const inferredCategories = measureRouting(() => toolRouter.inferCategories(triageToolCalls, routingIntent));
         const savedTokens = measureRouting(() => toolRouter.estimateTokenSavings(inferredCategories));
         const categorySummary = measureRouting(() => toolRouter.getCategorySummary());
         const specializedToolCount = measureRouting(() => inferredCategories
           .filter((category) => category !== "core-triage")
           .reduce((sum, category) => sum + (categorySummary[category]?.count ?? 0), 0));
 
-        const routeAudit = event(
-          "model_request",
-          "Phase 2: Deep Dive",
-          `Routing: inferred categories [${inferredCategories.join(", ")}], estimated token savings: ~${savedTokens} tokens (${categorySummary["core-triage"]?.count ?? 0} core + ${specializedToolCount} specialized tools)`
-        );
-        audit.push(routeAudit);
-        persist(() => stateStore.recordAuditEvent(sessionId, runId, routeAudit));
-        emit({ type: "audit", audit: routeAudit });
-
         // ══════════════════════════════════════════════════════════════
         // Phase 2: DEEP DIVE — 核心 + 推断的专用工具
         // ══════════════════════════════════════════════════════════════
         const deepOnRecord = createOnRecord();
-        // 动作工具（sandbox-actions）固定加载：保证 action 工具永远可达，
-        // 不依赖关键词推断（“拉黑/记笔记”等说法可能不在推断表内）
         const deepCategories = new Set(inferredCategories);
-        deepCategories.add("sandbox-actions");
-        const deepToolIds = measureRouting(() => toolRouter.getDeepToolIds([...deepCategories]));
+        const deepToolIds = measureRouting(() => toolRouter.filterEligibleToolIds(
+          toolRouter.getDeepToolIds([...deepCategories]),
+          {
+            registry: this.options.registry,
+            enabledTools: effectiveEnabledTools,
+            permissionMode: effectivePermissionMode,
+            actionLevel: this.options.actionLevel
+          },
+          routingIntent
+        ));
+        routing = {
+          mode: "layered",
+          selectedToolIds: deepToolIds,
+          groups: [...deepCategories],
+          confidence: {
+            level: deepCategories.size > 2 ? "medium" : "high",
+            score: deepCategories.size > 2 ? 0.65 : 0.85
+          },
+          reasons: [
+            "The temporary layered rollback setting requested a triage model stage.",
+            `The triage output and latest user intent selected ${deepCategories.size} routing group(s).`,
+            "The selected tools were intersected with enabled tools and current action policy."
+          ],
+          additionalModelStage: {
+            used: true,
+            reason: "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+          }
+        };
+        const routeAudit = event(
+          "routing_decision",
+          "Layered rollback route",
+          `${routingDetail(routing)} Estimated legacy schema savings: ~${savedTokens} tokens (${categorySummary["core-triage"]?.count ?? 0} core + ${specializedToolCount} specialized tools).`
+        );
+        audit.push(routeAudit);
+        persist(() => stateStore.recordAuditEvent(sessionId, runId, routeAudit));
+        emit({ type: "audit", audit: routeAudit });
         const deepTools = measureRouting(() => this.options.registry.aiSdkTools(
           context,
           deepToolIds,
@@ -325,8 +362,9 @@ export class AgentRuntime {
           startToolTiming
         ));
 
-        // 使用 Phase 1 的完整消息历史作为 Phase 2 的输入
-        const phase1Messages = triageResult.response.messages;
+        // The AI SDK response only contains generated phase messages, so prepend
+        // the original valid conversation before the final model execution.
+        const phase1Messages = [...toModelMessages(request), ...triageResult.response.messages];
 
         const deepGeneration = streamText({
           model: modelMetrics.wrap(this.options.model, "deep", deepToolIds.length),
@@ -370,32 +408,47 @@ export class AgentRuntime {
         emit({ type: "audit", audit: responseAudit });
       } else {
         // ══════════════════════════════════════════════════════════════
-        // 传统模式：全部工具一次性发送（向后兼容）
+        // Deterministic local pre-route followed by one final model execution.
         // ══════════════════════════════════════════════════════════════
-        const requestAudit = event("model_request", "Model request", `AI SDK run sent to ${this.options.providerLabel}.`);
+        routing = measureRouting(() => toolRouter.route({
+          registry: this.options.registry,
+          messages: request.messages,
+          enabledTools: effectiveEnabledTools,
+          permissionMode: effectivePermissionMode,
+          actionLevel: this.options.actionLevel
+        }));
+        const routeAudit = event(
+          "routing_decision",
+          "Deterministic route",
+          routingDetail(routing)
+        );
+        audit.push(routeAudit);
+        persist(() => stateStore.recordAuditEvent(sessionId, runId, routeAudit));
+        emit({ type: "audit", audit: routeAudit });
+
+        const requestAudit = event(
+          "model_request",
+          "Final model request",
+          `AI SDK final execution sent to ${this.options.providerLabel} with ${routing.selectedToolIds.length} routed tool(s).`
+        );
         audit.push(requestAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, requestAudit));
         emit({ type: "audit", audit: requestAudit });
 
         const singleTools = measureRouting(() => this.options.registry.aiSdkTools(
           context,
-          effectiveEnabledTools,
+          routing.selectedToolIds,
           createOnRecord(),
           startToolTiming
         ));
         const generation = streamText({
           model: modelMetrics.wrap(
             this.options.model,
-            "single",
+            "final",
             Object.keys(singleTools).length
           ),
-          system: SYSTEM_PROMPT_DEEP,
-          messages: request.messages
-            .filter((message) => message.role === "user" || message.role === "assistant")
-            .map((message) => ({
-              role: message.role === "assistant" ? "assistant" as const : "user" as const,
-              content: message.content
-            })),
+          system: SYSTEM_PROMPT_FINAL,
+          messages: toModelMessages(request),
           tools: singleTools,
           stopWhen: stepCountIs(this.options.maxToolRounds ?? 10),
           temperature: 0.2
@@ -469,10 +522,11 @@ export class AgentRuntime {
       toolInvocations,
       audit,
       artifacts,
+      routing,
       metrics: {
         schemaVersion: 1,
         measurementBoundary: "before-completion-export",
-        mode: useLayeredRouting ? "layered" : "single",
+        mode: routingMode,
         totalDurationMs: 0,
         localOrchestrationDurationMs: 0,
         localRoutingDurationMs: roundDurationMs(localRoutingDurationMs),
@@ -528,6 +582,28 @@ async function consumeTextGeneration(
 
 function counterDelta(current: number, initial: number): number {
   return Math.max(0, current - initial);
+}
+
+function toModelMessages(request: AgentRunRequest) {
+  return request.messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => ({
+      role: message.role === "assistant" ? "assistant" as const : "user" as const,
+      content: message.content
+    }));
+}
+
+function latestUserText(request: AgentRunRequest): string {
+  return [...request.messages].reverse().find((message) => message.role === "user")?.content ?? "";
+}
+
+function routingDetail(routing: AgentRoutingDecision): string {
+  return [
+    `Mode ${routing.mode}; selected tools [${routing.selectedToolIds.join(", ")}].`,
+    `Confidence ${routing.confidence.level} (${routing.confidence.score}).`,
+    `Reasons: ${routing.reasons.join(" ")}`,
+    `Additional model stage: ${routing.additionalModelStage.used ? "used" : "not used"}; ${routing.additionalModelStage.reason}`
+  ].join(" ");
 }
 
 function toolContext(context: Omit<AgentRunContext, "approvedToolCallIds">): AgentRunContext {

@@ -30,6 +30,84 @@ function pluginTool(apiName: string, manifestId: string, packId: string, deferLo
 }
 
 describe("toolRouter layered routing with plugins", () => {
+  it("returns a structured deterministic route and intersects enabled tools", () => {
+    const registry = new ToolRegistry();
+
+    const route = toolRouter.route({
+      registry,
+      messages: [{ role: "user", content: "Investigate IOC 198.51.100.23." }],
+      enabledTools: ["ioc.enrich", "case.note.write"],
+      permissionMode: "auto",
+      actionLevel: "sandbox"
+    });
+
+    expect(route).toMatchObject({
+      mode: "deterministic",
+      selectedToolIds: ["ioc.enrich"],
+      groups: ["core-triage"],
+      confidence: { level: "high" },
+      additionalModelStage: { used: false }
+    });
+    expect(route.reasons.length).toBeGreaterThan(0);
+  });
+
+  it("treats an explicit empty tool set as authoritative", () => {
+    const route = toolRouter.route({
+      registry: new ToolRegistry(),
+      messages: [{ role: "user", content: "Investigate IOC 198.51.100.23." }],
+      enabledTools: [],
+      permissionMode: "auto",
+      actionLevel: "sandbox"
+    });
+
+    expect(route.selectedToolIds).toEqual([]);
+    expect(route.confidence).toEqual({ level: "high", score: 1 });
+  });
+
+  it("exposes relevant actions only when current policy permits them", () => {
+    const registry = new ToolRegistry();
+    const input = {
+      registry,
+      messages: [{ role: "user" as const, content: "Write a case note for this investigation." }],
+      enabledTools: ["case.note.write"],
+      actionLevel: "sandbox" as const
+    };
+
+    expect(toolRouter.route({ ...input, permissionMode: "deny" }).selectedToolIds).toEqual([]);
+    expect(toolRouter.route({ ...input, permissionMode: "ask" }).selectedToolIds).toEqual(["case.note.write"]);
+  });
+
+  it("uses recent conversation context only for a follow-up intent", () => {
+    const route = toolRouter.route({
+      registry: new ToolRegistry(),
+      messages: [
+        { role: "user", content: "Investigate IOC 198.51.100.23." },
+        { role: "assistant", content: "The indicator is ready for analysis." },
+        { role: "user", content: "Do the same for the next value." }
+      ],
+      enabledTools: ["ioc.enrich"],
+      permissionMode: "auto",
+      actionLevel: "sandbox"
+    });
+
+    expect(route.selectedToolIds).toEqual(["ioc.enrich"]);
+    expect(route.reasons).toContain("Recent valid user and assistant context was used to resolve a follow-up intent.");
+  });
+
+  it("records the local-only fallback for unknown requests", () => {
+    const route = toolRouter.route({
+      registry: new ToolRegistry(),
+      messages: [{ role: "user", content: "Handle the unusual situation." }],
+      permissionMode: "auto",
+      actionLevel: "sandbox"
+    });
+
+    expect(route.confidence.level).toBe("low");
+    expect(route.additionalModelStage).toMatchObject({ used: false });
+    expect(route.additionalModelStage.reason).toContain("local fallback");
+    expect(route.selectedToolIds).not.toContain("case.note.write");
+  });
+
   it("includes a non-core always-visible tool in triage", () => {
     const registry = new ToolRegistry();
     registry.registerTools([
