@@ -22,6 +22,7 @@ export interface AppConfig {
   toolVisibilityPath: string;
   auditLogPath: string;
   approvalStorePath: string;
+  pluginCachePath: string;
   dataDir: string;
   durableSessionMode: "postgres" | "disabled";
   allowedHosts: string[];
@@ -29,6 +30,12 @@ export interface AppConfig {
   apiToken: string | undefined;
   pluginsDir: string;
   agentRunTimeoutMs: number;
+  /** 每个模型请求的输入预算（tokens），默认 64k。 */
+  contextBudgetMaxInputTokens: number;
+  /** 预留输出 token 数，默认 4k。 */
+  contextBudgetReservedOutputTokens: number;
+  /** 长对话压缩时保留的最近 user/assistant 消息条数，默认 10。 */
+  contextBudgetKeepRecentMessages: number;
 }
 
 export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -47,13 +54,17 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     toolVisibilityPath: resolveWorkspacePath(env.SECOPS_TOOL_VISIBILITY_PATH, workspaceRoot, path.join("runtime", "config", "toolVisibility.json")),
     auditLogPath: resolveWorkspacePath(env.SECOPS_AUDIT_LOG_PATH, workspaceRoot, path.join("runtime", "audit", "events.jsonl")),
     approvalStorePath: resolveWorkspacePath(env.SECOPS_APPROVAL_STORE_PATH, workspaceRoot, path.join("runtime", "approvals", "pending.json")),
+    pluginCachePath: resolveWorkspacePath(env.SECOPS_PLUGIN_CACHE_PATH, workspaceRoot, path.join("runtime", "config", "pluginCache.json")),
     dataDir: resolveDataDir(env.SECOPS_DATA_DIR, workspaceRoot),
     durableSessionMode: (env.SECOPS_DURABLE_SESSIONS ?? "").trim().toLowerCase() === "off" ? "disabled" : "postgres",
     allowedHosts: parseCsv(env.SECOPS_ALLOWED_HOSTS) ?? DEFAULT_ALLOWED_HOSTS,
     allowedOrigins: parseCsv(env.SECOPS_ALLOWED_ORIGINS) ?? DEFAULT_ALLOWED_ORIGINS,
     apiToken: env.SECOPS_API_TOKEN?.trim() || undefined,
     pluginsDir: resolveWorkspacePath(env.SECOPS_PLUGINS_DIR, workspaceRoot, path.join("runtime", "plugins")),
-    agentRunTimeoutMs: parsePositiveInteger(env.SECOPS_AGENT_RUN_TIMEOUT_MS, 5 * 60 * 1000)
+    agentRunTimeoutMs: parsePositiveInteger(env.SECOPS_AGENT_RUN_TIMEOUT_MS, 5 * 60 * 1000),
+    contextBudgetMaxInputTokens: parsePositiveInteger(env.SECOPS_CONTEXT_BUDGET_INPUT_TOKENS, 64_000),
+    contextBudgetReservedOutputTokens: parsePositiveInteger(env.SECOPS_CONTEXT_BUDGET_RESERVED_OUTPUT_TOKENS, 4_000),
+    contextBudgetKeepRecentMessages: parsePositiveInteger(env.SECOPS_CONTEXT_KEEP_RECENT_MESSAGES, 10)
   };
 }
 

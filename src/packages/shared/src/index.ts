@@ -60,6 +60,8 @@ export interface ToolResultCachePolicy {
   /** Identity of the backing data source included in the isolation key. */
   dataSource: string;
   ttlMs: number;
+  /** Host isolation scope (e.g. `plugin:<pluginId>`); included in the cache key. */
+  namespace?: string;
 }
 
 export interface SkillManifest {
@@ -230,6 +232,22 @@ export interface AgentRunMetrics {
     /** Business-state writes completed before terminal snapshot export; excludes the export itself. */
     totalDurationMs: number;
     failureCount: number;
+  };
+  /** Per-model-request context budget breakdown (present when budget tracking is active). */
+  contextBudget?: {
+    maxInputTokens: number;
+    reservedOutputTokens: number;
+    requests: Array<{
+      phase: string;
+      systemPromptTokens: number;
+      conversationHistoryTokens: number;
+      toolsTokens: number;
+      reservedOutputTokens: number;
+      totalInputTokens: number;
+      withinBudget: boolean;
+      summarizedMessages: number;
+      droppedMessages: number;
+    }>;
   };
 }
 

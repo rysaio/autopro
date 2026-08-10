@@ -13,6 +13,12 @@ import type {
 import { stepCountIs, streamText, type LanguageModel } from "ai";
 import { ToolRegistry } from "../tools/registry.js";
 import type { ToolExecutionRecord } from "../tools/types.js";
+import {
+  DEFAULT_CONTEXT_BUDGET,
+  prepareConversationContext,
+  type ContextBudgetConfig,
+  type ContextBudgetRequestReport
+} from "./contextBudget.js";
 import { ModelMetricsRecorder } from "./modelMetrics.js";
 import { roundDurationMs, RunTimingRecorder } from "./runTimingRecorder.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
@@ -39,6 +45,8 @@ export interface AgentRuntimeOptions {
   agentRoutingMode?: AgentRoutingMode;
   /** 整个运行（模型、工具循环）的硬超时。 */
   runTimeoutMs?: number;
+  /** 长对话上下文预算（默认 64k 输入 + 4k 预留输出，保留最近 10 条原文）。 */
+  contextBudget?: ContextBudgetConfig;
 }
 
 export interface AgentRunExecutionOptions {
@@ -117,6 +125,8 @@ export class AgentRuntime {
       ?? (this.options.enableLayeredRouting === true ? "layered" : "deterministic");
     const useLayeredRouting = routingMode === "layered";
     const modelMetrics = new ModelMetricsRecorder(runTiming);
+    const contextBudgetConfig = this.options.contextBudget ?? DEFAULT_CONTEXT_BUDGET;
+    const contextBudgetReports: ContextBudgetRequestReport[] = [];
     let localRoutingDurationMs = 0;
     const measureRouting = <Result>(operation: () => Result): Result => {
       const startedAt = performance.now();
@@ -156,6 +166,9 @@ export class AgentRuntime {
       persist(() => stateStore.appendMessage(sessionId, runId, message));
     }
     const storedMarkers = await measurePersistenceWait(() => stateStore.listStateMarkers(sessionId));
+    // 待审批工具名：注入到模型上下文（永不折叠/丢弃），保证审批状态持续可见
+    const pendingApprovalTools = (await this.options.registry.pendingApprovals())
+      .map((approval) => approval.toolName);
     const abortScope = createRunAbortScope(execution.signal, this.options.runTimeoutMs);
     const context = toolContext({
       runId,
@@ -283,7 +296,15 @@ export class AgentRuntime {
         const triageGeneration = streamText({
           model: modelMetrics.wrap(this.options.model, "triage", triageToolIds.length),
           system: SYSTEM_PROMPT_TRIAGE,
-          messages: toModelMessages(request),
+          messages: this.prepareContextMessages(
+            "triage",
+            request,
+            SYSTEM_PROMPT_TRIAGE,
+            triageToolIds.length,
+            pendingApprovalTools,
+            context.stateMarkers,
+            contextBudgetReports
+          ),
           tools: triageTools,
           stopWhen: stepCountIs(maxTriageRounds),
           temperature: 0.2,
@@ -358,7 +379,16 @@ export class AgentRuntime {
 
         // The AI SDK response only contains generated phase messages, so prepend
         // the original valid conversation before the final model execution.
-        const phase1Messages = [...toModelMessages(request), ...triageResult.response.messages];
+        const deepContextMessages = this.prepareContextMessages(
+          "deep",
+          request,
+          SYSTEM_PROMPT_DEEP,
+          deepToolIds.length,
+          pendingApprovalTools,
+          context.stateMarkers,
+          contextBudgetReports
+        );
+        const phase1Messages = [...deepContextMessages, ...triageResult.response.messages];
 
         streamingMessageId = crypto.randomUUID();
         streamingMessageCreatedAt = new Date().toISOString();
@@ -457,7 +487,15 @@ export class AgentRuntime {
             Object.keys(singleTools).length
           ),
           system: SYSTEM_PROMPT_FINAL,
-          messages: toModelMessages(request),
+          messages: this.prepareContextMessages(
+            "final",
+            request,
+            SYSTEM_PROMPT_FINAL,
+            routing.selectedToolIds.length,
+            pendingApprovalTools,
+            context.stateMarkers,
+            contextBudgetReports
+          ),
           tools: singleTools,
           stopWhen: stepCountIs(this.options.maxToolRounds ?? 10),
           temperature: 0.2,
@@ -594,7 +632,16 @@ export class AgentRuntime {
           operationCount: persistenceOperationCount,
           totalDurationMs: roundDurationMs(persistenceDurationMs),
           failureCount: persistenceFailureCount
-        }
+        },
+        ...(contextBudgetReports.length > 0
+          ? {
+              contextBudget: {
+                maxInputTokens: contextBudgetConfig.maxInputTokens,
+                reservedOutputTokens: contextBudgetConfig.reservedOutputTokens,
+                requests: contextBudgetReports
+              }
+            }
+          : {})
       }
     };
     const completionEvent = createRunEvent({ type: "run_completed", run });
@@ -607,6 +654,36 @@ export class AgentRuntime {
     } finally {
       abortScope.cleanup();
     }
+  }
+
+  /**
+   * 为单个模型请求构造预算内上下文；记录预算构成报告。
+   * 超预算且无法压缩时抛错（fail early），由 run 的 catch 置为 failed 并给出可操作原因。
+   */
+  private prepareContextMessages(
+    phase: ContextBudgetRequestReport["phase"],
+    request: AgentRunRequest,
+    systemPrompt: string,
+    exposedToolCount: number,
+    pendingApprovalTools: string[],
+    stateMarkers: string[] | undefined,
+    reports: ContextBudgetRequestReport[]
+  ): Array<{ role: "user" | "assistant"; content: string; name?: string }> {
+    const result = prepareConversationContext({
+      messages: request.messages,
+      systemPrompt,
+      exposedToolCount,
+      config: this.options.contextBudget ?? DEFAULT_CONTEXT_BUDGET,
+      pendingApprovalTools,
+      ...(stateMarkers ? { stateMarkers } : {})
+    });
+    reports.push({ phase, ...result.report });
+    if (result.report.failed) {
+      throw new Error(
+        result.report.failureReason ?? "Conversation context exceeds the configured token budget."
+      );
+    }
+    return result.messages;
   }
 }
 
@@ -650,15 +727,6 @@ function cacheAuditDetail(invocation: ToolInvocation): string {
     return `Cache ${cache.status}${cache.reason ? ` (${cache.reason})` : ""}.`;
   }
   return `Cache hit from invocation ${cache.sourceInvocationId ?? "unknown"}, created ${cache.originalCreatedAt ?? "unknown"}, age ${cache.ageMs ?? 0} ms.`;
-}
-
-function toModelMessages(request: AgentRunRequest) {
-  return request.messages
-    .filter((message) => message.role === "user" || message.role === "assistant")
-    .map((message) => ({
-      role: message.role === "assistant" ? "assistant" as const : "user" as const,
-      content: message.content
-    }));
 }
 
 function latestUserText(request: AgentRunRequest): string {

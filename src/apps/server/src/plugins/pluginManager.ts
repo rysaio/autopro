@@ -5,6 +5,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import type { PluginSummary, ToolClass, ToolRisk, ToolSchema } from "@secops-agent/shared";
 import type { ModelTool } from "../providers/types.js";
+import type { PluginCachePolicy, PluginCachePolicyStore } from "../runtime/pluginCachePolicyStore.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../tools/types.js";
 import { ToolRegistry } from "../tools/registry.js";
 
@@ -30,6 +31,8 @@ export interface PluginManagerOptions {
   registry: ToolRegistry;
   env?: NodeJS.ProcessEnv;
   createClient?: (server: ResolvedMcpServer, pluginId: string) => Promise<McpClientHandle>;
+  /** Host-owned persisted cache policy; missing store = plugin caching disabled. */
+  cachePolicyStore?: PluginCachePolicyStore;
 }
 
 interface PluginManifestFile {
@@ -51,6 +54,8 @@ interface PluginState {
   toolCount: number;
   error?: string;
   client?: McpClientHandle;
+  /** Host-assigned load generation; bumped on every successful load/reload. */
+  generation?: number;
 }
 
 // Codex 插件规范：manifest 为 .codex-plugin/plugin.json，mcpServers 字段指向
@@ -71,6 +76,9 @@ const ACTION_ALLOW_ENV: Record<string, string> = {
  */
 export class PluginManager {
   private readonly plugins = new Map<string, PluginState>();
+  private nextGeneration = 1;
+  /** reload 互斥：并发 reload/策略变更合并为一次串行执行，避免 registerTools 交错冲突。 */
+  private reloadInFlight: Promise<void> | undefined;
 
   constructor(private readonly options: PluginManagerOptions) {}
 
@@ -87,16 +95,34 @@ export class PluginManager {
     }
   }
 
-  /** 断开全部已加载插件连接、移除其工具，再重新扫描加载（无需重启服务）。 */
-  async reload(): Promise<void> {
-    await this.disconnectAll();
-    await this.load();
+  /** 断开全部已加载插件连接、移除其工具，再重新扫描加载（无需重启服务）。
+   *  并发调用共享同一次执行（合并），保证串行且不交错。 */
+  reload(): Promise<void> {
+    if (this.reloadInFlight) {
+      return this.reloadInFlight;
+    }
+    const operation = (async () => {
+      await this.disconnectAll();
+      await this.load();
+    })();
+    this.reloadInFlight = operation;
+    operation.finally(() => {
+      if (this.reloadInFlight === operation) {
+        this.reloadInFlight = undefined;
+      }
+    }).catch(() => undefined);
+    return operation;
   }
 
-  /** 断开全部插件 MCP 连接并从 registry 移除其工具。 */
+  /** 断开全部插件 MCP 连接并从 registry 移除其工具，同时立即回收其缓存条目。 */
   async disconnectAll(): Promise<void> {
     this.options.registry.unregisterExternalTools();
     const clients = [...this.plugins.values()].map((plugin) => plugin.client).filter(Boolean);
+    for (const plugin of this.plugins.values()) {
+      if (plugin.id) {
+        this.options.registry.invalidateCacheNamespace(pluginCacheNamespace(plugin.id));
+      }
+    }
     this.plugins.clear();
     await Promise.allSettled(clients.map((client) => client?.close()));
   }
@@ -135,12 +161,21 @@ export class PluginManager {
       cwd: dir,
       env: buildSpawnEnv(this.options.env ?? process.env)
     };
+    let client: McpClientHandle | undefined;
     try {
-      const client = this.options.createClient
+      client = this.options.createClient
         ? await this.options.createClient(resolved, pluginId)
         : await connectStdioClient(resolved);
       const tools = await client.listTools();
-      const secOpsTools = tools.map((tool) => mcpToolToSecOpsTool(pluginId, tool, (args) => client.callTool(tool.name, args)));
+      const generation = this.nextGeneration++;
+      const secOpsTools = tools.map((tool) => {
+        const meta = tool._meta ?? {};
+        const manifestId = typeof meta.manifestId === "string" && meta.manifestId.length > 0
+          ? meta.manifestId
+          : `${pluginId}.${tool.name}`;
+        const cachePolicy = this.options.cachePolicyStore?.policyFor(manifestId);
+        return mcpToolToSecOpsTool(pluginId, generation, tool, (args) => client!.callTool(tool.name, args), cachePolicy);
+      });
       this.options.registry.registerTools(secOpsTools);
       this.plugins.set(pluginId, {
         id: pluginId,
@@ -148,9 +183,14 @@ export class PluginManager {
         version: manifest.version ?? "",
         status: "loaded",
         toolCount: tools.length,
-        client
+        client,
+        generation
       });
     } catch (error) {
+      // 注册失败或 listTools 失败：释放已建立的连接，避免 MCP 子进程泄漏
+      if (client) {
+        await client.close().catch(() => undefined);
+      }
       this.setError(pluginId, error instanceof Error ? error.message : String(error));
     }
   }
@@ -285,8 +325,10 @@ async function connectStdioClient(server: ResolvedMcpServer): Promise<McpClientH
 
 function mcpToolToSecOpsTool(
   pluginId: string,
+  generation: number,
   tool: Tool,
-  call: (args: Record<string, unknown>) => Promise<CallToolResult>
+  call: (args: Record<string, unknown>) => Promise<CallToolResult>,
+  cachePolicy?: PluginCachePolicy
 ): SecOpsTool {
   const meta = tool._meta ?? {};
   const manifestId = typeof meta.manifestId === "string" && meta.manifestId.length > 0
@@ -294,6 +336,16 @@ function mcpToolToSecOpsTool(
     : `${pluginId}.${tool.name}`;
   const schema = toToolSchema(tool.inputSchema);
   const toolClass = toToolClass(meta.toolClass);
+  // 仅当 host 策略显式启用且工具不是 action、未被 MCP 注解标记为显式非只读时注入缓存策略。
+  // MCP readOnly/idempotent 注解只用于拒绝 unsafe 策略，绝不自动启用缓存。
+  const resultCache = cachePolicy && isCacheEligible(tool, toolClass)
+    ? {
+        version: `plugin:${pluginId}:gen${generation}`,
+        dataSource: pluginId,
+        ttlMs: cachePolicy.ttlMs,
+        namespace: pluginCacheNamespace(pluginId)
+      }
+    : undefined;
   return {
     apiName: tool.name,
     manifest: {
@@ -306,7 +358,8 @@ function mcpToolToSecOpsTool(
       deferLoading: meta.deferLoading === true,
       inputSchema: schema,
       tags: [pluginId],
-      mcpCompatible: true
+      mcpCompatible: true,
+      ...(resultCache ? { resultCache } : {})
     },
     toModelTool(): ModelTool {
       return {
@@ -374,4 +427,25 @@ function toToolClass(value: unknown): ToolClass {
 function toToolRisk(value: unknown): ToolRisk {
   // risk 缺失时默认 high（保守）：插件未声明风险即按高危 action 处理，仍需审批
   return value === "low" || value === "medium" || value === "high" ? value : "high";
+}
+
+/** Host isolation scope for a plugin's cached results. */
+function pluginCacheNamespace(pluginId: string): string {
+  return `plugin:${pluginId}`;
+}
+
+/**
+ * A plugin tool may be cached only when it is not an action and is not
+ * explicitly annotated non-read-only. readOnly/idempotent hints never enable
+ * caching by themselves; the host policy must opt in first.
+ */
+function isCacheEligible(tool: Tool, toolClass: ToolClass): boolean {
+  if (toolClass === "action") {
+    return false;
+  }
+  const meta = tool._meta ?? {};
+  const annotations = (tool as { annotations?: Record<string, unknown> }).annotations ?? {};
+  const readOnly = meta.readOnlyHint ?? annotations.readOnlyHint ?? (tool as { readOnlyHint?: unknown }).readOnlyHint;
+  const idempotent = meta.idempotentHint ?? annotations.idempotentHint ?? (tool as { idempotentHint?: unknown }).idempotentHint;
+  return readOnly !== false && idempotent !== false;
 }
