@@ -32,7 +32,7 @@ import { AgentRuntime, type AgentRunAbortReason } from "./runtime/agentRuntime.j
 import { AuditLog } from "./runtime/auditLog.js";
 import { ApprovalStore } from "./runtime/approvalStore.js";
 import { PostgresSessionStore } from "./runtime/postgresSessionStore.js";
-import { PluginCachePolicyStore } from "./runtime/pluginCachePolicyStore.js";
+import { PluginCachePolicyStore, MAX_PLUGIN_CACHE_TTL_MS } from "./runtime/pluginCachePolicyStore.js";
 import { isAutomationLevel, RuntimeSettingsStore } from "./runtime/runtimeSettings.js";
 import { NoopSessionStateStore, type SessionStateStore } from "./runtime/sessionStateStore.js";
 import { ToolVisibilityStore } from "./runtime/toolVisibilityStore.js";
@@ -333,8 +333,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!hasManifest(registry, params.manifestId)) {
       return reply.code(404).send({ error: `No tool found for ${params.manifestId}` });
     }
-    if (typeof body.enabled !== "boolean" || !Number.isInteger(body.ttlMs) || (body.ttlMs as number) <= 0) {
-      return reply.code(400).send({ error: "enabled must be a boolean and ttlMs a positive integer" });
+    if (typeof body.enabled !== "boolean" || !Number.isInteger(body.ttlMs)
+      || (body.ttlMs as number) <= 0 || (body.ttlMs as number) > MAX_PLUGIN_CACHE_TTL_MS) {
+      return reply.code(400).send({
+        error: `enabled must be a boolean and ttlMs a positive integer no greater than ${MAX_PLUGIN_CACHE_TTL_MS}`
+      });
     }
     pluginCachePolicies.set(params.manifestId, { enabled: body.enabled, ttlMs: body.ttlMs as number });
     // 缓存策略属于 result-affecting 配置：reload 后注入新策略并递增 generation
