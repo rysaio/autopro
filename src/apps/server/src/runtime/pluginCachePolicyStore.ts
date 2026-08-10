@@ -9,6 +9,9 @@ export interface PluginCachePolicy {
 /** Keyed by tool manifest id (e.g. `demo.query`). Missing entry = caching disabled. */
 export type PluginCachePolicies = Record<string, PluginCachePolicy>;
 
+/** 缓存 TTL 上限：24 小时，防止误设近永久缓存。 */
+export const MAX_PLUGIN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Host-owned, persisted opt-in cache policy for plugin tools.
  * A plugin tool is never cached until an explicit policy enables it; MCP
@@ -38,8 +41,8 @@ export class PluginCachePolicyStore {
     if (typeof policy.enabled !== "boolean") {
       throw new Error("Plugin cache policy enabled must be a boolean");
     }
-    if (!Number.isInteger(policy.ttlMs) || policy.ttlMs <= 0) {
-      throw new Error("Plugin cache policy ttlMs must be a positive integer");
+    if (!Number.isInteger(policy.ttlMs) || policy.ttlMs <= 0 || policy.ttlMs > MAX_PLUGIN_CACHE_TTL_MS) {
+      throw new Error(`Plugin cache policy ttlMs must be a positive integer no greater than ${MAX_PLUGIN_CACHE_TTL_MS}`);
     }
     this.policies = { ...this.policies, [manifestId]: { enabled: policy.enabled, ttlMs: policy.ttlMs } };
     this.persist();
@@ -71,6 +74,10 @@ export class PluginCachePolicyStore {
     }
     const result: PluginCachePolicies = {};
     for (const [manifestId, raw] of Object.entries(parsed as Record<string, unknown>)) {
+      // 防御本地篡改的策略文件中的原型污染键（__proto__/constructor）
+      if (manifestId === "__proto__" || manifestId === "constructor" || manifestId === "prototype") {
+        throw new Error(`Invalid plugin cache policy config: ${this.filePath}`);
+      }
       if (!manifestId || !raw || typeof raw !== "object" || Array.isArray(raw)) {
         throw new Error(`Invalid plugin cache policy config: ${this.filePath}`);
       }
