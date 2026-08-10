@@ -33,12 +33,21 @@ export interface AppConfig {
   apiToken: string | undefined;
   pluginsDir: string;
   agentRunTimeoutMs: number;
+
   /** 每个模型请求的输入预算（tokens），默认 64k。 */
   contextBudgetMaxInputTokens: number;
   /** 预留输出 token 数，默认 4k。 */
   contextBudgetReservedOutputTokens: number;
   /** 长对话压缩时保留的最近 user/assistant 消息条数，默认 10。 */
   contextBudgetKeepRecentMessages: number;
+
+  /** Issue #10：持久化队列参数（有界、可配置、保守默认值）。 */
+  persistQueueCapacity: number;
+  persistQueueBatchSize: number;
+  persistQueueFlushIntervalMs: number;
+  persistQueueDrainTimeoutMs: number;
+  persistQueueSaturationWaitMs: number;
+
 }
 
 export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -68,9 +77,17 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     apiToken: env.SECOPS_API_TOKEN?.trim() || undefined,
     pluginsDir: resolveWorkspacePath(env.SECOPS_PLUGINS_DIR, workspaceRoot, path.join("runtime", "plugins")),
     agentRunTimeoutMs: parsePositiveInteger(env.SECOPS_AGENT_RUN_TIMEOUT_MS, 5 * 60 * 1000),
+
     contextBudgetMaxInputTokens: parsePositiveInteger(env.SECOPS_CONTEXT_BUDGET_INPUT_TOKENS, 64_000),
     contextBudgetReservedOutputTokens: parsePositiveInteger(env.SECOPS_CONTEXT_BUDGET_RESERVED_OUTPUT_TOKENS, 4_000),
-    contextBudgetKeepRecentMessages: parsePositiveInteger(env.SECOPS_CONTEXT_KEEP_RECENT_MESSAGES, 10)
+    contextBudgetKeepRecentMessages: parsePositiveInteger(env.SECOPS_CONTEXT_KEEP_RECENT_MESSAGES, 10),
+
+    persistQueueCapacity: parsePositiveInteger(env.SECOPS_PERSIST_QUEUE_CAPACITY, 512),
+    persistQueueBatchSize: parsePositiveInteger(env.SECOPS_PERSIST_BATCH_SIZE, 32),
+    persistQueueFlushIntervalMs: parseNonNegativeInteger(env.SECOPS_PERSIST_FLUSH_INTERVAL_MS, 20),
+    persistQueueDrainTimeoutMs: parsePositiveInteger(env.SECOPS_PERSIST_DRAIN_TIMEOUT_MS, 5000),
+    persistQueueSaturationWaitMs: parseNonNegativeInteger(env.SECOPS_PERSIST_SATURATION_WAIT_MS, 1000),
+
   };
 }
 
@@ -136,4 +153,9 @@ function parseCsv(value: string | undefined): string[] | undefined {
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }

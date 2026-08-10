@@ -68,6 +68,22 @@ DELETE /api/tools/visibility/wazuh.alerts.search
 
 每次命中仍生成新的 invocation ID 和 artifact ID。调用审计记录原 invocation、原创建时间、缓存年龄和 hit/miss/bypass；指标分别报告真实 handler 次数、淘汰/过期/失效数量及按原 handler 实测耗时计算的避免工具耗时，不宣称固定 token 节省。
 
+### 创新三：模型客户端复用与连接生命周期观测 (Model Client Reuse)
+
+同一活动连接配置下的连续与并发 agent run 复用同一个 provider client（AI SDK 的 LanguageModel 是无状态工厂产物，可安全共享），不再每次 run 重建。缓存键为连接 id + 配置指纹（provider/model/baseUrl/apiKey 的 SHA-256 摘要，指纹不可逆）。
+
+配置变更即失效：更新连接、删除连接、从文件 reload 都会使旧 client 失效；若旧 client 仍被活跃 run 使用，则延迟到该 run 结束再释放（引用计数）。provider 暴露清理操作时（可选 disposeModel）才真正关闭旧 client。
+
+观测与模型请求时长完全分开：`GET /api/health` 的 `modelClients` 段报告创建/复用/失效/失败/释放计数（仅连接 id，永不包含 API key 或授权头）；每次 run 的 `metrics.modelClient` 报告该次是否复用。
+
+### 创新四：有界异步持久化队列 (Bounded Async Persistence Queue)
+
+逐事件持久化通过有界、有序、异步批处理队列移出 SSE 与工具执行热路径：事件发射与工具执行不再等待单次存储写入。每次 run 一个 FIFO 队列，run 内事件（审批、工具调用、工件、审计、消息、终止事件）严格按序写入；队列容量与批大小有界且可配置（保守默认：容量 512、批大小 32、刷新窗口 20ms）。
+
+队列满时应用文档化的有界背压：入队等待至多 `SECOPS_PERSIST_SATURATION_WAIT_MS`（类比 Kafka producer 的 `max.block.ms`），超时后以失败呈现并通过指标与 run 审计状态记录，关键记录不静默丢弃。存储失败通过指标与审计状态呈现，不影响已完成的模型结果。
+
+run 完成与服务器关闭执行有界排空（默认 5s 超时），超时显式报告剩余工作而非无限等待。指标区分队列等待、批写入时长、失败、深度、饱和与排空时长（`metrics.persistence`）。设计依据为有界通道 + 背压 + 干净关闭的业界标准语义（如 tokio mpsc 的 bounded channel 与 clean shutdown）。
+
 ### 技术架构
 
 ```text
@@ -301,6 +317,11 @@ DELETE /api/tools/visibility/:id       # 清除覆盖，回退到工具声明值
 | `SECOPS_ALLOWED_HOSTS` / `SECOPS_ALLOWED_ORIGINS` | localhost,127.0.0.1,::1 / http://localhost:5317,… | Host/Origin 访问控制 |
 | `SECOPS_API_TOKEN` | 空 | API Bearer 令牌（设置后所有 API 需携带） |
 | `SECOPS_AGENT_RUN_TIMEOUT_MS` | `300000` | 单次 Agent 模型与工具循环的服务端硬超时（毫秒） |
+| `SECOPS_PERSIST_QUEUE_CAPACITY` | `512` | 持久化队列容量上限（Issue #10） |
+| `SECOPS_PERSIST_BATCH_SIZE` | `32` | 持久化队列单批最大操作数 |
+| `SECOPS_PERSIST_FLUSH_INTERVAL_MS` | `20` | 批刷新合并窗口（毫秒） |
+| `SECOPS_PERSIST_DRAIN_TIMEOUT_MS` | `5000` | run 完成/服务器关闭的有界排空超时（毫秒） |
+| `SECOPS_PERSIST_SATURATION_WAIT_MS` | `1000` | 队列饱和时的有界背压等待（毫秒） |
 | `PORT` / `SECOPS_BIND_HOST` | `4317` / `127.0.0.1` | 后端监听地址 |
 | `SECOPS_DEMO_MODE` | `true` | Wazuh/Shuffle 使用 mock 数据（无真实端点也可运行） |
 | `WAZUH_*` / `SHUFFLE_*` | — | 插件端点与凭据配置（`SECOPS_DEMO_MODE=true` 时可省略） |
