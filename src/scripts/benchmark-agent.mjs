@@ -91,7 +91,24 @@ async function runBenchmark({ baseUrl, runs }) {
       persistence: {
         operationCount: distribution(samples.map((run) => run.metrics.persistence.operationCount)),
         totalDurationMs: distribution(samples.map((run) => run.metrics.persistence.totalDurationMs)),
-        failureCount: distribution(samples.map((run) => run.metrics.persistence.failureCount))
+        failureCount: distribution(samples.map((run) => run.metrics.persistence.failureCount)),
+        // Issue #10: bounded async queue observables (conservative, no perf claims)
+        queueWaitDurationMs: distribution(samples.map((run) => run.metrics.persistence.queueWaitDurationMs ?? 0)),
+        batchWriteCount: distribution(samples.map((run) => run.metrics.persistence.batchWriteCount ?? 0)),
+        batchWriteDurationMs: distribution(samples.map((run) => run.metrics.persistence.batchWriteDurationMs ?? 0)),
+        maxDepth: distribution(samples.map((run) => run.metrics.persistence.maxDepth ?? 0)),
+        saturationCount: distribution(samples.map((run) => run.metrics.persistence.saturationCount ?? 0)),
+        drainTimedOut: samples.filter((run) => run.metrics.persistence.drainTimedOut === true).length,
+        remainingOperations: distribution(samples.map((run) => run.metrics.persistence.remainingOperations ?? 0))
+      },
+      // Issue #9: client lifecycle per run (before/after reuse comparison data)
+      modelClient: {
+        created: samples.filter((run) => run.metrics.modelClient?.reused === false).length,
+        reused: samples.filter((run) => run.metrics.modelClient?.reused === true).length,
+        unavailable: samples.filter((run) => run.metrics.modelClient === undefined).length,
+        connectionIds: [...new Set(samples.flatMap((run) => (
+          run.metrics.modelClient?.connectionId === undefined ? [] : [run.metrics.modelClient.connectionId]
+        )))]
       },
       tokens: {
         input: distribution(samples.flatMap((run) => tokenValues(run, "inputTokens"))),

@@ -25,6 +25,8 @@ import { PluginManager, type PluginManagerOptions, type ResolvedMcpServer, type 
 import { AgentRuntime, type AgentRunAbortReason } from "./runtime/agentRuntime.js";
 import { AuditLog } from "./runtime/auditLog.js";
 import { ApprovalStore } from "./runtime/approvalStore.js";
+import { ModelClientCache } from "./runtime/modelClientCache.js";
+import { PersistQueueRegistry } from "./runtime/persistQueue.js";
 import { PostgresSessionStore } from "./runtime/postgresSessionStore.js";
 import { PluginCachePolicyStore, MAX_PLUGIN_CACHE_TTL_MS } from "./runtime/pluginCachePolicyStore.js";
 import { isAutomationLevel, RuntimeSettingsStore } from "./runtime/runtimeSettings.js";
@@ -37,6 +39,8 @@ import type { ToolContext } from "./tools/types.js";
 
 export interface BuildServerOptions {
   createModel?: (connection: ModelConnection, request: AgentRunRequest) => LanguageModel;
+  /** 测试注入：模型客户端缓存（默认按 createAiSdkModel 构建）。提供 createModel 时请求相关工厂每次新建，不缓存。 */
+  modelClientCache?: ModelClientCache;
   /** 测试注入：自定义插件 MCP 客户端工厂（默认为真实 stdio 连接）。 */
   createPluginClient?: PluginManagerOptions["createClient"];
   /** @deprecated Use agentRoutingMode. true selects the temporary layered rollback mode. */
@@ -59,6 +63,13 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   // 运行时开关同步到 ToolRegistry（auto 模式下高危 action 是否仍审批）
   registry.setAutoApproveHighRisk(runtimeSettings.get().autoApproveHighRisk ?? true);
   const modelConfigStore = new ModelConfigStore(config.modelConfigPath);
+  // Issue #9：复用模型客户端。默认工厂 createAiSdkModel 请求无关，可安全缓存；
+  // 请求相关工厂（options.createModel）按现状每次新建。
+  const modelClientCache = options.modelClientCache ?? new ModelClientCache({
+    createModel: (connection) => createAiSdkModel(connection)
+  });
+  // Issue #10：活跃 run 持久化队列注册表；服务器关闭时统一有界排空。
+  const persistQueueRegistry = new PersistQueueRegistry();
   const toolVisibilityStore = new ToolVisibilityStore(config.toolVisibilityPath);
   const pluginCachePolicies = new PluginCachePolicyStore(config.pluginCachePath);
   const pluginManager = new PluginManager({
@@ -100,7 +111,10 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   });
   app.addHook("onClose", async () => {
     await pluginManager.disconnectAll();
+    // Issue #10：有界排空所有活跃 run 的持久化队列；超时在结果中显式报告
+    await persistQueueRegistry.drainAll(config.persistQueueDrainTimeoutMs);
     await durableSessionStore?.close();
+    await modelClientCache.dispose();
   });
   registerStreamableMcpRoutes(app, registry, config, () => runtimeSettings.get());
 
@@ -126,6 +140,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (modelStatus.baseUrl) {
       status.baseUrl = modelStatus.baseUrl;
     }
+    status.modelClients = modelClientCache.snapshot();
     return status;
   });
 
@@ -189,6 +204,8 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       if (!updated) {
         return reply.code(404).send({ error: `No model connection found for ${params.id}` });
       }
+      // 配置修订：失效旧 client，防止复用
+      modelClientCache.invalidate(params.id);
       return modelConfigStore.list();
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
@@ -200,6 +217,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!modelConfigStore.remove(params.id)) {
       return reply.code(404).send({ error: `No model connection found for ${params.id}` });
     }
+    modelClientCache.invalidate(params.id);
     return modelConfigStore.list();
   });
 
@@ -214,7 +232,12 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
 
   // 从文件重新加载 model.json（启动后直接编辑文件时的显式重载入口；
   // 后续前端配置界面的"重载"按钮调用同一端点）
-  app.post("/api/model-config/reload", async (): Promise<ModelConfigState> => modelConfigStore.reload());
+  app.post("/api/model-config/reload", async (): Promise<ModelConfigState> => {
+    const state = modelConfigStore.reload();
+    // 重载可能改动任意连接（含 apiKey），全部失效
+    modelClientCache.invalidateAll();
+    return state;
+  });
 
   app.get("/api/tools", async () => ({
     tools: registry.manifests()
@@ -403,8 +426,15 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!connection) {
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection);
-    return runtime.run(runRequest, (event) => auditLog.append(event));
+    const { runtime, release } = createRuntime(
+      config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection,
+      modelClientCache, persistQueueRegistry
+    );
+    try {
+      return await runtime.run(runRequest, (event) => auditLog.append(event));
+    } finally {
+      release?.();
+    }
   });
 
   
@@ -479,7 +509,10 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!connection) {
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection);
+    const { runtime, release } = createRuntime(
+      config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection,
+      modelClientCache, persistQueueRegistry
+    );
     const controller = new AbortController();
     let activeRunId: string | undefined;
     const abortForDisconnect = () => {
@@ -521,6 +554,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     } finally {
       request.raw.off("aborted", abortForDisconnect);
       reply.raw.off("close", abortForDisconnect);
+      release?.();
       if (activeRunId) {
         activeRuns.delete(activeRunId);
       }
@@ -551,28 +585,70 @@ function createRuntime(
   runRequest: AgentRunRequest,
   options: BuildServerOptions,
   sessionStateStore: SessionStateStore,
-  connection: ModelConnection
-) {
-  return new AgentRuntime({
-    model: options.createModel?.(connection, runRequest) ?? createAiSdkModel(connection),
-    registry,
-    modelName: connection.model,
-    providerLabel: connection.provider,
-    actionLevel: settings.actionLevel,
-    sandboxRoot: config.sandboxRoot,
-    workspaceRoot: config.workspaceRoot,
-    sessionStateStore,
-    runTimeoutMs: config.agentRunTimeoutMs,
-    contextBudget: {
-      maxInputTokens: config.contextBudgetMaxInputTokens,
-      reservedOutputTokens: config.contextBudgetReservedOutputTokens,
-      keepRecentMessages: config.contextBudgetKeepRecentMessages
-    },
-    agentRoutingMode: options.agentRoutingMode
-      ?? (options.enableLayeredRouting === undefined
-        ? config.agentRoutingMode
-        : options.enableLayeredRouting ? "layered" : "deterministic")
-  });
+
+
+  connection: ModelConnection,
+  modelClientCache: ModelClientCache,
+  persistQueueRegistry: PersistQueueRegistry
+): { runtime: AgentRuntime; release: (() => void) | undefined } {
+  // 请求相关工厂（测试注入）保持每次新建；否则复用缓存中的 provider client（Issue #9）。
+  if (options.createModel) {
+    return {
+      runtime: new AgentRuntime({
+        model: options.createModel(connection, runRequest),
+        registry,
+        modelName: connection.model,
+        providerLabel: connection.provider,
+        actionLevel: settings.actionLevel,
+        sandboxRoot: config.sandboxRoot,
+        workspaceRoot: config.workspaceRoot,
+        sessionStateStore,
+        runTimeoutMs: config.agentRunTimeoutMs,
+        persistQueue: {
+          capacity: config.persistQueueCapacity,
+          batchSize: config.persistQueueBatchSize,
+          flushIntervalMs: config.persistQueueFlushIntervalMs,
+          drainTimeoutMs: config.persistQueueDrainTimeoutMs,
+          saturationWaitMs: config.persistQueueSaturationWaitMs
+        },
+        persistQueueRegistry,
+        agentRoutingMode: options.agentRoutingMode
+          ?? (options.enableLayeredRouting === undefined
+            ? config.agentRoutingMode
+            : options.enableLayeredRouting ? "layered" : "deterministic")
+      }),
+      release: undefined
+    };
+  }
+  const acquisition = modelClientCache.acquire(connection);
+  return {
+    runtime: new AgentRuntime({
+      model: acquisition.model,
+      registry,
+      modelName: connection.model,
+      providerLabel: connection.provider,
+      actionLevel: settings.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      sessionStateStore,
+      runTimeoutMs: config.agentRunTimeoutMs,
+      persistQueue: {
+        capacity: config.persistQueueCapacity,
+        batchSize: config.persistQueueBatchSize,
+        flushIntervalMs: config.persistQueueFlushIntervalMs,
+        drainTimeoutMs: config.persistQueueDrainTimeoutMs,
+        saturationWaitMs: config.persistQueueSaturationWaitMs
+      },
+      persistQueueRegistry,
+      agentRoutingMode: options.agentRoutingMode
+        ?? (options.enableLayeredRouting === undefined
+          ? config.agentRoutingMode
+          : options.enableLayeredRouting ? "layered" : "deterministic"),
+      modelClient: { connectionId: connection.id, reused: acquisition.reused }
+    }),
+    release: acquisition.release
+  };
+
 }
 
 function currentToolPolicy(config: AppConfig, settings: RuntimeSettings) {
