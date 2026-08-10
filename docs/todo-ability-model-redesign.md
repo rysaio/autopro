@@ -1,90 +1,118 @@
-# 能力模型重构设计方案（skill / plugin / mcp）
+# 能力模型重构实施计划
 
-日期：2026-08-05　状态：草案待确认　作者：前端分支
+日期：2026-08-10
 
-## 1. 目标概念模型（Claude Code 式）
+状态：待实施
 
-三类能力来源，统一在界面中呈现：
+定位：定义产品概念、模块职责、对外接口方向和前端验收标准。具体加载与运行机制见 `todo-skill-system-design.md`。
 
-```
-能力（Capability）
-├── 独立 Skill（技能）      —— 不属于任何插件，单个技能实体
-├── Plugin（插件）           —— 容器，声明式包含：
-│     ├── skills[]          —— 插件自带技能（SKILL.md，superpower 模式）
-│     └── mcpServers[]      —— 插件自带 MCP 服务器（→ 工具）
-└── 独立 MCP 工具（MCP）     —— 不属于任何插件，单独列出
-```
+## 1. 产品目标
 
-现状差距：
-- 插件 manifest 已声明 `skills`（如 wazuh-secops 有 5 个 SKILL.md）+ `mcpServers`，
-  但 `pluginManager` 只消费 mcpServers，`skills` 目录被忽略
-- `PluginSummary` 只有 `toolCount`，无技能/工具明细
-- 前端无插件维度展示；"MCP 工具"面板实际显示的是全部工具（非插件维度）
+建立统一的能力视图，准确呈现三类来源：
 
-## 2. 数据模型（shared 类型变更）
+- 独立技能：由用户安装在运行目录，不属于插件。
+- 插件：能力分发容器，可包含技能和一个或多个 MCP server。
+- 独立 MCP：不属于插件的 MCP 连接及其工具，后续单独实施。
 
-```ts
-export interface PluginSkillSummary {
-  id: string;              // skill 目录名，如 wazuh-alert-triage-threat-hunting
-  name: string;            // SKILL.md frontmatter 的 name（缺省用目录名）
-  description: string;     // SKILL.md frontmatter 的 description（可选）
-}
+能力视图负责说明来源和组成，不接管工具执行、审批或暴露阶段策略。
 
-export interface PluginMcpSummary {
-  serverName: string;      // .mcp.json 中 server 的 key
-  toolIds: string[];       // 该 server 经 listTools 注册的工具 id
-}
+## 2. 统一术语
 
-export interface PluginSummary {
-  id: string;
-  name: string;
-  version: string;
-  status: "loaded" | "error";
-  error?: string;
-  toolCount: number;               // 向后兼容
-  skills: PluginSkillSummary[];    // 新增：插件包含的技能
-  mcpServers: PluginMcpSummary[];  // 新增：插件包含的 MCP 服务器及工具
-}
-```
+| 术语 | 含义 |
+|---|---|
+| Capability | 对技能、插件和 MCP 来源的产品级统称 |
+| Tool | 模型可调用的执行入口 |
+| Tool Manifest | 工具名称、输入、风险、类别和暴露阶段声明 |
+| Tool Pack | 工具分组，仅用于展示、筛选和运行范围控制 |
+| Skill | 包含 `SKILL.md` 的指令包，不等于 Tool |
+| Plugin | 包含技能和 MCP server 的分发容器 |
+| MCP Server | 向宿主提供工具的外部进程或连接 |
 
-## 3. 后端改动（src/apps/server）
+`SkillManifest` 和 `SkillPackManifest` 当前实际描述 Tool 与 Tool Pack，实施时直接改为准确命名，并同步修改全部调用方和界面文案。
 
-1. `pluginManager.loadPlugin()`：读取 manifest 后
-   - 解析 `manifest.skills`（相对路径，如 `./skills/`）→ 递归扫描 `*/SKILL.md`
-   - 解析每个 SKILL.md 的 YAML frontmatter（name/description），生成 `PluginSkillSummary[]`
-   - 保留现有 mcpServers 流程，在 `registerTools` 时按 server 记录 `toolIds`
-2. `status()` 返回增强字段
-3. API 不变：`GET /api/plugins` 自动带新字段
+## 3. 当前差距
 
-## 4. 前端改动（src/apps/web）
+- `PluginManager` 只消费 MCP 配置，忽略插件声明的技能目录。
+- `PluginManager` 只加载第一个 MCP server，不能表达插件的完整能力。
+- `PluginSummary` 只有工具数量，缺少描述、技能、MCP server 明细和局部失败状态。
+- `/api/skills` 实际返回 Tool Pack，接口语义与真实 Skill 冲突。
+- 前端“技能”页面实际控制 Tool，MCP 页面实际展示全部 MCP 兼容 Tool。
+- 源码运行目录没有内置插件装配，runnable 才包含插件，开发与发布行为不一致。
 
-技能面板重构为「能力」总览，三区：
+## 4. 目标模块
 
-1. **插件**：卡片列表
-   - 卡片头：插件名 + 版本 + 状态徽章（loaded/error）
-   - 描述
-   - 「技能」chips：`wazuh-alert-triage-threat-hunting` 等（可展开/悬停看描述）
-   - 「MCP 工具」chips：serverName + 工具数
-2. **独立技能**：不属于任何插件的 skill 列表
-3. **独立 MCP 工具**：不属于任何插件的 MCP 工具列表
+### Capability Catalog
 
-数据：`fetchPlugins()`（新增 api.ts 客户端）+ 现有 `fetchSkills`/`fetchMcpTools`。
+作为能力查询的深模块，聚合独立技能、插件技能、插件 MCP server 和来源状态。对调用方提供稳定摘要，不泄露文件路径和加载实现。
 
-## 5. 与现有概念的关系
+### Tool Registry
 
-- `SkillPack`（secops-core 等）保留：它是**工具分组**（用于图谱/启用开关），与 Plugin 不同层
-- 概念映射：SkillPack ≠ Plugin；Plugin 是外部能力来源（skill + mcp 的容器）
+只负责 Tool 注册、查询、执行、审批和暴露阶段。Skill 与 Plugin 信息不进入该模块。
 
-## 6. 实施步骤
+### Skill Catalog
 
-1. shared：`PluginSummary` 扩展 + `PluginSkillSummary`/`PluginMcpSummary`
-2. 后端：pluginManager 解析 skills 目录 + status 增强（worktree 提交，后端合并时同步）
-3. 前端：api.ts 加 fetchPlugins；技能面板改三区
-4. 测试：插件加载单测（skills 解析）+ 前端 typecheck
-5. （阶段二）独立 skill / 独立 MCP 实例：runtime/skills/ 目录 + 全局 mcp 配置
+负责 Skill 的索引、读取和重载。内部保存文件定位信息，对外只暴露技能摘要、来源、状态和正文读取结果。
 
-## 7. 风险与注意
+### Plugin Manager
 
-- SKILL.md frontmatter 解析需要轻量 YAML 解析（仅 name/description 两个字段，正则即可）
-- 插件 skills 解析失败不应导致整个插件 error（skills 缺失降级为空数组）
-- toolCount 字段保留避免破坏现有调用方
+负责插件发现和生命周期，委托 Skill Catalog 加载技能，委托 MCP adapter 管理各 MCP server。纯技能插件必须是有效插件，不要求同时存在 MCP server。
+
+## 5. 对外接口方向
+
+- 工具清单继续由 tools 接口提供。
+- Tool Pack 使用独立接口，不再占用 skills 语义。
+- Capability Catalog 提供统一能力快照，供前端能力页面使用。
+- Skill 正文通过受控读取接口提供，不随能力快照返回。
+- Plugin 状态接口保留运维用途，返回技能和各 MCP server 的实际状态。
+- Capability reload 提供人工文件修改后的无重启重载入口。
+
+不保留语义错误的旧接口别名；前后端在同一实施切片中同步迁移。
+
+## 6. 插件状态模型
+
+插件需要表达三种状态：
+
+- loaded：声明的能力全部加载成功。
+- degraded：插件可用，但部分 Skill 或 MCP server 加载失败。
+- error：插件 manifest 无效或没有任何可用能力。
+
+每个 Skill 和 MCP server 保留独立状态与错误摘要。单项失败不得伪装为空集合，也不得抹掉其他已加载能力。
+
+## 7. 前端能力页面
+
+能力页面按来源组织：
+
+1. 插件：显示名称、版本、描述、状态、技能清单和 MCP server 工具数量。
+2. 独立技能：显示名称、描述和加载状态，可查看正文。
+3. 独立 MCP：仅在独立 MCP 连接功能落地后展示。
+
+当前 Tool 开关页面改名为“工具”或“运行范围”，继续负责 Tool 启停、风险和类别筛选，不与 Skill 激活混合。
+
+页面提供“重新加载能力”命令。人工修改 Skill 或 Plugin 文件后，由用户触发重载，无需重启进程。
+
+## 8. 实施顺序
+
+1. 统一 Tool、Tool Pack、Skill、Plugin 术语和共享类型。
+2. 完成源码与 runnable 的运行目录装配一致性。
+3. 实施 Skill Catalog 和 Plugin Manager 改造。
+4. 实施模型按需读取 Skill 的运行机制。
+5. 提供 Capability Catalog、重载接口和状态接口。
+6. 最后重构前端能力页面和工具页面。
+
+## 9. 验收标准
+
+- Tool、Tool Pack 和 Skill 在类型、接口、文档及界面中含义一致。
+- Wazuh 的 5 个 Skill 和 Shuffle 的 3 个 Skill 均能从插件来源识别。
+- 纯技能插件可加载；多 MCP server 插件可完整加载。
+- 独立 Skill 与插件 Skill 使用相同结构和读取机制。
+- 源码开发与 runnable 对相同运行目录内容给出一致能力快照。
+- 文件修改后通过界面手动重载生效，无需重启。
+- Tool 权限、审批和 `deferLoading` 行为不因能力模型重构而改变。
+
+## 10. 本轮不做
+
+- 自动文件监听。
+- Skill 附件执行和资源解析。
+- 独立 MCP 连接管理。
+- per-skill 权限或启停策略。
+- 为旧的错误术语和接口增加长期兼容层。
