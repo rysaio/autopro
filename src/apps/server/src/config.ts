@@ -29,6 +29,12 @@ export interface AppConfig {
   apiToken: string | undefined;
   pluginsDir: string;
   agentRunTimeoutMs: number;
+  /** Issue #10：持久化队列参数（有界、可配置、保守默认值）。 */
+  persistQueueCapacity: number;
+  persistQueueBatchSize: number;
+  persistQueueFlushIntervalMs: number;
+  persistQueueDrainTimeoutMs: number;
+  persistQueueSaturationWaitMs: number;
 }
 
 export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -53,7 +59,12 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedOrigins: parseCsv(env.SECOPS_ALLOWED_ORIGINS) ?? DEFAULT_ALLOWED_ORIGINS,
     apiToken: env.SECOPS_API_TOKEN?.trim() || undefined,
     pluginsDir: resolveWorkspacePath(env.SECOPS_PLUGINS_DIR, workspaceRoot, path.join("runtime", "plugins")),
-    agentRunTimeoutMs: parsePositiveInteger(env.SECOPS_AGENT_RUN_TIMEOUT_MS, 5 * 60 * 1000)
+    agentRunTimeoutMs: parsePositiveInteger(env.SECOPS_AGENT_RUN_TIMEOUT_MS, 5 * 60 * 1000),
+    persistQueueCapacity: parsePositiveInteger(env.SECOPS_PERSIST_QUEUE_CAPACITY, 512),
+    persistQueueBatchSize: parsePositiveInteger(env.SECOPS_PERSIST_BATCH_SIZE, 32),
+    persistQueueFlushIntervalMs: parseNonNegativeInteger(env.SECOPS_PERSIST_FLUSH_INTERVAL_MS, 20),
+    persistQueueDrainTimeoutMs: parsePositiveInteger(env.SECOPS_PERSIST_DRAIN_TIMEOUT_MS, 5000),
+    persistQueueSaturationWaitMs: parseNonNegativeInteger(env.SECOPS_PERSIST_SATURATION_WAIT_MS, 1000)
   };
 }
 
@@ -119,4 +130,9 @@ function parseCsv(value: string | undefined): string[] | undefined {
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }

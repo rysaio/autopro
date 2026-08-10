@@ -230,6 +230,24 @@ export interface AgentRunMetrics {
     /** Business-state writes completed before terminal snapshot export; excludes the export itself. */
     totalDurationMs: number;
     failureCount: number;
+    /** 队列等待总时长（enqueue 到开始写入）。 */
+    queueWaitDurationMs: number;
+    /** 批写入次数与总时长。 */
+    batchWriteCount: number;
+    batchWriteDurationMs: number;
+    /** 观察到的最大队列深度。 */
+    maxDepth: number;
+    /** 队列饱和（背压等待）次数。 */
+    saturationCount: number;
+    /** 有界排空耗时；drainTimedOut 为 true 时 remainingOperations 为未完成数量。 */
+    drainDurationMs: number;
+    drainTimedOut: boolean;
+    remainingOperations: number;
+  };
+  /** 模型客户端生命周期（Issue #9）：本次 run 复用了既有 client 还是新建。 */
+  modelClient?: {
+    connectionId: string;
+    reused: boolean;
   };
 }
 
@@ -343,6 +361,26 @@ export interface ProviderStatus {
     toolStreaming: boolean;
   };
   baseUrl?: string;
+  /** 模型客户端生命周期指标（Issue #9）：创建/复用/失效/失败独立于模型请求时长。 */
+  modelClients?: ModelClientLifecycleMetrics;
+}
+
+/** 模型客户端生命周期指标：仅含稳定非机密连接标识符，永不包含 API key 或授权头。 */
+export interface ModelClientLifecycleMetrics {
+  connections: Array<{
+    connectionId: string;
+    created: number;
+    reused: number;
+    invalidated: number;
+    creationFailures: number;
+    disposed: number;
+    active: number;
+  }>;
+  totalCreated: number;
+  totalReused: number;
+  totalInvalidated: number;
+  totalCreationFailures: number;
+  totalDisposed: number;
 }
 
 /** 对外暴露的模型连接摘要：永不携带明文 apiKey。 */

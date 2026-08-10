@@ -14,6 +14,7 @@ import { stepCountIs, streamText, type LanguageModel } from "ai";
 import { ToolRegistry } from "../tools/registry.js";
 import type { ToolExecutionRecord } from "../tools/types.js";
 import { ModelMetricsRecorder } from "./modelMetrics.js";
+import { PersistQueue, PersistQueueRegistry, type PersistQueueOptions } from "./persistQueue.js";
 import { roundDurationMs, RunTimingRecorder } from "./runTimingRecorder.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
 import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP, SYSTEM_PROMPT_FINAL } from "./systemPrompt.js";
@@ -39,6 +40,15 @@ export interface AgentRuntimeOptions {
   agentRoutingMode?: AgentRoutingMode;
   /** 整个运行（模型、工具循环）的硬超时。 */
   runTimeoutMs?: number;
+  /** Issue #9：本次 run 使用的模型 client 生命周期信息（复用/新建），用于独立于模型请求时长的观测。 */
+  modelClient?: {
+    connectionId: string;
+    reused: boolean;
+  };
+  /** Issue #10：持久化队列参数（容量/批大小/背压/排空）。 */
+  persistQueue?: PersistQueueOptions;
+  /** Issue #10：活跃 run 队列注册表；服务器关闭时统一有界排空。 */
+  persistQueueRegistry?: PersistQueueRegistry;
 }
 
 export interface AgentRunExecutionOptions {
@@ -67,7 +77,14 @@ export class AgentRuntime {
     const startedAt = new Date().toISOString();
     const stateStore = this.options.sessionStateStore ?? new NoopSessionStateStore();
     const recordsPersistence = !(stateStore instanceof NoopSessionStateStore);
-    let persistence = Promise.resolve();
+    // Issue #10：有界异步批处理队列。逐事件持久化移出 SSE/工具执行热路径，
+    // run 内 FIFO 保持顺序；run 完成与服务器关闭执行有界排空。
+    const persistQueue = recordsPersistence
+      ? new PersistQueue(this.options.persistQueue ?? {})
+      : undefined;
+    if (persistQueue) {
+      this.options.persistQueueRegistry?.register(persistQueue);
+    }
     let persistenceOperationCount = 0;
     let persistenceDurationMs = 0;
     let persistenceFailureCount = 0;
@@ -83,7 +100,18 @@ export class AgentRuntime {
         timing.end();
       }
     };
-    const measurePersistenceWrite = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
+    const persist = (operation: () => Promise<void>) => {
+      if (!persistQueue) {
+        return;
+      }
+      persistenceOperationCount += 1;
+      persistQueue.enqueue(operation).catch((error) => {
+        // 队列饱和/关闭导致的失败：记录到指标与 run 审计状态，不静默丢弃
+        persistenceFailureCount += 1;
+        persistenceFailure ??= error;
+      });
+    };
+    const writeThrough = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
       if (!recordsPersistence) {
         return operation();
       }
@@ -97,15 +125,6 @@ export class AgentRuntime {
       } finally {
         persistenceDurationMs += timing.end();
       }
-    };
-    const persist = (operation: () => Promise<void>) => {
-      persistence = persistence.then(async () => {
-        try {
-          await measurePersistenceWrite(operation);
-        } catch (error) {
-          persistenceFailure ??= error;
-        }
-      });
     };
     const audit: AuditEvent[] = [];
     const toolInvocations: ToolInvocation[] = [];
@@ -151,7 +170,7 @@ export class AgentRuntime {
           : "The deterministic route did not complete."
       }
     };
-    await measurePersistenceWrite(() => stateStore.startRun({ sessionId, runId, startedAt }));
+    await writeThrough(() => stateStore.startRun({ sessionId, runId, startedAt }));
     for (const message of messages) {
       persist(() => stateStore.appendMessage(sessionId, runId, message));
     }
@@ -533,7 +552,13 @@ export class AgentRuntime {
     }
 
     // Flush all queued state writes before taking the run-level snapshot.
-    await persistence;
+    // Issue #10：有界排空；超时显式报告剩余工作（drainTimedOut/remainingOperations），
+    // 不无限等待。排空超时后队列仍在后台尽力完成剩余写入，run 已显式呈现该条件。
+    let drainResult = persistQueue?.snapshot();
+    if (persistQueue) {
+      drainResult = await persistQueue.drain();
+      this.options.persistQueueRegistry?.unregister(persistQueue);
+    }
     if (persistenceFailure !== undefined) {
       status = "failed";
       terminalReason = `Persistence failed: ${errorText(persistenceFailure)}`;
@@ -593,8 +618,17 @@ export class AgentRuntime {
         persistence: {
           operationCount: persistenceOperationCount,
           totalDurationMs: roundDurationMs(persistenceDurationMs),
-          failureCount: persistenceFailureCount
-        }
+          failureCount: persistenceFailureCount,
+          queueWaitDurationMs: drainResult?.queueWaitDurationMs ?? 0,
+          batchWriteCount: drainResult?.batchWriteCount ?? 0,
+          batchWriteDurationMs: drainResult?.batchWriteDurationMs ?? 0,
+          maxDepth: drainResult?.maxDepth ?? 0,
+          saturationCount: drainResult?.saturationCount ?? 0,
+          drainDurationMs: drainResult?.drainDurationMs ?? 0,
+          drainTimedOut: drainResult?.drainTimedOut ?? false,
+          remainingOperations: drainResult?.remainingOperations ?? 0
+        },
+        ...(this.options.modelClient ? { modelClient: this.options.modelClient } : {})
       }
     };
     const completionEvent = createRunEvent({ type: "run_completed", run });
