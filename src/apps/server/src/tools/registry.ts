@@ -35,7 +35,7 @@ export class ToolRegistry {
     }
   }
 
-  /** 注册外部（插件）工具；与已有工具冲突时抛错。 */
+  /** 注册外部（插件）工具；与已有工具冲突时抛错且不产生任何残留注册。 */
   registerTools(tools: SecOpsTool[]): void {
     for (const tool of tools) {
       if (this.byApiName.has(tool.apiName)) {
@@ -44,6 +44,8 @@ export class ToolRegistry {
       if (this.byManifestId.has(tool.manifest.id)) {
         throw new Error(`Duplicate tool manifest id: ${tool.manifest.id}`);
       }
+    }
+    for (const tool of tools) {
       this.byApiName.set(tool.apiName, tool);
       this.byManifestId.set(tool.manifest.id, tool);
       this.externalApiNames.add(tool.apiName);
@@ -81,6 +83,11 @@ export class ToolRegistry {
 
   cacheStats() {
     return this.resultCache.stats();
+  }
+
+  /** Reclaim all cached results recorded under a host namespace (e.g. a plugin). */
+  invalidateCacheNamespace(namespace: string): number {
+    return this.resultCache.invalidateNamespace(namespace);
   }
 
   setDeferLoadingOverride(id: string, deferLoading: boolean): boolean {
@@ -520,6 +527,7 @@ function createCacheKey(
     toolVersion: policy.version,
     dataSource: policy.dataSource,
     workspaceRoot: context.workspaceRoot,
+    ...(policy.namespace ? { namespace: policy.namespace } : {}),
     args
   };
 }

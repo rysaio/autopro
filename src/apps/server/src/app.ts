@@ -26,6 +26,7 @@ import { AgentRuntime, type AgentRunAbortReason } from "./runtime/agentRuntime.j
 import { AuditLog } from "./runtime/auditLog.js";
 import { ApprovalStore } from "./runtime/approvalStore.js";
 import { PostgresSessionStore } from "./runtime/postgresSessionStore.js";
+import { PluginCachePolicyStore } from "./runtime/pluginCachePolicyStore.js";
 import { isAutomationLevel, RuntimeSettingsStore } from "./runtime/runtimeSettings.js";
 import { NoopSessionStateStore, type SessionStateStore } from "./runtime/sessionStateStore.js";
 import { ToolVisibilityStore } from "./runtime/toolVisibilityStore.js";
@@ -59,9 +60,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   registry.setAutoApproveHighRisk(runtimeSettings.get().autoApproveHighRisk ?? true);
   const modelConfigStore = new ModelConfigStore(config.modelConfigPath);
   const toolVisibilityStore = new ToolVisibilityStore(config.toolVisibilityPath);
+  const pluginCachePolicies = new PluginCachePolicyStore(config.pluginCachePath);
   const pluginManager = new PluginManager({
     pluginsDir: config.pluginsDir,
     registry,
+    cachePolicyStore: pluginCachePolicies,
     ...(options.createPluginClient ? { createClient: options.createPluginClient } : {})
   });
   // AgentEnvironment 基座：统一管理配置（settings/models）与外围设施（plugins）
@@ -257,6 +260,37 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     await pluginManager.reload();
     applyToolVisibilityOverrides(registry, toolVisibilityStore);
     return { plugins: pluginManager.status() };
+  });
+
+  // ── 插件工具缓存策略 API：host 侧 opt-in 持久化策略；变更后 reload 插件使生效 ──
+  app.get("/api/plugin-cache/policies", async () => ({
+    policies: pluginCachePolicies.get()
+  }));
+
+  app.put("/api/plugin-cache/policies/:manifestId", async (request, reply) => {
+    const params = request.params as { manifestId: string };
+    const body = coerceRecord(request.body);
+    if (!hasManifest(registry, params.manifestId)) {
+      return reply.code(404).send({ error: `No tool found for ${params.manifestId}` });
+    }
+    if (typeof body.enabled !== "boolean" || !Number.isInteger(body.ttlMs) || (body.ttlMs as number) <= 0) {
+      return reply.code(400).send({ error: "enabled must be a boolean and ttlMs a positive integer" });
+    }
+    pluginCachePolicies.set(params.manifestId, { enabled: body.enabled, ttlMs: body.ttlMs as number });
+    // 缓存策略属于 result-affecting 配置：reload 后注入新策略并递增 generation
+    await pluginManager.reload();
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
+    return { policies: pluginCachePolicies.get() };
+  });
+
+  app.delete("/api/plugin-cache/policies/:manifestId", async (request, reply) => {
+    const params = request.params as { manifestId: string };
+    if (!pluginCachePolicies.clear(params.manifestId)) {
+      return reply.code(404).send({ error: `No plugin cache policy found for ${params.manifestId}` });
+    }
+    await pluginManager.reload();
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
+    return { policies: pluginCachePolicies.get() };
   });
 
   app.get("/api/mcp/tools", async () => ({
@@ -526,6 +560,11 @@ function createRuntime(
     workspaceRoot: config.workspaceRoot,
     sessionStateStore,
     runTimeoutMs: config.agentRunTimeoutMs,
+    contextBudget: {
+      maxInputTokens: config.contextBudgetMaxInputTokens,
+      reservedOutputTokens: config.contextBudgetReservedOutputTokens,
+      keepRecentMessages: config.contextBudgetKeepRecentMessages
+    },
     agentRoutingMode: options.agentRoutingMode
       ?? (options.enableLayeredRouting === undefined
         ? config.agentRoutingMode
