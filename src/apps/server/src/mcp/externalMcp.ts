@@ -77,6 +77,14 @@ export interface ExternalMcpToolOptions {
   apiName?: string;
   tags?: string[];
   useRemoteManifestId?: boolean;
+  /** Host-owned opt-in cache identity. Unsafe MCP tools are rejected below. */
+  resultCache?: {
+    enabled: boolean;
+    version: string;
+    dataSource: string;
+    ttlMs: number;
+    namespace?: string;
+  };
 }
 
 export function externalMcpTool(
@@ -90,6 +98,14 @@ export function externalMcpTool(
     : `${options.sourceId}.${tool.name}`;
   const schema = toToolSchema(tool.inputSchema);
   const toolClass = toToolClass(meta.toolClass, tool);
+  const resultCache = options.resultCache?.enabled && isCacheEligible(tool, toolClass)
+    ? {
+        version: options.resultCache.version,
+        dataSource: options.resultCache.dataSource,
+        ttlMs: options.resultCache.ttlMs,
+        ...(options.resultCache.namespace ? { namespace: options.resultCache.namespace } : {})
+      }
+    : undefined;
   return {
     apiName: options.apiName ?? tool.name,
     manifest: {
@@ -101,7 +117,8 @@ export function externalMcpTool(
       deferLoading: meta.deferLoading === true,
       inputSchema: schema,
       tags: options.tags ?? [options.sourceId],
-      mcpCompatible: true
+      mcpCompatible: true,
+      ...(resultCache ? { resultCache } : {})
     },
     toModelTool(): ModelTool {
       return {
@@ -174,4 +191,16 @@ function toToolRisk(value: unknown, tool: Tool): ToolRisk {
     return value;
   }
   return tool.annotations?.readOnlyHint === true && tool.annotations?.destructiveHint !== true ? "low" : "high";
+}
+
+/** Cache only host-approved, non-mutating MCP tools. Annotations never opt in. */
+function isCacheEligible(tool: Tool, toolClass: ToolClass): boolean {
+  if (toolClass === "action") {
+    return false;
+  }
+  const meta = tool._meta ?? {};
+  const annotations = (tool as { annotations?: Record<string, unknown> }).annotations ?? {};
+  const readOnly = meta.readOnlyHint ?? annotations.readOnlyHint ?? (tool as { readOnlyHint?: unknown }).readOnlyHint;
+  const idempotent = meta.idempotentHint ?? annotations.idempotentHint ?? (tool as { idempotentHint?: unknown }).idempotentHint;
+  return readOnly !== false && idempotent !== false;
 }

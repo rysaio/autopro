@@ -283,6 +283,21 @@ describe("PluginManager", () => {
     await manager.disconnectAll();
   });
 
+  it("merges concurrent reload calls into one serialized pass without tool conflicts", async () => {
+    const { manager, setup } = await setupPluginManager();
+    setup.toolsByPlugin["demo"] = [tool("secops_demo_query", "demo.query")];
+    await installPlugin(setup.pluginsDir, "demo");
+    await manager.load();
+
+    await Promise.all([manager.reload(), manager.reload()]);
+
+    expect(manager.status().map((p) => p.id)).toEqual(["demo"]);
+    expect(manager.status()[0]?.status).toBe("loaded");
+    expect(setup.registry.manifests().map((m) => m.id)).toContain("demo.query");
+
+    await manager.disconnectAll();
+  });
+
   it("marks a plugin as error when tool registration conflicts", async () => {
     const { manager, setup } = await setupPluginManager();
     // 与内置工具 apiName 冲突

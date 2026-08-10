@@ -7,6 +7,8 @@ export interface ToolCacheKeyInput {
   dataSource: string;
   workspaceRoot: string;
   args: Record<string, unknown>;
+  /** Host-owned isolation scope (e.g. `plugin:<pluginId>`); included in the key. */
+  namespace?: string;
 }
 
 export interface ToolCacheValue {
@@ -19,6 +21,8 @@ export interface ToolCacheValue {
 interface CacheEntry extends ToolCacheValue {
   createdAt: number;
   expiresAt: number;
+  /** Host isolation scope recorded at write time so reload/removal can reclaim entries. */
+  namespace?: string;
 }
 
 export type ToolCacheLookup =
@@ -79,6 +83,7 @@ export class ToolCache {
 
   static key(input: ToolCacheKeyInput): string {
     const canonical = stableSerialize({
+      ...(input.namespace ? { namespace: input.namespace } : {}),
       toolId: input.toolId,
       toolVersion: input.toolVersion,
       dataSource: input.dataSource,
@@ -129,7 +134,8 @@ export class ToolCache {
     this.store.set(key, {
       ...cloned,
       createdAt: now,
-      expiresAt: now + ttlMs
+      expiresAt: now + ttlMs,
+      ...(input.namespace ? { namespace: input.namespace } : {})
     });
 
     let evictions = 0;
@@ -148,6 +154,19 @@ export class ToolCache {
   invalidateAll(): number {
     const removed = this.store.size;
     this.store.clear();
+    this.invalidatedEntries += removed;
+    return removed;
+  }
+
+  /** Immediately reclaim every entry recorded under the given host namespace. */
+  invalidateNamespace(namespace: string): number {
+    let removed = 0;
+    for (const [key, entry] of this.store) {
+      if (entry.namespace === namespace) {
+        this.store.delete(key);
+        removed += 1;
+      }
+    }
     this.invalidatedEntries += removed;
     return removed;
   }

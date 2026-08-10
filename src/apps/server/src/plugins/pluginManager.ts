@@ -8,6 +8,7 @@ import {
   type ResolvedMcpConnection
 } from "../mcp/externalMcp.js";
 import type { SecOpsTool } from "../tools/types.js";
+import type { PluginCachePolicyStore } from "../runtime/pluginCachePolicyStore.js";
 import { ToolRegistry } from "../tools/registry.js";
 import type { PluginSkillSource } from "../skills/catalog.js";
 
@@ -21,6 +22,8 @@ export interface PluginManagerOptions {
   registry: ToolRegistry;
   env?: NodeJS.ProcessEnv;
   createClient?: (server: ResolvedMcpServer, pluginId: string) => Promise<McpClientHandle>;
+  /** Host-owned persisted cache policy; missing store = plugin caching disabled. */
+  cachePolicyStore?: PluginCachePolicyStore;
 }
 
 interface PluginManifestFile {
@@ -58,6 +61,8 @@ interface PluginState {
   skills: SkillSummary[];
   clients: McpClientHandle[];
   mcpServers: NonNullable<PluginSummary["mcpServers"]>;
+  /** Host-assigned load generation; bumped on every successful load/reload. */
+  generation?: number;
 }
 
 // Codex 插件规范：manifest 为 .codex-plugin/plugin.json，mcpServers 字段指向
@@ -78,6 +83,9 @@ const ACTION_ALLOW_ENV: Record<string, string> = {
  */
 export class PluginManager {
   private readonly plugins = new Map<string, PluginState>();
+  private nextGeneration = 1;
+  /** reload 互斥：并发 reload/策略变更合并为一次串行执行，避免 registerTools 交错冲突。 */
+  private reloadInFlight: Promise<void> | undefined;
 
   constructor(private readonly options: PluginManagerOptions) {}
 
@@ -94,16 +102,32 @@ export class PluginManager {
     }
   }
 
-  /** 断开全部已加载插件连接、移除其工具，再重新扫描加载（无需重启服务）。 */
-  async reload(): Promise<void> {
-    await this.disconnectAll();
-    await this.load();
+  /** 断开全部已加载插件连接、移除其工具，再重新扫描加载（无需重启服务）。
+   *  并发调用共享同一次执行（合并），保证串行且不交错。 */
+  reload(): Promise<void> {
+    if (this.reloadInFlight) {
+      return this.reloadInFlight;
+    }
+    const operation = (async () => {
+      await this.disconnectAll();
+      await this.load();
+    })();
+    this.reloadInFlight = operation;
+    operation.finally(() => {
+      if (this.reloadInFlight === operation) {
+        this.reloadInFlight = undefined;
+      }
+    }).catch(() => undefined);
+    return operation;
   }
 
-  /** 断开全部插件 MCP 连接并从 registry 移除其工具。 */
+  /** 断开全部插件 MCP 连接并从 registry 移除其工具，同时立即回收其缓存条目。 */
   async disconnectAll(): Promise<void> {
     this.options.registry.unregisterExternalTools("plugins");
     const clients = [...this.plugins.values()].flatMap((plugin) => plugin.clients);
+    for (const plugin of this.plugins.values()) {
+      this.options.registry.invalidateCacheNamespace(pluginCacheNamespace(plugin.id));
+    }
     this.plugins.clear();
     await Promise.allSettled(clients.map((client) => client.close()));
   }
@@ -161,6 +185,7 @@ export class PluginManager {
     const clients: McpClientHandle[] = [];
     const serverStates: NonNullable<PluginSummary["mcpServers"]> = [];
     let toolCount = 0;
+    let generation: number | undefined;
     for (const serverName of serverNames) {
       const config = mcpServers[serverName] as McpServerConfigFile;
       let client: McpClientHandle | undefined;
@@ -172,11 +197,33 @@ export class PluginManager {
           : await connectMcpClient(resolved);
         const connectedClient = client;
         const tools = await connectedClient.listTools();
-        const adaptedTools: SecOpsTool[] = tools.map((tool) => externalMcpTool(
-          { sourceId: `${pluginId}.${serverName}`, tags: ["plugin", pluginId] },
-          tool,
-          (args) => connectedClient.callTool(tool.name, args)
-        ));
+        generation ??= this.nextGeneration++;
+        const adaptedTools: SecOpsTool[] = tools.map((tool) => {
+          const meta = tool._meta ?? {};
+          const manifestId = typeof meta.manifestId === "string" && meta.manifestId.length > 0
+            ? meta.manifestId
+            : `${pluginId}.${tool.name}`;
+          const cachePolicy = this.options.cachePolicyStore?.policyFor(manifestId);
+          return externalMcpTool(
+            {
+              sourceId: `${pluginId}.${serverName}`,
+              tags: ["plugin", pluginId],
+              ...(cachePolicy
+                ? {
+                    resultCache: {
+                      enabled: cachePolicy.enabled,
+                      version: `plugin:${pluginId}:gen${generation}`,
+                      dataSource: pluginId,
+                      ttlMs: cachePolicy.ttlMs,
+                      namespace: pluginCacheNamespace(pluginId)
+                    }
+                  }
+                : {})
+            },
+            tool,
+            (args) => connectedClient.callTool(tool.name, args)
+          );
+        });
         this.options.registry.registerTools(adaptedTools, "plugins");
         clients.push(connectedClient);
         toolCount += adaptedTools.length;
@@ -204,7 +251,8 @@ export class PluginManager {
       ...(skillsRoot ? { skillsRoot } : {}),
       skills: [],
       clients,
-      mcpServers: serverStates
+      mcpServers: serverStates,
+      ...(generation !== undefined ? { generation } : {})
     };
     if (!skillsRoot && serverNames.length === 0 && loadErrors.length === 0) {
       state.loadErrors.push("Plugin declares no skills or MCP servers");
@@ -473,4 +521,9 @@ function buildSpawnEnv(base: NodeJS.ProcessEnv): Record<string, string> {
   env.SECOPS_ACTION_LEVEL = "full-access";
   Object.assign(env, ACTION_ALLOW_ENV);
   return env;
+}
+
+/** Host isolation scope for a plugin's cached results. */
+function pluginCacheNamespace(pluginId: string): string {
+  return `plugin:${pluginId}`;
 }

@@ -101,6 +101,11 @@ export class ToolRegistry {
     return this.resultCache.stats();
   }
 
+  /** Reclaim all cached results recorded under a host namespace (e.g. a plugin). */
+  invalidateCacheNamespace(namespace: string): number {
+    return this.resultCache.invalidateNamespace(namespace);
+  }
+
   setDeferLoadingOverride(id: string, deferLoading: boolean): boolean {
     if (!this.byManifestId.has(id)) {
       return false;
@@ -534,6 +539,7 @@ function createCacheKey(
     toolVersion: policy.version,
     dataSource: policy.dataSource,
     workspaceRoot: context.workspaceRoot,
+    ...(policy.namespace ? { namespace: policy.namespace } : {}),
     args
   };
 }
