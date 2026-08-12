@@ -16,9 +16,8 @@ export interface ToolSchema {
   additionalProperties?: boolean;
 }
 
-export interface SkillManifest {
+export interface ToolManifest {
   id: string;
-  skillPackId: string;
   name: string;
   description: string;
   toolClass: ToolClass;
@@ -64,7 +63,7 @@ export interface ModelTool {
 }
 
 export interface WazuhPluginTool {
-  manifest: SkillManifest;
+  manifest: ToolManifest;
   apiName: string;
   toModelTool(): ModelTool;
   execute(args: Record<string, unknown>, context: WazuhExecutionContext): Promise<WazuhExecutionResult>;

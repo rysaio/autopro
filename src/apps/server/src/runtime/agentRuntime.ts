@@ -24,11 +24,14 @@ import { PersistQueue, PersistQueueRegistry, type PersistQueueOptions } from "./
 import { roundDurationMs, RunTimingRecorder } from "./runTimingRecorder.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
 import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP, SYSTEM_PROMPT_FINAL } from "./systemPrompt.js";
+import { systemPromptWithSkills } from "./systemPrompt.js";
 import { toolRouter } from "./toolRouter.js";
+import type { SkillCatalog } from "../skills/catalog.js";
 
 export interface AgentRuntimeOptions {
   model: LanguageModel;
   registry: ToolRegistry;
+  skillCatalog?: Pick<SkillCatalog, "promptSummary">;
   modelName: string;
   providerLabel: string;
   actionLevel: AgentRunContext["actionLevel"];
@@ -170,6 +173,7 @@ export class AgentRuntime {
       ? "auto"
       : request.permissionMode ?? "auto";
     const effectiveEnabledTools = request.enabledTools;
+    const skillSummary = this.options.skillCatalog?.promptSummary() ?? "";
     let routing: AgentRoutingDecision = {
       mode: routingMode,
       selectedToolIds: [],
@@ -317,7 +321,7 @@ export class AgentRuntime {
         ));
         const triageGeneration = streamText({
           model: modelMetrics.wrap(this.options.model, "triage", triageToolIds.length),
-          system: SYSTEM_PROMPT_TRIAGE,
+          system: systemPromptWithSkills(SYSTEM_PROMPT_TRIAGE, skillSummary),
           messages: this.prepareContextMessages(
             "triage",
             request,
@@ -417,7 +421,7 @@ export class AgentRuntime {
         streamedText = "";
         const deepGeneration = streamText({
           model: modelMetrics.wrap(this.options.model, "deep", deepToolIds.length),
-          system: SYSTEM_PROMPT_DEEP,
+          system: systemPromptWithSkills(SYSTEM_PROMPT_DEEP, skillSummary),
           messages: phase1Messages,
           tools: deepTools,
           stopWhen: stepCountIs(maxDeepRounds),
@@ -508,7 +512,7 @@ export class AgentRuntime {
             "final",
             Object.keys(singleTools).length
           ),
-          system: SYSTEM_PROMPT_FINAL,
+          system: systemPromptWithSkills(SYSTEM_PROMPT_FINAL, skillSummary),
           messages: this.prepareContextMessages(
             "final",
             request,

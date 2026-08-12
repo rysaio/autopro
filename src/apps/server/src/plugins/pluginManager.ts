@@ -1,36 +1,27 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import type {
   PluginSummary,
+  SkillSummary,
   ToolClass,
   ToolRisk,
-  ToolRoutingHints,
-  ToolSchema
+  ToolRoutingHints
 } from "@secops-agent/shared";
-import type { ModelTool } from "../providers/types.js";
-import type { PluginCachePolicy, PluginCachePolicyStore } from "../runtime/pluginCachePolicyStore.js";
-import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../tools/types.js";
+import {
+  connectMcpClient,
+  externalMcpTool,
+  type McpClientHandle,
+  type ResolvedMcpConnection
+} from "../mcp/externalMcp.js";
+import type { PluginCachePolicyStore } from "../runtime/pluginCachePolicyStore.js";
+import type { SecOpsTool } from "../tools/types.js";
 import { ToolRegistry } from "../tools/registry.js";
+import type { PluginSkillSource } from "../skills/catalog.js";
 
 // ── 类型定义 ──
 
-export interface ResolvedMcpServer {
-  name: string;
-  command: string;
-  args: string[];
-  cwd: string;
-  env: Record<string, string>;
-}
-
-/** 可注入的 MCP 客户端句柄（测试用假实现，生产用 SDK Client）。 */
-export interface McpClientHandle {
-  listTools(): Promise<Tool[]>;
-  callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
-  close(): Promise<void>;
-}
+export type ResolvedMcpServer = ResolvedMcpConnection;
+export type { McpClientHandle };
 
 export interface PluginManagerOptions {
   pluginsDir: string;
@@ -44,26 +35,42 @@ export interface PluginManagerOptions {
 interface PluginManifestFile {
   name?: unknown;
   version?: unknown;
+  description?: unknown;
+  skills?: unknown;
   mcpServers?: unknown;
   keywords?: unknown;
   routing?: unknown;
 }
 
 interface McpServerConfigFile {
+  type?: unknown;
   command?: unknown;
   args?: unknown;
+  url?: unknown;
+  headers?: unknown;
+  httpHeaders?: unknown;
+  envHttpHeaders?: unknown;
+  env_http_headers?: unknown;
+  bearerTokenEnvVar?: unknown;
+  bearer_token_env_var?: unknown;
 }
 
 interface PluginState {
   id: string;
   name: string;
   version: string;
-  status: "loaded" | "error";
+  description: string;
+  status: "loaded" | "degraded" | "error";
   toolCount: number;
   error?: string;
-  client?: McpClientHandle;
+  loadErrors: string[];
+  pluginRoot: string;
+  skillsRoot?: string;
+  skills: SkillSummary[];
+  clients: McpClientHandle[];
+  mcpServers: NonNullable<PluginSummary["mcpServers"]>;
   /** Host-assigned load generation; bumped on every successful load/reload. */
-  generation?: number;
+  generation: number;
 }
 
 // Codex 插件规范：manifest 为 .codex-plugin/plugin.json，mcpServers 字段指向
@@ -71,7 +78,7 @@ interface PluginState {
 const MANIFEST_CANDIDATES = [".codex-plugin/plugin.json"];
 
 // 插件自带 MCP server 的 action 开关：注入 true 让插件放行，动作审批统一由
-// 主服务 ToolRegistry.decidePolicy 把守（stdio 私有点对点，外部无法绕过）。
+// 主服务 ToolRegistry.decidePolicy 把守（stdio 与 HTTP 服务同样受主服务约束）。
 const ACTION_ALLOW_ENV: Record<string, string> = {
   WAZUH_MCP_ALLOW_ACTIONS: "true",
   SHUFFLE_MCP_ALLOW_ACTIONS: "true"
@@ -79,13 +86,14 @@ const ACTION_ALLOW_ENV: Record<string, string> = {
 
 /**
  * 插件管理器：扫描 runtime/plugins/<name>/，按 Claude Code / Codex 插件形态
- * （manifest + .mcp.json）spawn 插件自带 MCP server，把 listTools 结果注册为
- * 主服务的 SecOpsTool。load()/reload() 实现“安装后重新加载一次即可 reach”。
+ * （manifest + .mcp.json）连接插件自带 MCP server（stdio 或 streamable-http），
+ * 把 listTools 结果注册为主服务的 SecOpsTool。load()/reload() 实现“安装后
+ * 重新加载一次即可 reach”。
  */
 export class PluginManager {
   private readonly plugins = new Map<string, PluginState>();
   private nextGeneration = 1;
-  /** reload 互斥：并发 reload/策略变更合并为一次串行执行，避免 registerTools 交错冲突。 */
+  /** reload 互斥：并发 reload 合并为一次串行执行，避免 registerTools 交错冲突。 */
   private reloadInFlight: Promise<void> | undefined;
 
   constructor(private readonly options: PluginManagerOptions) {}
@@ -103,8 +111,7 @@ export class PluginManager {
     }
   }
 
-  /** 断开全部已加载插件连接、移除其工具，再重新扫描加载（无需重启服务）。
-   *  并发调用共享同一次执行（合并），保证串行且不交错。 */
+  /** 断开全部已加载插件连接、移除其工具，再重新扫描加载（无需重启服务）。 */
   reload(): Promise<void> {
     if (this.reloadInFlight) {
       return this.reloadInFlight;
@@ -124,15 +131,16 @@ export class PluginManager {
 
   /** 断开全部插件 MCP 连接并从 registry 移除其工具，同时立即回收其缓存条目。 */
   async disconnectAll(): Promise<void> {
-    this.options.registry.unregisterExternalTools();
-    const clients = [...this.plugins.values()].map((plugin) => plugin.client).filter(Boolean);
+    this.options.registry.unregisterExternalTools("plugins");
+    const clients: McpClientHandle[] = [];
     for (const plugin of this.plugins.values()) {
-      if (plugin.id) {
+      if (plugin.generation > 0) {
         this.options.registry.invalidateCacheNamespace(pluginCacheNamespace(plugin.id));
       }
+      clients.push(...plugin.clients);
     }
     this.plugins.clear();
-    await Promise.allSettled(clients.map((client) => client?.close()));
+    await Promise.allSettled(clients.map((client) => client.close()));
   }
 
   status(): PluginSummary[] {
@@ -140,10 +148,28 @@ export class PluginManager {
       id: plugin.id,
       name: plugin.name,
       version: plugin.version,
+      description: plugin.description,
       status: plugin.status,
       toolCount: plugin.toolCount,
+      skillCount: plugin.skills.length,
+      mcpServers: plugin.mcpServers,
       ...(plugin.error ? { error: plugin.error } : {})
     }));
+  }
+
+  skillSources(): PluginSkillSource[] {
+    return [...this.plugins.values()].flatMap((plugin) => plugin.skillsRoot ? [{
+      pluginId: plugin.id,
+      pluginRoot: plugin.pluginRoot,
+      skillsRoot: plugin.skillsRoot
+    }] : []);
+  }
+
+  applySkillResults(skills: SkillSummary[]): void {
+    for (const plugin of this.plugins.values()) {
+      plugin.skills = skills.filter((skill) => skill.pluginId === plugin.id);
+      refreshPluginStatus(plugin);
+    }
   }
 
   private async loadPlugin(pluginId: string): Promise<void> {
@@ -155,62 +181,98 @@ export class PluginManager {
     }
     const pluginKeywords = toValidatedTags(manifest.keywords);
     const pluginRouting = toRoutingHints(manifest.routing);
+    const loadErrors: string[] = [];
+    const skillsRoot = typeof manifest.skills === "string" && manifest.skills.trim()
+      ? path.resolve(dir, manifest.skills)
+      : undefined;
+    if (manifest.skills !== undefined && !skillsRoot) {
+      loadErrors.push("Plugin skills declaration must be a non-empty path string");
+    }
     const mcpServers = readMcpServerConfigs(dir, manifest);
     const serverNames = Object.keys(mcpServers);
-    if (serverNames.length === 0) {
-      this.setError(pluginId, "Plugin declares no MCP servers");
-      return;
+    if (serverNames.length === 0 && (
+      manifest.mcpServers !== undefined || existsSync(path.join(dir, ".mcp.json"))
+    )) {
+      loadErrors.push("Plugin MCP configuration contains no valid servers");
     }
-    // 取插件声明的第一个 MCP server（插件通常只声明一个）
-    const serverName = serverNames[0] as string;
-    const config = mcpServers[serverName] as McpServerConfigFile;
-    const resolved: ResolvedMcpServer = {
-      name: serverName,
-      command: config.command as string,
-      args: Array.isArray(config.args) ? config.args.map(String) : [],
-      cwd: dir,
-      env: buildSpawnEnv(this.options.env ?? process.env)
-    };
-    let client: McpClientHandle | undefined;
-    try {
-      client = this.options.createClient
-        ? await this.options.createClient(resolved, pluginId)
-        : await connectStdioClient(resolved);
-      const tools = await client.listTools();
-      const generation = this.nextGeneration++;
-      const secOpsTools = tools.map((tool) => {
-        const meta = tool._meta ?? {};
-        const manifestId = typeof meta.manifestId === "string" && meta.manifestId.length > 0
-          ? meta.manifestId
-          : `${pluginId}.${tool.name}`;
-        const cachePolicy = this.options.cachePolicyStore?.policyFor(manifestId);
-        return mcpToolToSecOpsTool(
-          pluginId,
-          generation,
-          tool,
-          (args) => client!.callTool(tool.name, args),
-          cachePolicy,
-          pluginKeywords,
-          pluginRouting
-        );
-      });
-      this.options.registry.registerTools(secOpsTools);
-      this.plugins.set(pluginId, {
-        id: pluginId,
-        name: manifest.name,
-        version: manifest.version ?? "",
-        status: "loaded",
-        toolCount: tools.length,
-        client,
-        generation
-      });
-    } catch (error) {
-      // 注册失败或 listTools 失败：释放已建立的连接，避免 MCP 子进程泄漏
-      if (client) {
-        await client.close().catch(() => undefined);
+    const clients: McpClientHandle[] = [];
+    const serverStates: NonNullable<PluginSummary["mcpServers"]> = [];
+    let toolCount = 0;
+    for (const serverName of serverNames) {
+      const config = mcpServers[serverName] as McpServerConfigFile;
+      let client: McpClientHandle | undefined;
+      let resolved: ResolvedMcpServer | undefined;
+      try {
+        resolved = resolveMcpServer(serverName, config, dir, this.options.env ?? process.env);
+        client = this.options.createClient
+          ? await this.options.createClient(resolved, pluginId)
+          : await connectMcpClient(resolved);
+        const connectedClient = client;
+        const tools = await connectedClient.listTools();
+        const generation = this.nextGeneration++;
+        const adaptedTools: SecOpsTool[] = tools.map((tool) => {
+          const meta = tool._meta ?? {};
+          const routing = toRoutingHints(meta.routing) ?? pluginRouting;
+          const manifestId = typeof meta.manifestId === "string" && meta.manifestId.length > 0
+            ? meta.manifestId
+            : `${pluginId}.${serverName}.${tool.name}`;
+          const cachePolicy = this.options.cachePolicyStore?.policyFor(manifestId);
+          const resultCache = cachePolicy && isCacheEligible(tool, toToolClass(meta.toolClass, tool))
+            ? {
+                version: `plugin:${pluginId}:gen${generation}`,
+                dataSource: pluginId,
+                ttlMs: cachePolicy.ttlMs,
+                namespace: pluginCacheNamespace(pluginId)
+              }
+            : undefined;
+          return externalMcpTool({
+            sourceId: `${pluginId}.${serverName}`,
+            manifestId,
+            tags: uniqueStrings([
+              pluginId,
+              ...pluginKeywords,
+              ...toValidatedTags(meta.tags),
+              ...derivedAnnotationTags(tool)
+            ]),
+            ...(routing ? { routing } : {}),
+            ...(resultCache ? { resultCache } : {})
+          }, tool, (args) => connectedClient.callTool(tool.name, args));
+        });
+        this.options.registry.registerTools(adaptedTools, "plugins");
+        clients.push(connectedClient);
+        toolCount += adaptedTools.length;
+        serverStates.push(pluginMcpServerSummary(serverName, resolved, "loaded", adaptedTools.length));
+      } catch (error) {
+        await client?.close().catch(() => undefined);
+        serverStates.push(pluginMcpServerSummary(
+          serverName,
+          resolved,
+          "error",
+          0,
+          error instanceof Error ? error.message : String(error)
+        ));
       }
-      this.setError(pluginId, error instanceof Error ? error.message : String(error));
     }
+    const state: PluginState = {
+      id: pluginId,
+      name: manifest.name,
+      version: manifest.version ?? "",
+      description: manifest.description ?? "",
+      status: "error",
+      toolCount,
+      loadErrors,
+      pluginRoot: dir,
+      ...(skillsRoot ? { skillsRoot } : {}),
+      skills: [],
+      clients,
+      mcpServers: serverStates,
+      generation: clients.length > 0 ? this.nextGeneration - 1 : 0
+    };
+    if (!skillsRoot && serverNames.length === 0 && loadErrors.length === 0) {
+      state.loadErrors.push("Plugin declares no skills or MCP servers");
+    }
+    refreshPluginStatus(state);
+    this.plugins.set(pluginId, state);
   }
 
   private setError(pluginId: string, message: string): void {
@@ -219,19 +281,54 @@ export class PluginManager {
       id: pluginId,
       name: existing?.name ?? pluginId,
       version: existing?.version ?? "",
+      description: existing?.description ?? "",
       status: "error",
       toolCount: 0,
+      loadErrors: [message],
+      pluginRoot: path.join(this.options.pluginsDir, pluginId),
+      skills: [],
+      clients: [],
+      mcpServers: [],
+      generation: 0,
       error: message
     };
     this.plugins.set(pluginId, state);
   }
 }
 
+function refreshPluginStatus(plugin: PluginState): void {
+  const errors = [
+    ...plugin.loadErrors,
+    ...plugin.mcpServers
+      .filter((server) => server.status === "error")
+      .map((server) => `${server.name}: ${server.error ?? "connection failed"}`),
+    ...plugin.skills
+      .filter((skill) => skill.status === "error")
+      .map((skill) => `${skill.name}: ${skill.error ?? "load failed"}`)
+  ];
+  const hasUsableContent = plugin.clients.length > 0 || plugin.skills.some((skill) => skill.status === "loaded");
+  plugin.status = hasUsableContent ? (errors.length ? "degraded" : "loaded") : "error";
+  if (!hasUsableContent && errors.length === 0) {
+    errors.push("Plugin has no usable skills or MCP servers");
+  }
+  if (errors.length) {
+    plugin.error = errors.join("; ");
+  } else {
+    delete plugin.error;
+  }
+}
+
 // ── manifest 与 MCP 配置读取 ──
 
-function readPluginManifest(
-  dir: string
-): { name: string; version?: string; mcpServers?: unknown; keywords?: string[]; routing?: ToolRoutingHints } | undefined {
+function readPluginManifest(dir: string): {
+  name: string;
+  version?: string;
+  description?: string;
+  skills?: unknown;
+  mcpServers?: unknown;
+  keywords?: string[];
+  routing?: ToolRoutingHints;
+} | undefined {
   for (const relative of MANIFEST_CANDIDATES) {
     const manifestPath = path.join(dir, relative);
     if (!existsSync(manifestPath)) {
@@ -255,6 +352,8 @@ function readPluginManifest(
     return {
       name: manifest.name,
       ...(typeof manifest.version === "string" ? { version: manifest.version } : {}),
+      ...(typeof manifest.description === "string" ? { description: manifest.description } : {}),
+      ...(manifest.skills !== undefined ? { skills: manifest.skills } : {}),
       ...(manifest.mcpServers !== undefined ? { mcpServers: manifest.mcpServers } : {}),
       ...(keywords.length > 0 ? { keywords } : {}),
       ...(routing ? { routing } : {})
@@ -295,8 +394,10 @@ function readMcpServerConfigs(
         continue;
       }
       const cfg = config as McpServerConfigFile;
-      if (typeof cfg.command === "string" && cfg.command.length > 0) {
-        result[name] = { command: cfg.command, ...(Array.isArray(cfg.args) ? { args: cfg.args } : {}) };
+      const hasCommand = typeof cfg.command === "string" && cfg.command.length > 0;
+      const hasUrl = typeof cfg.url === "string" && cfg.url.trim().length > 0 && isHttpTransport(cfg.type);
+      if (hasCommand || hasUrl) {
+        result[name] = { ...cfg };
       }
     }
     if (Object.keys(result).length > 0) {
@@ -304,6 +405,130 @@ function readMcpServerConfigs(
     }
   }
   return {};
+}
+
+function pluginMcpServerSummary(
+  name: string,
+  resolved: ResolvedMcpServer | undefined,
+  status: "loaded" | "error",
+  toolCount: number,
+  error?: string
+): NonNullable<PluginSummary["mcpServers"]>[number] {
+  return {
+    name,
+    status,
+    toolCount,
+    ...(resolved ? { transport: resolved.transport } : {}),
+    ...(resolved?.transport === "streamable-http"
+      ? { url: resolved.url, headerNames: Object.keys(resolved.headers).sort() }
+      : {}),
+    ...(resolved?.transport === "stdio"
+      ? { command: resolved.command, args: resolved.args }
+      : {}),
+    ...(error ? { error } : {})
+  };
+}
+
+function resolveMcpServer(
+  name: string,
+  config: McpServerConfigFile,
+  pluginRoot: string,
+  env: NodeJS.ProcessEnv
+): ResolvedMcpServer {
+  if (typeof config.command === "string" && config.command.length > 0) {
+    return {
+      transport: "stdio",
+      name,
+      command: config.command,
+      args: Array.isArray(config.args) ? config.args.map(String) : [],
+      cwd: pluginRoot,
+      env: buildSpawnEnv(env)
+    };
+  }
+  const rawUrl = typeof config.url === "string" ? config.url.trim() : "";
+  if (!rawUrl) {
+    throw new Error(`MCP server ${name} must declare command or url`);
+  }
+  return {
+    transport: "streamable-http",
+    name,
+    url: normalizeHttpUrl(rawUrl),
+    headers: buildHttpHeaders(config, env)
+  };
+}
+
+function isHttpTransport(type: unknown): boolean {
+  if (type === undefined) {
+    return true;
+  }
+  return typeof type === "string" && (type.toLowerCase() === "http" || type.toLowerCase() === "streamable-http");
+}
+
+function normalizeHttpUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid MCP server URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`MCP server URL must use http or https: ${rawUrl}`);
+  }
+  return parsed.toString();
+}
+
+function buildHttpHeaders(config: McpServerConfigFile, env: NodeJS.ProcessEnv): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(stringRecord(config.headers ?? config.httpHeaders))) {
+    const resolved = resolveHeaderValue(value, env);
+    if (resolved !== undefined) {
+      headers[key] = resolved;
+    }
+  }
+  for (const [key, envVar] of Object.entries(stringRecord(config.envHttpHeaders ?? config.env_http_headers))) {
+    const value = env[envVar];
+    if (typeof value === "string" && value.length > 0) {
+      headers[key] = value;
+    }
+  }
+  const bearerTokenEnvVar = optionalString(config.bearerTokenEnvVar) ?? optionalString(config.bearer_token_env_var);
+  if (bearerTokenEnvVar) {
+    const token = env[bearerTokenEnvVar];
+    if (typeof token === "string" && token.length > 0) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "string") {
+      result[key] = entry;
+    }
+  }
+  return result;
+}
+
+function resolveHeaderValue(value: string, env: NodeJS.ProcessEnv): string | undefined {
+  let unresolved = false;
+  const resolved = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, key: string) => {
+    const replacement = env[key];
+    if (replacement === undefined || replacement === "") {
+      unresolved = true;
+      return "";
+    }
+    return replacement;
+  });
+  return unresolved ? undefined : resolved;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function buildSpawnEnv(base: NodeJS.ProcessEnv): Record<string, string> {
@@ -319,150 +544,7 @@ function buildSpawnEnv(base: NodeJS.ProcessEnv): Record<string, string> {
   return env;
 }
 
-async function connectStdioClient(server: ResolvedMcpServer): Promise<McpClientHandle> {
-  const client = new Client({ name: "secops-agent-host", version: "0.1.0" });
-  const transport = new StdioClientTransport({
-    command: server.command,
-    args: server.args,
-    cwd: server.cwd,
-    env: server.env,
-    stderr: "pipe"
-  });
-  await client.connect(transport);
-  return {
-    listTools: async () => {
-      const result = await client.listTools();
-      return result.tools;
-    },
-    callTool: async (name, args): Promise<CallToolResult> => {
-      const result = await client.callTool({ name, arguments: args });
-      // SDK 返回内联结构（与 CallToolResult 形状一致），此处显式断言
-      return result as CallToolResult;
-    },
-    close: async () => {
-      await client.close();
-    }
-  };
-}
-
-// ── MCP 工具 → SecOpsTool 适配 ──
-
-function mcpToolToSecOpsTool(
-  pluginId: string,
-  generation: number,
-  tool: Tool,
-  call: (args: Record<string, unknown>) => Promise<CallToolResult>,
-  cachePolicy?: PluginCachePolicy,
-  pluginTags: string[] = [],
-  pluginRouting?: ToolRoutingHints
-): SecOpsTool {
-  const meta = tool._meta ?? {};
-  const manifestId = typeof meta.manifestId === "string" && meta.manifestId.length > 0
-    ? meta.manifestId
-    : `${pluginId}.${tool.name}`;
-  const schema = toToolSchema(tool.inputSchema);
-  const toolClass = toToolClass(meta.toolClass);
-  const routing = toRoutingHints(meta.routing) ?? pluginRouting;
-  const tags = uniqueStrings([
-    pluginId,
-    ...pluginTags,
-    ...toValidatedTags(meta.tags),
-    ...derivedAnnotationTags(tool)
-  ]);
-  // 仅当 host 策略显式启用且工具不是 action、未被 MCP 注解标记为显式非只读时注入缓存策略。
-  // MCP readOnly/idempotent 注解只用于拒绝 unsafe 策略，绝不自动启用缓存。
-  const resultCache = cachePolicy && isCacheEligible(tool, toolClass)
-    ? {
-        version: `plugin:${pluginId}:gen${generation}`,
-        dataSource: pluginId,
-        ttlMs: cachePolicy.ttlMs,
-        namespace: pluginCacheNamespace(pluginId)
-      }
-    : undefined;
-  return {
-    apiName: tool.name,
-    manifest: {
-      id: manifestId,
-      skillPackId: pluginId,
-      name: typeof tool.title === "string" && tool.title.length > 0 ? tool.title : tool.name,
-      description: tool.description ?? "",
-      toolClass,
-      risk: toToolRisk(meta.risk),
-      // 缺失/无效的 deferLoading 默认按需（true）：未知插件工具不得因此变成常驻。
-      deferLoading: meta.deferLoading !== false,
-      inputSchema: schema,
-      tags,
-      mcpCompatible: true,
-      ...(routing ? { routing } : {}),
-      ...(resultCache ? { resultCache } : {})
-    },
-    toModelTool(): ModelTool {
-      return {
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description ?? "",
-          parameters: schema as unknown as Record<string, unknown>
-        }
-      };
-    },
-    async execute(args: Record<string, unknown>, _context: ToolContext): Promise<ToolExecutionResult> {
-      const result = await call(args);
-      return parseCallResult(result);
-    }
-  };
-}
-
-function parseCallResult(result: CallToolResult): ToolExecutionResult {
-  const text = result.content
-    .filter((content): content is Extract<typeof content, { type: "text" }> => content.type === "text")
-    .map((content) => content.text)
-    .join("\n");
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const record = parsed as Record<string, unknown>;
-      return {
-        output: "result" in record ? record.result : record,
-        ...(Array.isArray(record.artifacts) ? { artifacts: record.artifacts } : {})
-      };
-    }
-    return { output: parsed };
-  } catch {
-    return { output: text };
-  }
-}
-
-function toToolSchema(inputSchema: unknown): ToolSchema {
-  if (inputSchema && typeof inputSchema === "object" && !Array.isArray(inputSchema)) {
-    const schema = inputSchema as Record<string, unknown>;
-    if (schema.type === "object" && schema.properties && typeof schema.properties === "object") {
-      const result: ToolSchema = {
-        type: "object",
-        properties: schema.properties as Record<string, unknown>
-      };
-      if (Array.isArray(schema.required)) {
-        result.required = schema.required.map(String);
-      }
-      if (typeof schema.additionalProperties === "boolean") {
-        result.additionalProperties = schema.additionalProperties;
-      }
-      return result;
-    }
-  }
-  return { type: "object", properties: {} };
-}
-
-function toToolClass(value: unknown): ToolClass {
-  return value === "perception" || value === "reasoning" || value === "evidence" || value === "action"
-    ? value
-    : "perception";
-}
-
-function toToolRisk(value: unknown): ToolRisk {
-  // risk 缺失时默认 high（保守）：插件未声明风险即按高危 action 处理，仍需审批
-  return value === "low" || value === "medium" || value === "high" ? value : "high";
-}
+// ── 路由与缓存元数据校验/适配 ──
 
 /**
  * Validates optional routing metadata. Missing or malformed values return
@@ -497,9 +579,9 @@ function toValidatedTags(value: unknown): string[] {
 }
 
 /** Derives safe routing tags from standard MCP tool annotations (compatible metadata). */
-function derivedAnnotationTags(tool: Tool): string[] {
-  const meta = tool._meta ?? {};
-  const annotations = (tool as { annotations?: Record<string, unknown> }).annotations ?? {};
+function derivedAnnotationTags(tool: { _meta?: unknown; annotations?: unknown }): string[] {
+  const meta = (tool._meta ?? {}) as Record<string, unknown>;
+  const annotations = (tool.annotations ?? {}) as Record<string, unknown>;
   const tags: string[] = [];
   if (booleanHint(meta.readOnlyHint ?? annotations.readOnlyHint)) {
     tags.push("read-only");
@@ -526,17 +608,39 @@ function pluginCacheNamespace(pluginId: string): string {
   return `plugin:${pluginId}`;
 }
 
+function toToolClass(value: unknown, tool: { annotations?: unknown }): ToolClass {
+  if (value === "perception" || value === "reasoning" || value === "evidence" || value === "action") {
+    return value;
+  }
+  const annotations = (tool.annotations ?? {}) as Record<string, unknown>;
+  if (annotations.readOnlyHint === true) {
+    return "perception";
+  }
+  return "action";
+}
+
+function toToolRisk(value: unknown, tool: { annotations?: unknown }): ToolRisk {
+  if (value === "low" || value === "medium" || value === "high") {
+    return value;
+  }
+  const annotations = (tool.annotations ?? {}) as Record<string, unknown>;
+  return annotations.readOnlyHint === true && annotations.destructiveHint !== true ? "low" : "high";
+}
+
 /**
  * A plugin tool may be cached only when it is not an action and is not
  * explicitly annotated non-read-only. readOnly/idempotent hints never enable
  * caching by themselves; the host policy must opt in first.
  */
-function isCacheEligible(tool: Tool, toolClass: ToolClass): boolean {
+function isCacheEligible(
+  tool: { _meta?: unknown; annotations?: unknown },
+  toolClass: ToolClass
+): boolean {
   if (toolClass === "action") {
     return false;
   }
-  const meta = tool._meta ?? {};
-  const annotations = (tool as { annotations?: Record<string, unknown> }).annotations ?? {};
+  const meta = (tool._meta ?? {}) as Record<string, unknown>;
+  const annotations = (tool.annotations ?? {}) as Record<string, unknown>;
   const readOnly = meta.readOnlyHint ?? annotations.readOnlyHint ?? (tool as { readOnlyHint?: unknown }).readOnlyHint;
   const idempotent = meta.idempotentHint ?? annotations.idempotentHint ?? (tool as { idempotentHint?: unknown }).idempotentHint;
   return readOnly !== false && idempotent !== false;

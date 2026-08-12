@@ -2,7 +2,7 @@ import type { WazuhIndexerClient, DemoWazuhIndexerClient } from "../core/indexer
 import type { WazuhClient, DemoWazuhClient } from "../core/wazuhClient.js";
 import { networkExposureMap, ruleHitsSummary } from "../workflows/securityOperations.js";
 import { artifact } from "./helpers.js";
-import type { ModelTool, SkillManifest, ToolClass, ToolRisk, WazuhExecutionContext, WazuhExecutionResult, WazuhPluginTool } from "./types.js";
+import type { ModelTool, ToolManifest, ToolClass, ToolRisk, WazuhExecutionContext, WazuhExecutionResult, WazuhPluginTool } from "./types.js";
 
 type WazuhClientLike = Pick<WazuhClient, keyof WazuhClient>;
 type WazuhIndexerClientLike = Pick<WazuhIndexerClient, keyof WazuhIndexerClient>;
@@ -12,7 +12,7 @@ type ToolHandler = (args: Record<string, unknown>, context: WazuhExecutionContex
 class WazuhTool implements WazuhPluginTool {
   constructor(
     readonly apiName: string,
-    readonly manifest: SkillManifest,
+    readonly manifest: ToolManifest,
     private readonly handler: ToolHandler
   ) {}
 
@@ -111,11 +111,10 @@ function manifest(input: {
   toolClass: ToolClass;
   risk: ToolRisk;
   tags: string[];
-  inputSchema: SkillManifest["inputSchema"];
-}): SkillManifest {
+  inputSchema: ToolManifest["inputSchema"];
+}): ToolManifest {
   return {
     ...input,
-    skillPackId: "secops-wazuh",
     deferLoading: true,
     mcpCompatible: true
   };

@@ -17,8 +17,10 @@ export interface AppConfig {
   agentRoutingMode: AgentRoutingMode;
   sandboxRoot: string;
   workspaceRoot: string;
+  skillsDir: string;
   runtimeConfigPath: string;
   modelConfigPath: string;
+  mcpConfigPath: string;
   toolVisibilityPath: string;
   auditLogPath: string;
   approvalStorePath: string;
@@ -57,9 +59,11 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     actionLevel,
     agentRoutingMode: parseAgentRoutingMode(env.SECOPS_AGENT_ROUTING_MODE),
     sandboxRoot: resolveWorkspacePath(env.SECOPS_SANDBOX_ROOT, workspaceRoot, path.join("runtime", "sandbox")),
+    skillsDir: resolveWorkspacePath(env.SECOPS_SKILLS_DIR, workspaceRoot, path.join("runtime", "skills")),
     workspaceRoot,
     runtimeConfigPath: resolveWorkspacePath(env.SECOPS_RUNTIME_CONFIG_PATH, workspaceRoot, path.join("runtime", "config", "settings.json")),
     modelConfigPath: resolveWorkspacePath(env.SECOPS_MODEL_CONFIG_PATH, workspaceRoot, path.join("runtime", "config", "model.json")),
+    mcpConfigPath: resolveWorkspacePath(env.SECOPS_MCP_CONFIG_PATH, workspaceRoot, path.join("runtime", "config", "mcp.json")),
     toolVisibilityPath: resolveWorkspacePath(env.SECOPS_TOOL_VISIBILITY_PATH, workspaceRoot, path.join("runtime", "config", "toolVisibility.json")),
     auditLogPath: resolveWorkspacePath(env.SECOPS_AUDIT_LOG_PATH, workspaceRoot, path.join("runtime", "audit", "events.jsonl")),
     approvalStorePath: resolveWorkspacePath(env.SECOPS_APPROVAL_STORE_PATH, workspaceRoot, path.join("runtime", "approvals", "pending.json")),

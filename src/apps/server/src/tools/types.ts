@@ -2,7 +2,7 @@ import type {
   AutomationLevel,
   EvidenceArtifact,
   PermissionMode,
-  SkillManifest,
+  ToolManifest,
   ToolInvocation
 } from "@secops-agent/shared";
 import type { ModelTool } from "../providers/types.js";
@@ -25,7 +25,7 @@ export interface ToolExecutionResult {
 }
 
 export interface SecOpsTool {
-  manifest: SkillManifest;
+  manifest: ToolManifest;
   apiName: string;
   toModelTool(): ModelTool;
   execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolExecutionResult>;

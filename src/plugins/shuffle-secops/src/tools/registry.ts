@@ -1,6 +1,6 @@
 import { shuffleConfigStatus } from "../core/configStatus.js";
 import { ShuffleClient, DemoShuffleClient, validatedUrl } from "../core/shuffleClient.js";
-import type { ModelTool, ShuffleExecutionContext, ShuffleExecutionResult, ShufflePluginTool, SkillManifest, ToolClass, ToolRisk } from "./types.js";
+import type { ModelTool, ShuffleExecutionContext, ShuffleExecutionResult, ShufflePluginTool, ToolManifest, ToolClass, ToolRisk } from "./types.js";
 import { artifact, boundedInteger, optionalString, parseJsonObject, pickSummary, requireString, responseItems } from "./helpers.js";
 
 type ShuffleClientLike = Pick<ShuffleClient, "endpointHost" | "health" | "listWorkflows" | "getWorkflow" | "executeWorkflow" | "listWorkflowExecutions" | "getExecutionResult" | "listApps" | "callShuffleMcp" | "triggerWebhook">;
@@ -10,7 +10,7 @@ type ToolHandler = (args: Record<string, unknown>, context: ShuffleExecutionCont
 class ShuffleTool implements ShufflePluginTool {
   constructor(
     readonly apiName: string,
-    readonly manifest: SkillManifest,
+    readonly manifest: ToolManifest,
     private readonly handler: ToolHandler
   ) {}
 
@@ -284,7 +284,7 @@ export function createShuffleTools(clientFactory: () => ShuffleClientLike = memo
       manifest({
         id: "shuffle.apps.list",
         name: "List Shuffle Apps",
-        description: "List Shuffle apps for workflow capability discovery.",
+        description: "List Shuffle apps available for workflow integration.",
         toolClass: "perception",
         risk: "low",
         tags: ["shuffle", "apps", "read-only"],
@@ -562,11 +562,10 @@ function manifest(input: {
   toolClass: ToolClass;
   risk: ToolRisk;
   tags: string[];
-  inputSchema: SkillManifest["inputSchema"];
-}): SkillManifest {
+  inputSchema: ToolManifest["inputSchema"];
+}): ToolManifest {
   return {
     ...input,
-    skillPackId: "secops-shuffle",
     deferLoading: true,
     mcpCompatible: true
   };

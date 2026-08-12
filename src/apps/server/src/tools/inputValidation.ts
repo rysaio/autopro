@@ -1,11 +1,11 @@
-import type { SkillManifest, ToolSchema } from "@secops-agent/shared";
+import type { ToolManifest, ToolSchema } from "@secops-agent/shared";
 
 export interface ToolInputValidationResult {
   ok: boolean;
   error?: string;
 }
 
-export function validateToolInput(manifest: SkillManifest, args: Record<string, unknown>): ToolInputValidationResult {
+export function validateToolInput(manifest: ToolManifest, args: Record<string, unknown>): ToolInputValidationResult {
   const schema = manifest.inputSchema;
   if (schema.type !== "object") {
     return { ok: false, error: `Unsupported input schema root for ${manifest.id}` };

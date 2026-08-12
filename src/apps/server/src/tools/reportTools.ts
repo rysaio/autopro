@@ -1,6 +1,6 @@
-﻿import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { EvidenceArtifact, SkillManifest, ToolClass, ToolRisk } from "@secops-agent/shared";
+import type { EvidenceArtifact, ToolManifest, ToolClass, ToolRisk } from "@secops-agent/shared";
 import type { ModelTool } from "../providers/types.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "./types.js";
 
@@ -9,7 +9,7 @@ type ToolHandler = (args: Record<string, unknown>, context: ToolContext) => Prom
 class ReportTool implements SecOpsTool {
   constructor(
     readonly apiName: string,
-    readonly manifest: SkillManifest,
+    readonly manifest: ToolManifest,
     private readonly handler: ToolHandler
   ) {}
 
@@ -263,11 +263,10 @@ function reportManifest(input: {
   toolClass: ToolClass;
   risk: ToolRisk;
   tags: string[];
-  inputSchema: SkillManifest["inputSchema"];
-}): SkillManifest {
+  inputSchema: ToolManifest["inputSchema"];
+}): ToolManifest {
   return {
     ...input,
-    skillPackId: "secops-reports",
     deferLoading: true,
     mcpCompatible: true
   };

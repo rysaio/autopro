@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { createWazuhTools } from "../tools/registry.js";
-import type { SkillManifest, WazuhExecutionContext, WazuhPluginTool } from "../tools/types.js";
+import type { ToolManifest, WazuhExecutionContext, WazuhPluginTool } from "../tools/types.js";
 
 export interface WazuhMcpServerOptions {
   tools?: WazuhPluginTool[];
@@ -66,7 +66,7 @@ export function wazuhMcpContextFromEnv(env: NodeJS.ProcessEnv = process.env): Wa
   };
 }
 
-export function mcpInputSchemaForManifest(manifest: SkillManifest): Record<string, z.ZodType> {
+export function mcpInputSchemaForManifest(manifest: ToolManifest): Record<string, z.ZodType> {
   if (manifest.inputSchema.type !== "object") {
     throw new Error(`Unsupported MCP input schema root for ${manifest.id}`);
   }
@@ -130,7 +130,7 @@ async function executeMcpTool(
   }
 }
 
-function zodForProperty(manifest: SkillManifest, name: string, property: Record<string, unknown>): z.ZodType {
+function zodForProperty(manifest: ToolManifest, name: string, property: Record<string, unknown>): z.ZodType {
   const description = typeof property.description === "string" ? property.description : undefined;
   let schema: z.ZodType;
 

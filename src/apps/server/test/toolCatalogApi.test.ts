@@ -132,25 +132,14 @@ function createSequencedModel(actions: Array<{ tool: string; input?: Record<stri
 }
 
 describe("tool catalog API with plugins", () => {
-  it("exposes plugin tools and skill packs with manifest metadata", async () => {
+  it("exposes plugin tools with manifest metadata", async () => {
     const config = testConfig();
     await installFakePlugin(config.pluginsDir, "wazuh-demo", "Wazuh Demo");
     const app = buildServer(config, { createPluginClient });
 
-    const skillsResponse = await app.inject({ method: "GET", url: "/api/skills" });
-    expect(skillsResponse.statusCode).toBe(200);
-    expect(skillsResponse.json().skills).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "wazuh-demo",
-        name: "wazuh-demo",
-        mcpCompatible: true,
-        tools: ["wazuh.alerts.search", "wazuh.block_ip"]
-      })
-    ]));
-
     const toolsResponse = await app.inject({ method: "GET", url: "/api/tools" });
     expect(toolsResponse.statusCode).toBe(200);
-    const pluginTools = toolsResponse.json().tools.filter((tool: { skillPackId: string }) => tool.skillPackId === "wazuh-demo");
+    const pluginTools = toolsResponse.json().tools.filter((tool: { id: string }) => tool.id.startsWith("wazuh."));
     expect(pluginTools.map((tool: { id: string }) => tool.id)).toEqual(["wazuh.alerts.search", "wazuh.block_ip"]);
     expect(pluginTools.find((tool: { id: string }) => tool.id === "wazuh.block_ip")).toMatchObject({
       toolClass: "action",
@@ -166,6 +155,58 @@ describe("tool catalog API with plugins", () => {
     const pluginsResponse = await app.inject({ method: "GET", url: "/api/plugins" });
     expect(pluginsResponse.json().plugins).toEqual([
       expect.objectContaining({ id: "wazuh-demo", name: "Wazuh Demo", version: "1.0.0", status: "loaded", toolCount: 2 })
+    ]);
+
+    const mcpServersResponse = await app.inject({ method: "GET", url: "/api/mcp/servers" });
+    expect(mcpServersResponse.json().servers).toEqual([
+      expect.objectContaining({
+        id: "plugin:wazuh-demo:wazuh-demo",
+        name: "wazuh-demo",
+        transport: "stdio",
+        status: "connected",
+        toolCount: 2,
+        source: "plugin",
+        pluginId: "wazuh-demo",
+        command: "node"
+      })
+    ]);
+
+    const blockedUpdate = await app.inject({
+      method: "PUT",
+      url: "/api/mcp/servers/plugin:wazuh-demo:wazuh-demo",
+      payload: { enabled: false }
+    });
+    expect(blockedUpdate.statusCode).toBe(400);
+
+    await app.close();
+  });
+
+  it("exposes plugin streamable-http servers in the MCP server API", async () => {
+    const config = testConfig();
+    await installFakePlugin(config.pluginsDir, "http-demo", "HTTP Demo");
+    await writeFile(path.join(config.pluginsDir, "http-demo", ".mcp.json"), JSON.stringify({
+      mcpServers: {
+        "http-demo": {
+          type: "http",
+          url: "http://127.0.0.1:1110/mcp"
+        }
+      }
+    }), "utf8");
+    const app = buildServer(config, { createPluginClient });
+
+    const response = await app.inject({ method: "GET", url: "/api/mcp/servers" });
+    expect(response.json().servers).toEqual([
+      expect.objectContaining({
+        id: "plugin:http-demo:http-demo",
+        name: "http-demo",
+        transport: "streamable-http",
+        status: "connected",
+        toolCount: 1,
+        url: "http://127.0.0.1:1110/mcp",
+        source: "plugin",
+        pluginId: "http-demo",
+        headerNames: []
+      })
     ]);
 
     await app.close();
@@ -187,7 +228,7 @@ describe("tool catalog API with plugins", () => {
     ]);
 
     const toolsResponse = await app.inject({ method: "GET", url: "/api/tools" });
-    const pluginTools = toolsResponse.json().tools.filter((tool: { skillPackId: string }) => tool.skillPackId === "shuffle-demo");
+    const pluginTools = toolsResponse.json().tools.filter((tool: { id: string }) => tool.id.startsWith("shuffle."));
     expect(pluginTools.map((tool: { id: string }) => tool.id)).toEqual(["shuffle.workflow.list"]);
 
     await app.close();

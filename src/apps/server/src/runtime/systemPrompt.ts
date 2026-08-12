@@ -55,3 +55,10 @@ Response style:
 
 // 向后兼容：保留原始 SYSTEM_PROMPT
 export const SYSTEM_PROMPT = SYSTEM_PROMPT_FINAL;
+
+export function systemPromptWithSkills(base: string, skillSummary: string): string {
+  if (!skillSummary) {
+    return base;
+  }
+  return `${base}\n\n${skillSummary}\nSkill bodies are not included in this prompt. Read only the relevant skill with secops_skill_read.`;
+}

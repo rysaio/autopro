@@ -8,12 +8,16 @@ import type {
   AutomationLevel,
   EvidenceArtifact,
   ModelConfigState,
+  McpServerConfigState,
+  McpServerTransport,
   PendingApproval,
   PermissionMode,
+  PluginSummary,
   ProviderStatus,
   RuntimeSettings,
-  SkillPackManifest,
-  SkillManifest,
+  SkillContent,
+  SkillSummary,
+  ToolManifest,
   ToolInvocation
 } from "@secops-agent/shared";
 
@@ -88,14 +92,29 @@ export function updateActionLevel(actionLevel: AutomationLevel): Promise<Runtime
   return postJson<RuntimeSettings>("/api/settings/action-level", { actionLevel });
 }
 
-export async function fetchTools(): Promise<SkillManifest[]> {
-  const result = await getJson<{ tools: SkillManifest[] }>("/api/tools");
+export async function fetchTools(): Promise<ToolManifest[]> {
+  const result = await getJson<{ tools: ToolManifest[] }>("/api/tools");
   return result.tools;
 }
 
-export async function fetchSkills(): Promise<SkillPackManifest[]> {
-  const result = await getJson<{ skills: SkillPackManifest[] }>("/api/skills");
-  return result.skills;
+export function fetchSkills(): Promise<SkillSummary[]> {
+  return getJson<{ skills: SkillSummary[] }>("/api/skills").then((result) => result.skills);
+}
+
+export function fetchPlugins(): Promise<PluginSummary[]> {
+  return getJson<{ plugins: PluginSummary[] }>("/api/plugins").then((result) => result.plugins);
+}
+
+export function fetchSkillContent(id: string): Promise<SkillContent> {
+  return getJson<SkillContent>(`/api/skills/${encodeURIComponent(id)}`);
+}
+
+export function reloadSkills(): Promise<SkillSummary[]> {
+  return postJson<{ skills: SkillSummary[] }>("/api/skills/reload", {}).then((result) => result.skills);
+}
+
+export function reloadPlugins(): Promise<PluginSummary[]> {
+  return postJson<{ plugins: PluginSummary[] }>("/api/plugins/reload", {}).then((result) => result.plugins);
 }
 
 export function runAgent(request: AgentRunRequest): Promise<AgentRun> {
@@ -202,7 +221,7 @@ export function cancelAgentRun(
 
 export interface McpToolSummary {
   name: string;
-  manifest: SkillManifest;
+  manifest: ToolManifest;
 }
 
 export interface McpCallResult {
@@ -213,6 +232,42 @@ export interface McpCallResult {
 export async function fetchMcpTools(): Promise<McpToolSummary[]> {
   const result = await getJson<{ tools: McpToolSummary[] }>("/api/mcp/tools");
   return result.tools;
+}
+
+export interface McpServerInput {
+  name: string;
+  transport: McpServerTransport;
+  enabled: boolean;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+export function fetchMcpServers(): Promise<McpServerConfigState> {
+  return getJson<McpServerConfigState>("/api/mcp/servers");
+}
+
+export function addMcpServer(input: McpServerInput): Promise<McpServerConfigState> {
+  return postJson<McpServerConfigState>("/api/mcp/servers", input);
+}
+
+export function updateMcpServer(id: string, input: Partial<McpServerInput>): Promise<McpServerConfigState> {
+  return putJson<McpServerConfigState>(`/api/mcp/servers/${encodeURIComponent(id)}`, input);
+}
+
+export function removeMcpServer(id: string): Promise<McpServerConfigState> {
+  return deleteJson<McpServerConfigState>(`/api/mcp/servers/${encodeURIComponent(id)}`);
+}
+
+export function reconnectMcpServer(id: string): Promise<McpServerConfigState> {
+  return postJson<McpServerConfigState>(`/api/mcp/servers/${encodeURIComponent(id)}/reconnect`, {});
+}
+
+export function reloadMcpServers(): Promise<McpServerConfigState> {
+  return postJson<McpServerConfigState>("/api/mcp/servers/reload", {});
 }
 // ── 模型配置（启动前：编辑 runtime/config/model.json 后启动；启动后：界面 CRUD / 显式重载）──
 
@@ -272,9 +327,23 @@ export async function fetchAuditEvents(limit = 50): Promise<AgentRunEvent[]> {
   return result.events;
 }
 
-export async function fetchSessions(limit = 50): Promise<AgentSessionSummary[]> {
-  const result = await getJson<{ sessions: AgentSessionSummary[] }>(`/api/sessions?limit=${limit}`);
+export async function fetchSessions(limit = 50, archived = false): Promise<AgentSessionSummary[]> {
+  const result = await getJson<{ sessions: AgentSessionSummary[] }>(
+    `/api/sessions?limit=${limit}&archived=${archived}`
+  );
   return result.sessions;
+}
+
+export function archiveSession(id: string): Promise<{ archived: boolean }> {
+  return postJson<{ archived: boolean }>(`/api/sessions/${encodeURIComponent(id)}/archive`, {});
+}
+
+export function unarchiveSession(id: string): Promise<{ archived: boolean }> {
+  return postJson<{ archived: boolean }>(`/api/sessions/${encodeURIComponent(id)}/unarchive`, {});
+}
+
+export function deleteSession(id: string): Promise<{ deleted: boolean }> {
+  return deleteJson<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(id)}`);
 }
 
 export function fetchSession(id: string): Promise<AgentSessionDetail> {

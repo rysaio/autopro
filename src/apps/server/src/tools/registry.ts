@@ -1,9 +1,8 @@
 import { jsonSchema, type ToolSet } from "ai";
-import type { EvidenceArtifact, SkillManifest, ToolInvocation, ToolInvocationCacheTrace } from "@secops-agent/shared";
+import type { EvidenceArtifact, ToolManifest, ToolInvocation, ToolInvocationCacheTrace } from "@secops-agent/shared";
 import type { ModelToolCall } from "../providers/types.js";
 import { approvalResult, ApprovalStore, type PendingApprovalStore } from "../runtime/approvalStore.js";
 import { ToolCache, type ToolCacheKeyInput } from "../runtime/toolCache.js";
-import { skillPacksFor } from "../skills/catalog.js";
 import { createActionTools } from "./actionTools.js";
 import { isRecoverableToolResult } from "./guidance.js";
 import { validateToolInput } from "./inputValidation.js";
@@ -14,9 +13,8 @@ import type { SecOpsTool, ToolContext, ToolExecutionRecord, ToolTimingScopeFacto
 export class ToolRegistry {
   private readonly byApiName = new Map<string, SecOpsTool>();
   private readonly byManifestId = new Map<string, SecOpsTool>();
-  /** 外部（插件）注册的工具，重载插件时整体移除。 */
-  private readonly externalApiNames = new Set<string>();
-  private readonly externalManifestIds = new Set<string>();
+  /** 外部工具按来源隔离，插件或独立 MCP 重载不会移除对方的工具。 */
+  private readonly externalSources = new Map<string, { apiNames: Set<string>; manifestIds: Set<string> }>();
   private readonly deferLoadingOverrides = new Map<string, boolean>();
 
   constructor(
@@ -35,34 +33,52 @@ export class ToolRegistry {
     }
   }
 
-  /** 注册外部（插件）工具；与已有工具冲突时抛错且不产生任何残留注册。 */
-  registerTools(tools: SecOpsTool[]): void {
+  /** 原子注册一批外部工具；与已有工具或批次内部冲突时不写入任何项目。 */
+  registerTools(tools: SecOpsTool[], source = "external"): void {
+    const apiNames = new Set<string>();
+    const manifestIds = new Set<string>();
     for (const tool of tools) {
-      if (this.byApiName.has(tool.apiName)) {
+      if (this.byApiName.has(tool.apiName) || apiNames.has(tool.apiName)) {
         throw new Error(`Duplicate tool apiName: ${tool.apiName}`);
       }
-      if (this.byManifestId.has(tool.manifest.id)) {
+      if (this.byManifestId.has(tool.manifest.id) || manifestIds.has(tool.manifest.id)) {
         throw new Error(`Duplicate tool manifest id: ${tool.manifest.id}`);
       }
+      apiNames.add(tool.apiName);
+      manifestIds.add(tool.manifest.id);
     }
+    const owned = this.externalSources.get(source) ?? { apiNames: new Set<string>(), manifestIds: new Set<string>() };
     for (const tool of tools) {
       this.byApiName.set(tool.apiName, tool);
       this.byManifestId.set(tool.manifest.id, tool);
-      this.externalApiNames.add(tool.apiName);
-      this.externalManifestIds.add(tool.manifest.id);
+      owned.apiNames.add(tool.apiName);
+      owned.manifestIds.add(tool.manifest.id);
+    }
+    this.externalSources.set(source, owned);
+  }
+
+  /** Register host-owned runtime tools that remain available across external reloads. */
+  registerRuntimeTools(tools: SecOpsTool[]): void {
+    for (const tool of tools) {
+      this.registerInternal(tool);
     }
   }
 
-  /** 移除全部外部（插件）工具，用于插件重载。 */
-  unregisterExternalTools(): void {
-    for (const apiName of this.externalApiNames) {
-      this.byApiName.delete(apiName);
+  /** 移除指定来源；省略来源时保留兼容语义，移除全部外部工具。 */
+  unregisterExternalTools(source?: string): void {
+    const sources = source ? [[source, this.externalSources.get(source)] as const] : [...this.externalSources.entries()];
+    for (const [sourceId, owned] of sources) {
+      if (!owned) {
+        continue;
+      }
+      for (const apiName of owned.apiNames) {
+        this.byApiName.delete(apiName);
+      }
+      for (const manifestId of owned.manifestIds) {
+        this.byManifestId.delete(manifestId);
+      }
+      this.externalSources.delete(sourceId);
     }
-    for (const manifestId of this.externalManifestIds) {
-      this.byManifestId.delete(manifestId);
-    }
-    this.externalApiNames.clear();
-    this.externalManifestIds.clear();
   }
 
   private registerInternal(tool: SecOpsTool): void {
@@ -105,15 +121,11 @@ export class ToolRegistry {
     return this.deferLoadingOverrides.delete(id);
   }
 
-  manifests(): SkillManifest[] {
+  manifests(): ToolManifest[] {
     return [...this.byManifestId.values()].map((tool) => ({
       ...tool.manifest,
       deferLoading: this.deferLoadingOverrides.get(tool.manifest.id) ?? tool.manifest.deferLoading
     }));
-  }
-
-  skillPacks() {
-    return skillPacksFor(this.manifests());
   }
 
   modelTools(enabledManifestIds?: string[]) {
@@ -514,7 +526,7 @@ function invocation(
 }
 
 function createCacheKey(
-  manifest: SkillManifest,
+  manifest: ToolManifest,
   args: Record<string, unknown>,
   context: ToolContext
 ): ToolCacheKeyInput {

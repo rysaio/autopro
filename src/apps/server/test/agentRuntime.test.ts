@@ -13,7 +13,7 @@ import type {
   AuditEvent,
   ChatMessage,
   EvidenceArtifact,
-  SkillManifest,
+  ToolManifest,
   ToolGuidance
 } from "@secops-agent/shared";
 import type { ModelTool } from "../src/providers/types.js";
@@ -600,7 +600,7 @@ class BlockingTextModel implements LanguageModelV3 {
 class TestTool implements SecOpsTool {
   constructor(
     readonly apiName: string,
-    readonly manifest: SkillManifest,
+    readonly manifest: ToolManifest,
     private readonly handler: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolExecutionResult>
   ) {}
 
@@ -620,10 +620,9 @@ class TestTool implements SecOpsTool {
   }
 }
 
-function testManifest(id: string, name: string): SkillManifest {
+function testManifest(id: string, name: string): ToolManifest {
   return {
     id,
-    skillPackId: "test-pack",
     name,
     description: "Test tool.",
     toolClass: "perception",

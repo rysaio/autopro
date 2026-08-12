@@ -1,13 +1,13 @@
 # Shuffle SecOps Plugin
 
-这是可复用的 Shuffle SOAR 工具包，也是 Agent Skills 与 MCP stdio 包装。它是 Shuffle 领域能力的唯一 owner；主应用若需要 Shuffle，只应加薄适配。
+这是独立的 Shuffle SOAR 插件，包含 Agent Skills 与 MCP stdio 集成。它负责 Shuffle 领域实现；主应用若需要 Shuffle，只应加薄适配。
 
-## 当前能力
+## 当前功能
 
 - Shuffle REST API client，使用 `Authorization: Bearer <api key>`。
 - 脱敏配置状态检查与 host-neutral Shuffle tool registry。
 - 工作流查看、执行、执行列表、执行结果读取。
-- Shuffle app 列表，用于能力发现。
+- Shuffle app 列表，用于发现可用集成。
 - Webhook trigger 与 Wazuh alert forwarding helper。
 - Wazuh Integrator XML renderer，辅助把 Wazuh alert 转发到 Shuffle webhook。
 - Shuffle 2.2.1+ 内置 HTTP MCP 调用 helper。

@@ -1,5 +1,6 @@
 import type { EnvironmentStatus } from "@secops-agent/shared";
 import type { PluginManager } from "../plugins/pluginManager.js";
+import type { SkillCatalog } from "../skills/catalog.js";
 import type { ModelConfigStore } from "./modelConfigStore.js";
 import type { RuntimeSettingsStore } from "./runtimeSettings.js";
 
@@ -17,17 +18,20 @@ export class AgentEnvironment {
   constructor(
     private readonly settings: RuntimeSettingsStore,
     private readonly models: ModelConfigStore,
-    private readonly plugins: PluginManager
+    private readonly plugins: PluginManager,
+    private readonly skills: SkillCatalog
   ) {}
 
   /** 启动加载：settings/models 在构造时已从持久层读取，此处补齐插件扫描加载。 */
   async loadAll(): Promise<void> {
     await this.plugins.load();
+    this.reloadSkills();
   }
 
   /** 热更新：各资源按自身语义重载（当前插件需重连，模型/设置写文件即生效）。 */
   async reloadAll(): Promise<void> {
     await this.plugins.reload();
+    this.reloadSkills();
   }
 
   /** 聚合环境状态：模型连接 + 插件外围设施 + 运行时设置。 */
@@ -45,11 +49,16 @@ export class AgentEnvironment {
       },
       plugins: {
         installed: plugins.length,
-        loaded: plugins.filter((plugin) => plugin.status === "loaded").length,
+        loaded: plugins.filter((plugin) => plugin.status === "loaded" || plugin.status === "degraded").length,
         failed: plugins.filter((plugin) => plugin.status === "error").length,
         plugins
       },
       settings: this.settings.get()
     };
+  }
+
+  private reloadSkills(): void {
+    const skills = this.skills.reload(this.plugins.skillSources());
+    this.plugins.applySkillResults(skills);
   }
 }

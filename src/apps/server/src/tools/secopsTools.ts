@@ -1,4 +1,4 @@
-import type { EvidenceArtifact, SkillManifest, ToolClass, ToolRisk } from "@secops-agent/shared";
+import type { EvidenceArtifact, ToolManifest, ToolClass, ToolRisk } from "@secops-agent/shared";
 import type { ModelTool } from "../providers/types.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "./types.js";
 import {
@@ -18,7 +18,7 @@ type ToolHandler = (args: Record<string, unknown>, context: ToolContext) => Prom
 class BasicSecOpsTool implements SecOpsTool {
   constructor(
     readonly apiName: string,
-    readonly manifest: SkillManifest,
+    readonly manifest: ToolManifest,
     private readonly handler: ToolHandler
   ) {}
 
@@ -433,13 +433,12 @@ function manifest(input: {
   toolClass: ToolClass;
   risk: ToolRisk;
   tags: string[];
-  resultCache?: SkillManifest["resultCache"];
-  inputSchema: SkillManifest["inputSchema"];
-}): SkillManifest {
+  resultCache?: ToolManifest["resultCache"];
+  inputSchema: ToolManifest["inputSchema"];
+}): ToolManifest {
   const { resultCache, ...manifestInput } = input;
   return {
     ...manifestInput,
-    skillPackId: "secops-core",
     deferLoading: false,
     mcpCompatible: true,
     ...(resultCache ? { resultCache } : {})

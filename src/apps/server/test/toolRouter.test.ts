@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SkillManifest } from "@secops-agent/shared";
+import type { ToolManifest } from "@secops-agent/shared";
 import type { ModelTool } from "../src/providers/types.js";
 import { toolRouter } from "../src/runtime/toolRouter.js";
 import { ToolRegistry } from "../src/tools/registry.js";
@@ -8,21 +8,20 @@ import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/
 function pluginTool(
   apiName: string,
   manifestId: string,
-  packId: string,
+  sourceTag: string,
   deferLoading = true,
-  overrides: Partial<SkillManifest> = {}
+  overrides: Partial<ToolManifest> = {}
 ): SecOpsTool {
   return {
     apiName,
     manifest: {
       id: manifestId,
-      skillPackId: packId,
       name: manifestId,
       description: "Plugin tool.",
       toolClass: "perception",
       risk: "low",
       deferLoading,
-      tags: [packId],
+      tags: [sourceTag],
       mcpCompatible: true,
       inputSchema: { type: "object", properties: {} },
       ...overrides

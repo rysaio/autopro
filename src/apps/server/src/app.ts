@@ -11,16 +11,22 @@ import type {
   ApprovalDecisionResult,
   AuditEvent,
   EnvironmentStatus,
+  McpServerConfigState,
+  McpServerSummary,
   ModelConfigState,
   PermissionMode,
+  PluginMcpServerSummary,
   PluginSummary,
   ProviderStatus,
-  RuntimeSettings
+  RuntimeSettings,
+  SkillContent,
+  SkillSummary
 } from "@secops-agent/shared";
 import type { AppConfig } from "./config.js";
 import { createAiSdkModel } from "./providers/aiSdkModelFactory.js";
 import { AgentEnvironment } from "./runtime/agentEnvironment.js";
 import { ModelConfigStore, type ModelConnection } from "./runtime/modelConfigStore.js";
+import { McpServerManager, type McpServerInput, type McpServerManagerOptions, type McpServerUpdate } from "./runtime/mcpServerManager.js";
 import { PluginManager, type PluginManagerOptions, type ResolvedMcpServer, type McpClientHandle } from "./plugins/pluginManager.js";
 import { AgentRuntime, type AgentRunAbortReason } from "./runtime/agentRuntime.js";
 import { AuditLog } from "./runtime/auditLog.js";
@@ -32,6 +38,8 @@ import { PluginCachePolicyStore, MAX_PLUGIN_CACHE_TTL_MS } from "./runtime/plugi
 import { isAutomationLevel, RuntimeSettingsStore } from "./runtime/runtimeSettings.js";
 import { NoopSessionStateStore, type SessionStateStore } from "./runtime/sessionStateStore.js";
 import { ToolVisibilityStore } from "./runtime/toolVisibilityStore.js";
+import { SkillCatalog } from "./skills/catalog.js";
+import { createSkillReadTool } from "./skills/skillReadTool.js";
 import { createSecOpsMcpServer, mcpContext, mcpToolSummaries } from "./mcp/secopsMcpServer.js";
 import { registerStreamableMcpRoutes } from "./mcp/streamableHttp.js";
 import { ToolRegistry } from "./tools/registry.js";
@@ -43,6 +51,8 @@ export interface BuildServerOptions {
   modelClientCache?: ModelClientCache;
   /** 测试注入：自定义插件 MCP 客户端工厂（默认为真实 stdio 连接）。 */
   createPluginClient?: PluginManagerOptions["createClient"];
+  /** 测试注入：自定义独立 MCP 客户端工厂。 */
+  createStandaloneMcpClient?: McpServerManagerOptions["createClient"];
   /** @deprecated Use agentRoutingMode. true selects the temporary layered rollback mode. */
   enableLayeredRouting?: boolean;
   agentRoutingMode?: AgentRoutingMode;
@@ -54,7 +64,9 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     ? new PostgresSessionStore(config.dataDir)
     : undefined;
   const sessionStateStore: SessionStateStore = durableSessionStore ?? new NoopSessionStateStore();
+  const skillCatalog = new SkillCatalog({ standaloneRoot: config.skillsDir });
   const registry = new ToolRegistry(undefined, durableSessionStore ?? new ApprovalStore(config.approvalStorePath));
+  registry.registerRuntimeTools([createSkillReadTool(skillCatalog)]);
   const auditLog = new AuditLog(config.auditLogPath);
   const runtimeSettings = new RuntimeSettingsStore(config.runtimeConfigPath, {
     actionLevel: config.actionLevel,
@@ -79,7 +91,21 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     ...(options.createPluginClient ? { createClient: options.createPluginClient } : {})
   });
   // AgentEnvironment 基座：统一管理配置（settings/models）与外围设施（plugins）
-  const environment = new AgentEnvironment(runtimeSettings, modelConfigStore, pluginManager);
+  const environment = new AgentEnvironment(runtimeSettings, modelConfigStore, pluginManager, skillCatalog);
+  const mcpServerManager = new McpServerManager({
+    filePath: config.mcpConfigPath,
+    workspaceRoot: config.workspaceRoot,
+    registry,
+    ...(options.createStandaloneMcpClient ? { createClient: options.createStandaloneMcpClient } : {})
+  });
+  const mcpServersState = (): McpServerConfigState => ({
+    servers: [
+      ...mcpServerManager.list().servers,
+      ...pluginManager.status().flatMap((plugin) =>
+        (plugin.mcpServers ?? []).map((server) => pluginMcpServerSummary(plugin, server))
+      )
+    ]
+  });
   const activeRuns = new Map<string, AbortController>();
 
   app.addHook("onRequest", async (request, reply) => {
@@ -107,9 +133,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     await durableSessionStore?.migrate();
     // 启动时按基座顺序加载：settings/models 构造即加载，插件扫描加载；单插件失败不影响启动
     await environment.loadAll();
+    await mcpServerManager.load();
     applyToolVisibilityOverrides(registry, toolVisibilityStore);
   });
   app.addHook("onClose", async () => {
+    await mcpServerManager.disconnectAll();
     await pluginManager.disconnectAll();
     // Issue #10：有界排空所有活跃 run 的持久化队列；超时在结果中显式报告
     await persistQueueRegistry.drainAll(config.persistQueueDrainTimeoutMs);
@@ -270,9 +298,19 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     return { visibility: toolVisibilityStore.get() };
   });
 
-  app.get("/api/skills", async () => ({
-    skills: registry.skillPacks()
-  }));
+  app.get("/api/skills", async () => ({ skills: skillCatalog.list() }));
+
+  app.get("/api/skills/:id", async (request, reply): Promise<SkillContent | unknown> => {
+    const params = request.params as { id: string };
+    const skill = skillCatalog.read(params.id);
+    return skill ?? reply.code(404).send({ error: `No loaded skill found for ${params.id}` });
+  });
+
+  app.post("/api/skills/reload", async (): Promise<{ skills: SkillSummary[] }> => {
+    await environment.reloadAll();
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
+    return { skills: skillCatalog.list() };
+  });
 
   // ── 插件热插拔 API：安装插件目录到 runtime/plugins/ 后 reload 一次即可 reach ──
   app.get("/api/plugins", async (): Promise<{ plugins: PluginSummary[] }> => ({
@@ -280,7 +318,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   }));
 
   app.post("/api/plugins/reload", async (): Promise<{ plugins: PluginSummary[] }> => {
-    await pluginManager.reload();
+    await environment.reloadAll();
     applyToolVisibilityOverrides(registry, toolVisibilityStore);
     return { plugins: pluginManager.status() };
   });
@@ -323,21 +361,113 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     tools: mcpToolSummaries(registry)
   }));
 
-  app.get("/api/mcp/skills", async () => ({
-    skills: registry.skillPacks()
-  }));
+  app.get("/api/mcp/servers", async (): Promise<McpServerConfigState> => mcpServersState());
+
+  app.post("/api/mcp/servers", async (request, reply): Promise<McpServerConfigState | unknown> => {
+    try {
+      await mcpServerManager.add(coerceMcpServerInput(coerceRecord(request.body)));
+      applyToolVisibilityOverrides(registry, toolVisibilityStore);
+      return mcpServersState();
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.put("/api/mcp/servers/:id", async (request, reply): Promise<McpServerConfigState | unknown> => {
+    const params = request.params as { id: string };
+    if (isPluginMcpServerId(params.id)) {
+      return reply.code(400).send({ error: "Plugin-managed MCP server cannot be modified" });
+    }
+    try {
+      const updated = await mcpServerManager.update(params.id, coerceMcpServerUpdate(coerceRecord(request.body)));
+      if (!updated) {
+        return reply.code(404).send({ error: `No MCP server found for ${params.id}` });
+      }
+      applyToolVisibilityOverrides(registry, toolVisibilityStore);
+      return mcpServersState();
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.delete("/api/mcp/servers/:id", async (request, reply): Promise<McpServerConfigState | unknown> => {
+    const params = request.params as { id: string };
+    if (isPluginMcpServerId(params.id)) {
+      return reply.code(400).send({ error: "Plugin-managed MCP server cannot be removed" });
+    }
+    const removed = await mcpServerManager.remove(params.id);
+    if (!removed) {
+      return reply.code(404).send({ error: `No MCP server found for ${params.id}` });
+    }
+    return mcpServersState();
+  });
+
+  app.post("/api/mcp/servers/:id/reconnect", async (request, reply): Promise<McpServerConfigState | unknown> => {
+    const params = request.params as { id: string };
+    if (isPluginMcpServerId(params.id)) {
+      return reply.code(400).send({ error: "Plugin-managed MCP server cannot be reconnected" });
+    }
+    const reconnected = await mcpServerManager.reconnect(params.id);
+    if (!reconnected) {
+      return reply.code(404).send({ error: `No MCP server found for ${params.id}` });
+    }
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
+    return mcpServersState();
+  });
+
+  app.post("/api/mcp/servers/reload", async (): Promise<McpServerConfigState> => {
+    await mcpServerManager.reload();
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
+    return mcpServersState();
+  });
 
   app.get("/api/approvals", async () => ({
     approvals: await registry.pendingApprovals()
   }));
 
   app.get("/api/sessions", async (request): Promise<{ sessions: AgentSessionSummary[] }> => {
-    const query = request.query as { limit?: string | number } | undefined;
+    const query = request.query as { limit?: string | number; archived?: string | boolean } | undefined;
     return {
       sessions: durableSessionStore
-        ? await durableSessionStore.listSessions(coerceLimit(query?.limit, 50))
+        ? await durableSessionStore.listSessions(coerceLimit(query?.limit, 50), coerceBoolean(query?.archived))
         : []
     };
+  });
+
+  app.post("/api/sessions/:id/archive", async (request, reply) => {
+    if (!durableSessionStore) {
+      return reply.code(503).send({ error: "Durable session store is not configured" });
+    }
+    const params = request.params as { id: string };
+    const archived = await durableSessionStore.archiveSession(params.id);
+    if (!archived) {
+      return reply.code(404).send({ error: `No session found for ${params.id}` });
+    }
+    return { archived: true };
+  });
+
+  app.post("/api/sessions/:id/unarchive", async (request, reply) => {
+    if (!durableSessionStore) {
+      return reply.code(503).send({ error: "Durable session store is not configured" });
+    }
+    const params = request.params as { id: string };
+    const unarchived = await durableSessionStore.unarchiveSession(params.id);
+    if (!unarchived) {
+      return reply.code(404).send({ error: `No session found for ${params.id}` });
+    }
+    return { archived: false };
+  });
+
+  app.delete("/api/sessions/:id", async (request, reply) => {
+    if (!durableSessionStore) {
+      return reply.code(503).send({ error: "Durable session store is not configured" });
+    }
+    const params = request.params as { id: string };
+    const deleted = await durableSessionStore.deleteSession(params.id);
+    if (!deleted) {
+      return reply.code(404).send({ error: `No session found for ${params.id}` });
+    }
+    return { deleted: true };
   });
 
   app.get("/api/sessions/:id", async (request, reply): Promise<AgentSessionDetail | unknown> => {
@@ -427,7 +557,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
     const { runtime, release } = createRuntime(
-      config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection,
+      config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection,
       modelClientCache, persistQueueRegistry
     );
     try {
@@ -510,7 +640,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
     const { runtime, release } = createRuntime(
-      config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection,
+      config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection,
       modelClientCache, persistQueueRegistry
     );
     const controller = new AbortController();
@@ -578,15 +708,40 @@ function hasManifest(registry: ToolRegistry, id: string): boolean {
   return registry.manifests().some((manifest) => manifest.id === id);
 }
 
+function isPluginMcpServerId(id: string): boolean {
+  return id.startsWith("plugin:");
+}
+
+function pluginMcpServerSummary(
+  plugin: PluginSummary,
+  server: PluginMcpServerSummary
+): McpServerSummary {
+  return {
+    id: `plugin:${plugin.id}:${server.name}`,
+    name: server.name,
+    transport: server.transport ?? "stdio",
+    enabled: true,
+    status: server.status === "loaded" ? "connected" : "error",
+    toolCount: server.toolCount,
+    envKeys: [],
+    headerNames: server.headerNames ?? [],
+    source: "plugin",
+    pluginId: plugin.id,
+    ...(server.url ? { url: server.url } : {}),
+    ...(server.command ? { command: server.command } : {}),
+    ...(server.args ? { args: server.args } : {}),
+    ...(server.error ? { error: server.error } : {})
+  };
+}
+
 function createRuntime(
   config: AppConfig,
   settings: RuntimeSettings,
   registry: ToolRegistry,
+  skillCatalog: SkillCatalog,
   runRequest: AgentRunRequest,
   options: BuildServerOptions,
   sessionStateStore: SessionStateStore,
-
-
   connection: ModelConnection,
   modelClientCache: ModelClientCache,
   persistQueueRegistry: PersistQueueRegistry
@@ -597,6 +752,7 @@ function createRuntime(
       runtime: new AgentRuntime({
         model: options.createModel(connection, runRequest),
         registry,
+        skillCatalog,
         modelName: connection.model,
         providerLabel: connection.provider,
         actionLevel: settings.actionLevel,
@@ -630,6 +786,7 @@ function createRuntime(
     runtime: new AgentRuntime({
       model: acquisition.model,
       registry,
+      skillCatalog,
       modelName: connection.model,
       providerLabel: connection.provider,
       actionLevel: settings.actionLevel,
@@ -658,7 +815,6 @@ function createRuntime(
     }),
     release: acquisition.release
   };
-
 }
 
 function currentToolPolicy(config: AppConfig, settings: RuntimeSettings) {
@@ -704,12 +860,71 @@ function stringField(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function coerceMcpServerInput(body: Record<string, unknown>): McpServerInput {
+  const input: McpServerInput = {
+    name: stringField(body.name),
+    transport: coerceMcpTransport(body.transport),
+    enabled: body.enabled !== false
+  };
+  assignMcpFields(input, body);
+  return input;
+}
+
+function coerceMcpServerUpdate(body: Record<string, unknown>): McpServerUpdate {
+  const input: McpServerUpdate = {};
+  if (typeof body.name === "string") input.name = body.name;
+  if (body.transport === "stdio" || body.transport === "streamable-http") input.transport = body.transport;
+  if (typeof body.enabled === "boolean") input.enabled = body.enabled;
+  assignMcpFields(input, body);
+  return input;
+}
+
+function assignMcpFields(target: McpServerInput | McpServerUpdate, body: Record<string, unknown>): void {
+  if (typeof body.command === "string") target.command = body.command;
+  if (body.args !== undefined) {
+    if (!Array.isArray(body.args) || body.args.some((item) => typeof item !== "string")) {
+      throw new Error("args must be an array of strings");
+    }
+    target.args = body.args;
+  }
+  if (typeof body.cwd === "string") target.cwd = body.cwd;
+  if (typeof body.url === "string") target.url = body.url;
+  if (body.env !== undefined) target.env = coerceStringRecord(body.env, "env");
+  if (body.headers !== undefined) target.headers = coerceStringRecord(body.headers, "headers");
+}
+
+function coerceStringRecord(value: unknown, field: string): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${field} must be an object of string values`);
+  }
+  const record = value as Record<string, unknown>;
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    if (typeof entry !== "string") {
+      throw new Error(`${field} values must be strings`);
+    }
+    result[key] = entry;
+  }
+  return result;
+}
+
+function coerceMcpTransport(value: unknown): "stdio" | "streamable-http" {
+  if (value === "stdio" || value === "streamable-http") {
+    return value;
+  }
+  throw new Error("transport must be stdio or streamable-http");
+}
+
 function coerceLimit(value: unknown, fallback: number): number {
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed)) {
     return fallback;
   }
   return Math.min(Math.max(Math.trunc(parsed), 1), 200);
+}
+
+function coerceBoolean(value: unknown): boolean {
+  return value === true || value === "true" || value === "1";
 }
 
 function isAllowed(value: string, allowed: string[]): boolean {

@@ -1,7 +1,10 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { AgentRunEvent, ChatMessage, ToolGuidance, ToolInvocation } from "@secops-agent/shared";
-import { applyMessageEvent, ToolCallCard } from "../src/App.js";
+import type { AgentRunEvent, ChatMessage, ToolGuidance, ToolInvocation, ToolManifest } from "@secops-agent/shared";
+import { applyMessageEvent, reconcileEnabledTools, ToolCallCard } from "../src/App.js";
+import { McpServerConfigView } from "../src/McpServerConfigView.js";
+import { PluginView } from "../src/PluginView.js";
+import { SkillView } from "../src/SkillView.js";
 
 const now = new Date("2026-06-19T00:00:00.000Z").toISOString();
 
@@ -113,15 +116,103 @@ const finalMessage: AgentRunEvent = {
 };
 const afterFirstDelta = applyMessageEvent(baseMessages, firstDelta);
 const afterSecondDelta = applyMessageEvent(afterFirstDelta, secondDelta);
-const reconciled = applyMessageEvent(afterSecondDelta, finalMessage);
+const reconciledMessages = applyMessageEvent(afterSecondDelta, finalMessage);
 if (afterFirstDelta.at(-1)?.content !== "Partial ") {
   throw new Error("Expected the first text delta to render immediately.");
 }
 if (afterSecondDelta.at(-1)?.content !== "Partial answer") {
   throw new Error("Expected text deltas to append to the same assistant message.");
 }
-if (reconciled.length !== 2 || reconciled.at(-1)?.content !== "Partial answer.") {
+if (reconciledMessages.length !== 2 || reconciledMessages.at(-1)?.content !== "Partial answer.") {
   throw new Error("Expected the final message to reconcile without duplicating streamed text.");
+}
+
+const mcpConfigHtml = renderToStaticMarkup(
+  <McpServerConfigView
+    onChanged={() => undefined}
+    state={{
+      servers: [{
+        id: "remote-mcp",
+        name: "Remote MCP",
+        transport: "streamable-http",
+        enabled: true,
+        status: "connected",
+        toolCount: 3,
+        envKeys: [],
+        headerNames: ["Authorization"],
+        url: "https://mcp.example.test/api"
+      }]
+    }}
+  />
+);
+for (const expected of ["Remote MCP", "已连接", "Authorization", "添加服务", "从文件重载"]) {
+  if (!mcpConfigHtml.includes(escapeHtml(expected))) {
+    throw new Error(`Expected MCP config markup to contain ${expected}.\n${mcpConfigHtml}`);
+  }
+}
+
+const pluginHtml = renderToStaticMarkup(
+  <PluginView
+    onReload={async () => []}
+    plugins={[{
+      id: "wazuh",
+      name: "Wazuh",
+      version: "1.0.0",
+      description: "Wazuh plugin.",
+      status: "loaded",
+      toolCount: 4,
+      skillCount: 3,
+      mcpServers: [{ name: "wazuh", status: "loaded", toolCount: 4 }]
+    }]}
+  />
+);
+for (const expected of ["插件目录", "重新加载插件", "Wazuh", "3 技能", "4 工具"]) {
+  if (!pluginHtml.includes(escapeHtml(expected))) {
+    throw new Error(`Expected plugin markup to contain ${expected}.\n${pluginHtml}`);
+  }
+}
+
+const skillHtml = renderToStaticMarkup(
+  <SkillView
+    onReload={async () => []}
+    skills={[{
+      id: "case-review",
+      name: "case-review",
+      description: "Review a case.",
+      source: "standalone",
+      status: "loaded"
+    }]}
+  />
+);
+for (const expected of ["技能目录", "重新加载技能", "case-review", "独立技能"]) {
+  if (!skillHtml.includes(escapeHtml(expected))) {
+    throw new Error(`Expected skill markup to contain ${expected}.\n${skillHtml}`);
+  }
+}
+for (const markup of [pluginHtml, skillHtml, mcpConfigHtml]) {
+  for (const removedTerm of ["能力", "工具包"]) {
+    if (markup.includes(removedTerm)) {
+      throw new Error(`Expected workspace markup not to contain ${removedTerm}.\n${markup}`);
+    }
+  }
+}
+
+const previousTools = [toolManifest("kept", "medium"), toolManifest("removed", "low")];
+const nextTools = [
+  toolManifest("kept", "medium"),
+  toolManifest("new-default", "low"),
+  toolManifest("new-high-risk", "high")
+];
+const reconciledTools = reconcileEnabledTools(new Set(["kept", "removed"]), previousTools, nextTools);
+for (const expected of ["kept", "new-default"]) {
+  if (!reconciledTools.has(expected)) {
+    throw new Error(`Expected refreshed tool selection to include ${expected}.`);
+  }
+}
+for (const unexpected of ["removed", "new-high-risk"]) {
+  if (reconciledTools.has(unexpected)) {
+    throw new Error(`Expected refreshed tool selection to exclude ${unexpected}.`);
+  }
 }
 
 function invocation(input: Partial<ToolInvocation> & Pick<ToolInvocation, "id" | "status">): ToolInvocation {
@@ -147,6 +238,18 @@ function invocation(input: Partial<ToolInvocation> & Pick<ToolInvocation, "id" |
   return record;
 }
 
+function toolManifest(id: string, risk: ToolManifest["risk"]): ToolManifest {
+  return {
+    id,
+    name: id,
+    description: `${id} description`,
+    toolClass: "perception",
+    risk,
+    mcpCompatible: true,
+    inputSchema: { type: "object", properties: {} }
+  };
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -154,4 +257,3 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll("\"", "&quot;");
 }
-

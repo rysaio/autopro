@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { createShuffleTools } from "../tools/registry.js";
-import type { ShuffleExecutionContext, ShufflePluginTool, SkillManifest } from "../tools/types.js";
+import type { ShuffleExecutionContext, ShufflePluginTool, ToolManifest } from "../tools/types.js";
 
 export interface ShuffleMcpServerOptions {
   tools?: ShufflePluginTool[];
@@ -66,7 +66,7 @@ export function shuffleMcpContextFromEnv(env: NodeJS.ProcessEnv = process.env): 
   };
 }
 
-export function mcpInputSchemaForManifest(manifest: SkillManifest): Record<string, z.ZodType> {
+export function mcpInputSchemaForManifest(manifest: ToolManifest): Record<string, z.ZodType> {
   if (manifest.inputSchema.type !== "object") {
     throw new Error(`Unsupported MCP input schema root for ${manifest.id}`);
   }
@@ -130,7 +130,7 @@ async function executeMcpTool(
   }
 }
 
-function zodForProperty(manifest: SkillManifest, name: string, property: Record<string, unknown>): z.ZodType {
+function zodForProperty(manifest: ToolManifest, name: string, property: Record<string, unknown>): z.ZodType {
   const description = typeof property.description === "string" ? property.description : undefined;
   let schema: z.ZodType;
 

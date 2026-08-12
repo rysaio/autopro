@@ -8,8 +8,11 @@ export async function migratePostgresSessionStore(db: PGlite): Promise<void> {
     CREATE TABLE IF NOT EXISTS secops_sessions (
       id text PRIMARY KEY,
       created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      archived_at timestamptz
     );
+
+    ALTER TABLE secops_sessions ADD COLUMN IF NOT EXISTS archived_at timestamptz;
 
     CREATE TABLE IF NOT EXISTS secops_runs (
       id text PRIMARY KEY,
@@ -94,6 +97,7 @@ export async function migratePostgresSessionStore(db: PGlite): Promise<void> {
     CREATE INDEX IF NOT EXISTS secops_audit_events_session_run_idx ON secops_audit_events(session_id, run_id);
     CREATE INDEX IF NOT EXISTS secops_state_markers_session_key_idx ON secops_state_markers(session_id, key);
     CREATE INDEX IF NOT EXISTS secops_pending_approvals_status_idx ON secops_pending_approvals(status, expires_at);
+    CREATE INDEX IF NOT EXISTS secops_sessions_archived_idx ON secops_sessions(archived_at);
   `);
 }
 

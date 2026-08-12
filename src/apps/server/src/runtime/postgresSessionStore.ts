@@ -217,6 +217,7 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
       id: sessionRow.id,
       createdAt: toIso(sessionRow.created_at),
       updatedAt: toIso(sessionRow.updated_at),
+      ...(sessionRow.archived_at ? { archivedAt: toIso(sessionRow.archived_at) } : {}),
       runCount: runs.rows.length,
       messageCount: messages.rows.length,
       toolInvocationCount: invocations.rows.length,
@@ -236,13 +237,14 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
     return detail;
   }
 
-  async listSessions(limit = 50): Promise<AgentSessionSummary[]> {
+  async listSessions(limit = 50, includeArchived = false): Promise<AgentSessionSummary[]> {
     const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
     const result = await this.db.query<SessionSummaryRow>(
       `SELECT
          s.id,
          s.created_at,
          s.updated_at,
+         max(s.archived_at) AS archived_at,
          count(DISTINCT r.id)::int AS run_count,
          count(DISTINCT m.id)::int AS message_count,
          count(DISTINCT ti.id)::int AS tool_invocation_count,
@@ -265,16 +267,19 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
          ORDER BY latest_messages.created_at DESC, latest_messages.id DESC
          LIMIT 1
        ) latest ON true
+       WHERE ($2::boolean AND s.archived_at IS NOT NULL)
+          OR (NOT $2::boolean AND s.archived_at IS NULL)
        GROUP BY s.id, s.created_at, s.updated_at, latest.message
        ORDER BY s.updated_at DESC, s.id DESC
        LIMIT $1`,
-      [boundedLimit]
+      [boundedLimit, includeArchived]
     );
     return result.rows.map((row) => {
       const summary: AgentSessionSummary = {
         id: row.id,
         createdAt: toIso(row.created_at),
         updatedAt: toIso(row.updated_at),
+        ...(row.archived_at ? { archivedAt: toIso(row.archived_at) } : {}),
         runCount: row.run_count,
         messageCount: row.message_count,
         toolInvocationCount: row.tool_invocation_count,
@@ -286,6 +291,36 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
       }
       return summary;
     });
+  }
+
+  async archiveSession(sessionId: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `UPDATE secops_sessions
+       SET archived_at = now(), updated_at = now()
+       WHERE id = $1 AND archived_at IS NULL
+       RETURNING id`,
+      [sessionId]
+    );
+    return result.rows.length > 0;
+  }
+
+  async unarchiveSession(sessionId: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `UPDATE secops_sessions
+       SET archived_at = NULL, updated_at = now()
+       WHERE id = $1
+       RETURNING id`,
+      [sessionId]
+    );
+    return result.rows.length > 0;
+  }
+
+  async deleteSession(sessionId: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `DELETE FROM secops_sessions WHERE id = $1 RETURNING id`,
+      [sessionId]
+    );
+    return result.rows.length > 0;
   }
 
   async add(record: StoredApproval): Promise<PendingApproval> {
@@ -407,6 +442,7 @@ interface SessionRow {
   id: string;
   created_at: Date | string;
   updated_at: Date | string;
+  archived_at: Date | string | null;
 }
 
 interface SessionSummaryRow extends SessionRow {

@@ -16,7 +16,6 @@ import {
   FileText,
   Layers,
   Cpu,
-  Package,
   Zap,
   Radio,
   BarChart3,
@@ -25,8 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type {
-  SkillPackManifest,
-  SkillManifest,
+  ToolManifest,
   AgentSessionSummary,
   AgentSessionDetail,
   EvidenceArtifact,
@@ -36,7 +34,7 @@ import type {
 import type { McpToolSummary } from "./api.js";
 
 // ── Types ──
-export type KgNodeType = "skill-pack" | "tool" | "session" | "artifact" | "threat";
+export type KgNodeType = "tool" | "session" | "artifact" | "threat";
 
 export interface KgNode {
   id: string;
@@ -63,8 +61,7 @@ interface Vec2 {
 
 // ── Props ──
 export interface KnowledgeGraphProps {
-  skillPacks: SkillPackManifest[];
-  tools: SkillManifest[];
+  tools: ToolManifest[];
   mcpTools: McpToolSummary[];
   sessions: AgentSessionSummary[];
   activeSession: AgentSessionDetail | null;
@@ -75,7 +72,6 @@ export interface KnowledgeGraphProps {
 
 // ── Node type styling ──
 const NODE_STYLE: Record<KgNodeType, { color: string; bg: string; size: number }> = {
-  "skill-pack": { color: "#7c3aed", bg: "#f5f3ff", size: 32 },
   tool: { color: "#d97706", bg: "#fffbeb", size: 28 },
   session: { color: "#2563eb", bg: "#eff6ff", size: 26 },
   artifact: { color: "#059669", bg: "#ecfdf5", size: 24 },
@@ -83,7 +79,6 @@ const NODE_STYLE: Record<KgNodeType, { color: string; bg: string; size: number }
 };
 
 const TYPE_LABEL: Record<KgNodeType, string> = {
-  "skill-pack": "技能包",
   tool: "工具",
   session: "会话",
   artifact: "证据产物",
@@ -113,25 +108,7 @@ function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: K
     },
   });
 
-  // 2. SkillPack nodes (top 6, all)
-  const topPacks = props.skillPacks.slice(0, 6);
-  for (const pack of topPacks) {
-    nodes.push({
-      id: `sp-${pack.id}`,
-      label: pack.name,
-      type: "skill-pack",
-      description: pack.description || `版本: ${pack.version}`,
-      source: "SkillPack",
-      details: {
-        "版本": pack.version,
-        "工具数": String(pack.tools.length),
-        "MCP兼容": pack.mcpCompatible ? "是" : "否",
-        "标签": pack.tags.join(", ") || "无",
-      },
-    });
-  }
-
-  // 3. Tool nodes (top 10 by risk: critical/high first, then medium)
+  // 2. Tool nodes (top 10 by risk: critical/high first, then medium)
   const sortedTools = [...props.tools].sort((a, b) => {
     const riskOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
     return (riskOrder[a.risk] ?? 2) - (riskOrder[b.risk] ?? 2);
@@ -145,23 +122,20 @@ function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: K
       type: "tool",
       risk: (tool.risk as "low" | "medium" | "high" | "critical") ?? "medium",
       description: tool.description,
-      source: `SkillPack: ${tool.skillPackId}`,
+      source: tool.tags.join(", ") || "Tool Registry",
       details: {
         "风险等级": tool.risk,
         "工具类别": tool.toolClass,
         "MCP兼容": tool.mcpCompatible ? "是" : "否",
-        "所属技能包": tool.skillPackId,
         "标签": tool.tags.join(", ") || "无",
       },
     });
-
-    // SkillPack → Tool relationship
     edges.push({
-      id: `sp2t-${tool.skillPackId}-${tool.id}`,
-      source: `sp-${tool.skillPackId}`,
+      id: `threat2tool-${tool.id}`,
+      source: "threat-root",
       target: `tool-${tool.id}`,
-      label: "包含",
-      type: "contains",
+      label: "提供",
+      type: "monitors",
     });
   }
 
@@ -206,17 +180,6 @@ function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: K
   }
 
   // 5b. Build relationships
-
-  // Threat → SkillPacks (关联)
-  for (const pack of topPacks) {
-    edges.push({
-      id: `threat2sp-${pack.id}`,
-      source: "threat-root",
-      target: `sp-${pack.id}`,
-      label: "管理",
-      type: "related-to",
-    });
-  }
 
   // Session ↔ Artifact (if activeSession has runs)
   if (props.activeSession) {
@@ -370,7 +333,6 @@ function computeLayout(nodes: KgNode[], edges: KgEdge[], width: number, height: 
 function NodeIcon({ type, size }: { type: KgNodeType; size: number }) {
   const s = size * 0.6;
   switch (type) {
-    case "skill-pack": return <Package size={s} />;
     case "tool": return <Wrench size={s} />;
     case "session": return <Activity size={s} />;
     case "artifact": return <FileText size={s} />;
@@ -398,7 +360,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
   const { allNodes, allEdges } = useMemo(() => {
     const result = buildGraphData(props);
     return { allNodes: result.nodes, allEdges: result.edges };
-  }, [props.skillPacks, props.tools, props.sessions, props.activeSession, props.streamArtifacts, props.streamToolInvocations, props.health]);
+  }, [props.tools, props.sessions, props.activeSession, props.streamArtifacts, props.streamToolInvocations, props.health]);
 
   // Filter nodes
   const filteredNodes = useMemo(() => {

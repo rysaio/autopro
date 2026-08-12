@@ -1,6 +1,8 @@
 import {
   Activity,
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   BarChart3,
   Bot,
   CheckCircle2,
@@ -26,11 +28,12 @@ import {
   ShieldCheck,
   Sparkles,
   Square,
+  Trash2,
   XCircle,
   Wrench
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import type {
   AgentRun,
   AgentRunEvent,
@@ -41,31 +44,40 @@ import type {
   AutomationLevel,
   ChatMessage,
   EvidenceArtifact,
+  McpServerConfigState,
   PendingApproval,
   PermissionMode,
+  PluginSummary,
   ProviderStatus,
-  SkillPackManifest,
-  SkillManifest,
+  SkillSummary,
+  ToolManifest,
   ToolClass,
   ToolInvocation
 } from "@secops-agent/shared";
 import {
   approveToolCall,
   cancelAgentRun,
+  archiveSession,
   callMcpTool,
+  deleteSession,
   denyToolCall,
   fetchApprovals,
   fetchAuditEvents,
   fetchHealth,
   fetchMcpTools,
+  fetchMcpServers,
+  fetchPlugins,
+  fetchSkills,
   fetchSession,
   fetchSessions,
-  fetchSkills,
   fetchTools,
   streamAgent,
+  unarchiveSession,
   updateActionLevel,
   generateReport,
   exportReport,
+  reloadPlugins,
+  reloadSkills,
   type GenerateReportRequest,
   type GenerateReportResponse,
   type ExportReportRequest,
@@ -75,21 +87,51 @@ import {
 } from "./api.js";
 import { KnowledgeGraphView } from "./KnowledgeGraphView.js";
 import { ModelConfigView } from "./ModelConfigView.js";
+import { McpServerConfigView } from "./McpServerConfigView.js";
+import { PluginView } from "./PluginView.js";
+import { SkillView } from "./SkillView.js";
 
 const seedMessages: ChatMessage[] = [
   {
     id: "seed-assistant",
     role: "assistant",
-    content: "就绪。发送告警、IOC、资产或案件目标给我，我会从启用的技能中选择合适的工具，并在对话中展示 MCP/工具调用，同时保留完整的审计追踪。",
+    content: "就绪。发送告警、IOC、资产或案件目标给我，我会从启用的工具中选择合适的执行入口，并在对话中展示调用过程，同时保留完整的审计追踪。",
     createdAt: new Date().toISOString()
   }
 ];
 
-type InspectorTab = "plan" | "audit" | "artifacts" | "mcp";
-type WorkbenchPanel = "skills" | "dashboard" | "knowledge-graph" | "model-config" | InspectorTab;
+const WORKSPACE_MIN_HEIGHT = 200;
+const WORKSPACE_DEFAULT_RATIO = 0.4;
+const WORKSPACE_DEFAULT_MAX = 520;
+const WORKSPACE_MAX_VIEWPORT_MARGIN = 120;
+const WORKSPACE_KEYBOARD_STEP = 24;
+const WORKSPACE_KEYBOARD_FAST_STEP = 96;
+
+function workspaceMaxHeight(): number {
+  if (typeof window === "undefined") {
+    return WORKSPACE_DEFAULT_MAX;
+  }
+  return Math.max(WORKSPACE_MIN_HEIGHT, window.innerHeight - WORKSPACE_MAX_VIEWPORT_MARGIN);
+}
+
+function clampWorkspaceHeight(height: number): number {
+  return Math.round(Math.min(Math.max(height, WORKSPACE_MIN_HEIGHT), workspaceMaxHeight()));
+}
+
+function defaultWorkspaceHeight(): number {
+  if (typeof window === "undefined") {
+    return WORKSPACE_DEFAULT_MAX;
+  }
+  return clampWorkspaceHeight(
+    Math.min(window.innerHeight * WORKSPACE_DEFAULT_RATIO, Math.min(WORKSPACE_DEFAULT_MAX, workspaceMaxHeight()))
+  );
+}
+
+type InspectorTab = "plan" | "audit" | "artifacts";
+type WorkbenchPanel = "archived" | "plugins" | "skills" | "tools" | "dashboard" | "knowledge-graph" | "model-config" | InspectorTab;
 type ToolClassFilter = ToolClass | "all";
 
-const capabilityFilters: Array<{ id: ToolClassFilter; label: string }> = [
+const toolClassFilters: Array<{ id: ToolClassFilter; label: string }> = [
   { id: "all", label: "全部" },
   { id: "perception", label: "感知" },
   { id: "reasoning", label: "推理" },
@@ -105,9 +147,12 @@ const actionLevels: Array<{ id: AutomationLevel; label: string }> = [
 
 export function App() {
   const [health, setHealth] = useState<ProviderStatus | null>(null);
-  const [skillPacks, setSkillPacks] = useState<SkillPackManifest[]>([]);
-  const [tools, setTools] = useState<SkillManifest[]>([]);
+  const [plugins, setPlugins] = useState<PluginSummary[]>([]);
+  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const [tools, setTools] = useState<ToolManifest[]>([]);
   const [mcpTools, setMcpTools] = useState<McpToolSummary[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServerConfigState>({ servers: [] });
+  const [archivedSessions, setArchivedSessions] = useState<AgentSessionSummary[]>([]);
   const [enabledTools, setEnabledTools] = useState<Set<string>>(new Set());
   const [messages, setMessages] = useState<ChatMessage[]>(seedMessages);
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => crypto.randomUUID());
@@ -120,7 +165,7 @@ export function App() {
   const [persistedAudit, setPersistedAudit] = useState<AuditEvent[]>([]);
   const [mcpResult, setMcpResult] = useState<McpCallResult | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
-  const [prompt, setPrompt] = useState("请对这个安全信号进行分类，说明你使用了哪些技能，并推荐下一步安全操作。");
+  const [prompt, setPrompt] = useState("请对这个安全信号进行分类，说明你使用了哪些工具，并推荐下一步安全操作。");
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("ask");
   const [toolClassFilter, setToolClassFilter] = useState<ToolClassFilter>("all");
   const [toolQuery, setToolQuery] = useState("");
@@ -143,26 +188,52 @@ export function App() {
   const [activePanel, setActivePanel] = useState<WorkbenchPanel | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
   const streamControllerRef = useRef<AbortController | null>(null);
+  const [toolWorkspaceTab, setToolWorkspaceTab] = useState<"scope" | "mcp">("scope");
+  const [workspaceHeight, setWorkspaceHeight] = useState<number>(defaultWorkspaceHeight);
+  const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
+  const workspaceHeightRef = useRef(workspaceHeight);
+  const workspaceStackRef = useRef<HTMLDivElement | null>(null);
+  const workspaceResizeStart = useRef<{ pointerId: number; y: number; height: number } | null>(null);
+
+  useEffect(() => {
+    workspaceHeightRef.current = workspaceHeight;
+  }, [workspaceHeight]);
+
+  useEffect(() => {
+    function clampToViewport() {
+      const viewportMax = workspaceMaxHeight();
+      setWorkspaceHeight((current) => Math.min(current, viewportMax));
+    }
+
+    window.addEventListener("resize", clampToViewport);
+    return () => window.removeEventListener("resize", clampToViewport);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
     Promise.all([
       fetchHealth(),
+      fetchPlugins(),
       fetchSkills(),
       fetchTools(),
       fetchMcpTools(),
+      fetchMcpServers(),
+      fetchSessions(50, true),
       fetchApprovals(),
       fetchAuditEvents(),
       fetchSessions()
     ])
-      .then(([healthResult, skillsResult, toolsResult, mcpToolsResult, approvalsResult, auditResult, sessionsResult]) => {
+      .then(([healthResult, pluginsResult, skillsResult, toolsResult, mcpToolsResult, mcpServersResult, archivedSessionsResult, approvalsResult, auditResult, sessionsResult]) => {
         if (!mounted) {
           return;
         }
         setHealth(healthResult);
-        setSkillPacks(skillsResult);
+        setPlugins(pluginsResult);
+        setSkills(skillsResult);
         setTools(toolsResult);
         setMcpTools(mcpToolsResult);
+        setMcpServers(mcpServersResult);
+        setArchivedSessions(archivedSessionsResult);
         setPendingApprovals(approvalsResult);
         setPersistedAudit(auditEventsFromRunEvents(auditResult));
         setSessions(sessionsResult);
@@ -197,13 +268,13 @@ export function App() {
   const activeToolInvocations = lastRun?.toolInvocations ?? (
     streamToolInvocations.length ? streamToolInvocations : activeSession?.toolInvocations ?? []
   );
-  const enabledSkillCount = enabledToolList.length;
+  const enabledToolCount = enabledToolList.length;
   const enabledMcpCount = mcpTools.filter((tool) => enabledToolList.includes(tool.manifest.id)).length;
   const visibleTools = useMemo(() => {
     const query = toolQuery.trim().toLowerCase();
     return tools.filter((tool) => {
       const matchesClass = toolClassFilter === "all" || tool.toolClass === toolClassFilter;
-      const searchable = `${tool.name} ${tool.id} ${tool.skillPackId} ${tool.toolClass} ${tool.risk} ${tool.tags.join(" ")}`.toLowerCase();
+      const searchable = `${tool.name} ${tool.id} ${tool.toolClass} ${tool.risk} ${tool.tags.join(" ")}`.toLowerCase();
       return matchesClass && (!query || searchable.includes(query));
     });
   }, [toolClassFilter, toolQuery, tools]);
@@ -217,7 +288,48 @@ export function App() {
   }
 
   async function refreshSessions() {
-    setSessions(await fetchSessions());
+    const [active, archived] = await Promise.all([
+      fetchSessions(),
+      fetchSessions(50, true)
+    ]);
+    setSessions(active);
+    setArchivedSessions(archived);
+  }
+
+  async function archiveSessionById(id: string) {
+    try {
+      if (currentSessionId === id) {
+        startNewSession();
+      }
+      await archiveSession(id);
+      await refreshSessions();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function unarchiveSessionById(id: string) {
+    try {
+      await unarchiveSession(id);
+      await refreshSessions();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function deleteSessionById(id: string) {
+    if (!window.confirm("确认永久删除该对话？此操作不可恢复。")) {
+      return;
+    }
+    try {
+      if (currentSessionId === id) {
+        startNewSession();
+      }
+      await deleteSession(id);
+      await refreshSessions();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
   }
 
   async function loadSession(id: string) {
@@ -275,6 +387,91 @@ export function App() {
     setStreamToolInvocations([]);
     setMcpResult(null);
     setActivePanel(null);
+  }
+
+  function applyWorkspaceHeight(height: number) {
+    const element = workspaceStackRef.current;
+    if (element) {
+      element.style.height = `${height}px`;
+    }
+  }
+
+  function setWorkspaceHeightClamped(nextHeight: number) {
+    const clamped = clampWorkspaceHeight(nextHeight);
+    workspaceHeightRef.current = clamped;
+    setWorkspaceHeight(clamped);
+  }
+
+  function handleWorkspaceResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    workspaceResizeStart.current = {
+      pointerId: event.pointerId,
+      y: event.clientY,
+      height: workspaceHeightRef.current
+    };
+    setIsResizingWorkspace(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleWorkspaceResizeMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = workspaceResizeStart.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+    const nextHeight = clampWorkspaceHeight(start.height + start.y - event.clientY);
+    workspaceHeightRef.current = nextHeight;
+    applyWorkspaceHeight(nextHeight);
+  }
+
+  function handleWorkspaceResizeEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = workspaceResizeStart.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+    workspaceResizeStart.current = null;
+    setIsResizingWorkspace(false);
+    setWorkspaceHeight(workspaceHeightRef.current);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function handleWorkspaceResizeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    const step = event.shiftKey ? WORKSPACE_KEYBOARD_FAST_STEP : WORKSPACE_KEYBOARD_STEP;
+    switch (event.key) {
+      case "ArrowUp":
+      case "ArrowRight":
+        event.preventDefault();
+        setWorkspaceHeightClamped(workspaceHeightRef.current + step);
+        break;
+      case "ArrowDown":
+      case "ArrowLeft":
+        event.preventDefault();
+        setWorkspaceHeightClamped(workspaceHeightRef.current - step);
+        break;
+      case "Home":
+        event.preventDefault();
+        setWorkspaceHeightClamped(WORKSPACE_MIN_HEIGHT);
+        break;
+      case "End":
+        event.preventDefault();
+        setWorkspaceHeightClamped(workspaceMaxHeight());
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        resetWorkspaceHeight();
+        break;
+    }
+  }
+
+  function resetWorkspaceHeight() {
+    const reset = defaultWorkspaceHeight();
+    setWorkspaceHeightClamped(reset);
+    applyWorkspaceHeight(reset);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -394,7 +591,6 @@ export function App() {
     try {
       const result = await callMcpTool(name, args, effectivePermissionMode, currentSessionId);
       setMcpResult(result);
-      setTab("mcp");
       await refreshApprovals();
       await refreshSessions();
     } catch (caught) {
@@ -433,38 +629,6 @@ export function App() {
       }
       return next;
     });
-  }
-
-  function togglePack(packId: string) {
-    const packToolIds = tools
-      .filter((tool) => tool.skillPackId === packId)
-      .map((tool) => tool.id);
-    setEnabledTools((current) => {
-      const next = new Set(current);
-      const allEnabled = packToolIds.every((id) => next.has(id));
-      for (const id of packToolIds) {
-        if (allEnabled) {
-          next.delete(id);
-        } else {
-          next.add(id);
-        }
-      }
-      return next;
-    });
-  }
-
-  function enabledCountForPack(pack: SkillPackManifest): number {
-    if (fullAccessActive) {
-      return pack.tools.length;
-    }
-    return pack.tools.filter((id) => enabledTools.has(id)).length;
-  }
-
-  function isPackFullyEnabled(pack: SkillPackManifest): boolean {
-    if (fullAccessActive) {
-      return pack.tools.length > 0;
-    }
-    return pack.tools.length > 0 && pack.tools.every((id) => enabledTools.has(id));
   }
 
   function enableVisibleTools() {
@@ -598,7 +762,7 @@ async function handleGenerateReport() {
   // 返回对话界面统一通过顶部「返回对话」按钮。
   function openPanel(panel: WorkbenchPanel) {
     setActivePanel(panel);
-    if (panel !== "skills" && panel !== "dashboard" && panel !== "knowledge-graph" && panel !== "model-config") {
+    if (panel !== "archived" && panel !== "plugins" && panel !== "skills" && panel !== "tools" && panel !== "dashboard" && panel !== "knowledge-graph" && panel !== "model-config") {
       setTab(panel);
     }
   }
@@ -611,9 +775,47 @@ async function handleGenerateReport() {
     }
   }
 
+  async function applyMcpServerState(state: McpServerConfigState) {
+    setMcpServers(state);
+    const [nextTools, nextMcpTools] = await Promise.all([
+      fetchTools(),
+      fetchMcpTools()
+    ]);
+    setTools(nextTools);
+    setMcpTools(nextMcpTools);
+    setEnabledTools((current) => reconcileEnabledTools(current, tools, nextTools));
+  }
+
+  async function refreshToolsAfterReload() {
+    const [nextTools, nextMcpTools] = await Promise.all([
+      fetchTools(),
+      fetchMcpTools()
+    ]);
+    setTools(nextTools);
+    setMcpTools(nextMcpTools);
+    setEnabledTools((current) => reconcileEnabledTools(current, tools, nextTools));
+  }
+
+  async function reloadPluginState(): Promise<PluginSummary[]> {
+    const state = await reloadPlugins();
+    setPlugins(state);
+    setSkills(await fetchSkills());
+    setMcpServers(await fetchMcpServers());
+    await refreshToolsAfterReload();
+    return state;
+  }
+
+  async function reloadSkillState(): Promise<SkillSummary[]> {
+    const state = await reloadSkills();
+    setSkills(state);
+    setPlugins(await fetchPlugins());
+    await refreshToolsAfterReload();
+    return state;
+  }
+
   return (
     <div className="app-shell">
-      <aside className="sidebar" aria-label="SecOps skills">
+      <aside className="sidebar" aria-label="SecOps workspace">
         <div className="brand-row">
           <div className="brand-mark">
             <Bot size={22} aria-hidden="true" />
@@ -649,25 +851,63 @@ async function handleGenerateReport() {
             </button>
           ) : null}
           {sessions.length ? sessions.map((session) => (
-            <button
+            <div
               className={currentSessionId === session.id && activeSession ? "session-row active" : "session-row"}
-              disabled={isLoadingSession}
               key={session.id}
-              onClick={() => loadSession(session.id)}
-              type="button"
             >
-              <strong>{sessionTitle(session)}</strong>
-              <small>
-                {session.messageCount} 条消息 · {session.toolInvocationCount} 次工具调用
-                {session.guidanceCount ? ` · ${session.guidanceCount} 引导` : ""}
-              </small>
-            </button>
+              <button
+                className="session-open"
+                disabled={isLoadingSession}
+                onClick={() => loadSession(session.id)}
+                type="button"
+              >
+                <strong>{sessionTitle(session)}</strong>
+                <small>
+                  {session.messageCount} 条消息 · {session.toolInvocationCount} 次工具调用
+                  {session.guidanceCount ? ` · ${session.guidanceCount} 引导` : ""}
+                </small>
+              </button>
+              <div className="session-actions">
+                <button onClick={() => void archiveSessionById(session.id)} title="归档" type="button">
+                  <Archive size={13} aria-hidden="true" />
+                </button>
+                <button className="danger" onClick={() => void deleteSessionById(session.id)} title="删除" type="button">
+                  <Trash2 size={13} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
           )) : (
             <p className="sidebar-empty">暂无保存的会话</p>
           )}
         </div>
 
-        <div className="nav-stack" aria-label="工作区工具">
+        <div
+          aria-controls="workspace-nav-stack"
+          aria-label="调整工作区高度"
+          aria-orientation="horizontal"
+          aria-valuemax={workspaceMaxHeight()}
+          aria-valuemin={WORKSPACE_MIN_HEIGHT}
+          aria-valuenow={workspaceHeight}
+          aria-valuetext={`${workspaceHeight} 像素`}
+          className={isResizingWorkspace ? "sidebar-divider resizing" : "sidebar-divider"}
+          onDoubleClick={resetWorkspaceHeight}
+          onKeyDown={handleWorkspaceResizeKeyDown}
+          onPointerCancel={handleWorkspaceResizeEnd}
+          onPointerDown={handleWorkspaceResizeStart}
+          onPointerMove={handleWorkspaceResizeMove}
+          onPointerUp={handleWorkspaceResizeEnd}
+          role="separator"
+          tabIndex={0}
+          title="拖动调整工作区高度，方向键微调，双击恢复默认"
+        />
+
+        <div
+          aria-label="工作区工具"
+          className={isResizingWorkspace ? "nav-stack resizing" : "nav-stack"}
+          id="workspace-nav-stack"
+          ref={workspaceStackRef}
+          style={{ height: workspaceHeight }}
+        >
           <div className="section-label">
             <Settings2 size={14} aria-hidden="true" />
             <span>工作区</span>
@@ -680,6 +920,15 @@ async function handleGenerateReport() {
             <LayoutDashboard size={15} aria-hidden="true" />
             <span>仪表盘</span>
             <strong>{sessions.length}</strong>
+          </button>
+          <button
+            className={activePanel === "archived" ? "nav-item active" : "nav-item"}
+            onClick={() => openPanel("archived")}
+            type="button"
+          >
+            <Archive size={15} aria-hidden="true" />
+            <span>归档</span>
+            <strong>{archivedSessions.length}</strong>
           </button>
           <button
             className={activePanel === "model-config" ? "nav-item active" : "nav-item"}
@@ -697,25 +946,34 @@ async function handleGenerateReport() {
           >
             <Network size={15} aria-hidden="true" />
             <span>知识图谱</span>
-            <strong>{skillPacks.length + Math.min(tools.length, 10) + Math.min(sessions.length, 5) + 7 + (activeSession?.artifacts?.length ?? streamArtifacts.length)}</strong>
+            <strong>{Math.min(tools.length, 10) + Math.min(sessions.length, 5) + 7 + (activeSession?.artifacts?.length ?? streamArtifacts.length)}</strong>
+          </button>
+          <button
+            className={activePanel === "plugins" ? "nav-item active" : "nav-item"}
+            onClick={() => openPanel("plugins")}
+            type="button"
+          >
+            <PlugZap size={15} aria-hidden="true" />
+            <span>插件</span>
+            <strong>{plugins.length}</strong>
           </button>
           <button
             className={activePanel === "skills" ? "nav-item active" : "nav-item"}
             onClick={() => openPanel("skills")}
             type="button"
           >
-            <Wrench size={15} aria-hidden="true" />
+            <Sparkles size={15} aria-hidden="true" />
             <span>技能</span>
-            <strong>{enabledSkillCount}/{tools.length}</strong>
+            <strong>{skills.filter((skill) => skill.status === "loaded").length}</strong>
           </button>
           <button
-            className={activePanel === "mcp" ? "nav-item active" : "nav-item"}
-            onClick={() => openPanel("mcp")}
+            className={activePanel === "tools" ? "nav-item active" : "nav-item"}
+            onClick={() => openPanel("tools")}
             type="button"
           >
-            <PlugZap size={15} aria-hidden="true" />
-            <span>MCP 工具</span>
-            <strong>{mcpTools.length}</strong>
+            <Wrench size={15} aria-hidden="true" />
+            <span>工具</span>
+            <strong>{enabledToolCount}/{tools.length}</strong>
           </button>
           <button
             className={activePanel === "plan" ? "nav-item active" : "nav-item"}
@@ -776,7 +1034,7 @@ async function handleGenerateReport() {
                   activeArtifacts,
                   activeToolInvocations,
                   enabledMcpCount,
-                  enabledSkillCount,
+                  enabledToolCount,
                   mcpTools,
                   pendingApprovals,
                   tools,
@@ -786,7 +1044,7 @@ async function handleGenerateReport() {
                     activeArtifacts,
                     activeToolInvocations,
                     enabledMcpCount,
-                    enabledSkillCount,
+                    enabledToolCount,
                     mcpTools,
                     pendingApprovals,
                     tools,
@@ -794,7 +1052,7 @@ async function handleGenerateReport() {
                   })}</p>
                 ) : null}
               </div>
-              {activePanel !== "skills" ? (
+              {activePanel !== "tools" ? (
                 <div className={`approval-dot ${pendingApprovals.length ? "active" : ""}`} title="待审批">
                   {pendingApprovals.length}
                 </div>
@@ -814,14 +1072,21 @@ async function handleGenerateReport() {
                     setReportDialogOpen(true);
                   }}
                   sessions={sessions}
-                  skillPacks={skillPacks}
+                  skills={skills}
                   toolInvocations={activeToolInvocations}
                   tools={tools}
                 />
               </div>
+            ) : activePanel === "archived" ? (
+              <div className="config-inspector">
+                <ArchivedSessionsView
+                  archivedSessions={archivedSessions}
+                  onDelete={(id) => void deleteSessionById(id)}
+                  onRestore={(id) => void unarchiveSessionById(id)}
+                />
+              </div>
             ) : activePanel === "knowledge-graph" ? (
               <KnowledgeGraphView
-                skillPacks={skillPacks}
                 tools={tools}
                 mcpTools={mcpTools}
                 sessions={sessions}
@@ -832,9 +1097,25 @@ async function handleGenerateReport() {
               />
             ) : activePanel === "model-config" ? (
               <ModelConfigView onConfigChanged={refreshHealth} />
+            ) : activePanel === "plugins" ? (
+              <PluginView onReload={reloadPluginState} plugins={plugins} />
             ) : activePanel === "skills" ? (
-            
-              <div className="config-grid skills-config">
+              <SkillView onReload={reloadSkillState} skills={skills} />
+            ) : activePanel === "tools" ? (
+              <div className="tool-workspace">
+                <div className="tool-workspace-tabs" role="tablist" aria-label="工具工作区视图">
+                  <button aria-selected={toolWorkspaceTab === "scope"} className={toolWorkspaceTab === "scope" ? "active" : ""} onClick={() => setToolWorkspaceTab("scope")} role="tab" type="button">
+                    <Wrench size={15} aria-hidden="true" />
+                    <span>工具范围</span>
+                  </button>
+                  <button aria-selected={toolWorkspaceTab === "mcp"} className={toolWorkspaceTab === "mcp" ? "active" : ""} onClick={() => setToolWorkspaceTab("mcp")} role="tab" type="button">
+                    <PlugZap size={15} aria-hidden="true" />
+                    <span>MCP 服务</span>
+                    <strong>{mcpServers.servers.length}</strong>
+                  </button>
+                </div>
+                {toolWorkspaceTab === "scope" ? (
+                  <div className="config-grid skills-config">
                 <section className="config-section wide">
                   <div className="section-label">
                     <Wrench size={14} aria-hidden="true" />
@@ -860,18 +1141,18 @@ async function handleGenerateReport() {
                   </div>
                   <div className="section-label">
                     <Search size={14} aria-hidden="true" />
-                    <span>搜索技能</span>
+                    <span>搜索工具</span>
                   </div>
                   <input
-                    aria-label="筛选技能"
-                    className="capability-search"
+                    aria-label="筛选工具"
+                    className="tool-search"
                     onChange={(event) => setToolQuery(event.target.value)}
-                    placeholder="筛选技能..."
+                    placeholder="筛选工具..."
                     type="search"
                     value={toolQuery}
                   />
-                  <div className="capability-filters" aria-label="工具类别筛选">
-                    {capabilityFilters.map((filter) => (
+                  <div className="tool-filters" aria-label="工具类别筛选">
+                    {toolClassFilters.map((filter) => (
                       <button
                         aria-pressed={toolClassFilter === filter.id}
                         className={toolClassFilter === filter.id ? "active" : ""}
@@ -885,33 +1166,10 @@ async function handleGenerateReport() {
                   </div>
                 </section>
 
-                <section className="config-section">
-                  <div className="section-label">
-                    <PlugZap size={14} aria-hidden="true" />
-                    <span>技能包</span>
-                  </div>
-                  <div className="pack-list">
-                    {skillPacks.map((pack) => (
-                      <label className="pack-row pack-toggle" key={pack.id}>
-                        <input
-                          checked={isPackFullyEnabled(pack)}
-                          disabled={fullAccessActive}
-                          onChange={() => togglePack(pack.id)}
-                          type="checkbox"
-                        />
-                        <span className="pack-copy">
-                          <strong>{pack.name}</strong>
-                          <small>{pack.version} · {enabledCountForPack(pack)}/{pack.tools.length} enabled</small>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="config-section">
+                <section className="config-section wide">
                   <div className="section-label">
                     <Wrench size={14} aria-hidden="true" />
-                    <span>技能</span>
+                    <span>工具</span>
                   </div>
                   <div className="tool-list">
                     {visibleTools.length ? visibleTools.map((tool) => (
@@ -924,7 +1182,6 @@ async function handleGenerateReport() {
                         />
                         <span className="tool-copy">
                           <strong>{tool.name}</strong>
-                          <small>{tool.skillPackId}</small>
                           <span className="tool-badges">
                             <em>{tool.toolClass}</em>
                             <em className={`risk-${tool.risk}`}>{tool.risk}</em>
@@ -932,9 +1189,26 @@ async function handleGenerateReport() {
                           </span>
                         </span>
                       </label>
-                    )) : <p className="empty-state">没有匹配的技能</p>}
+                    )) : <p className="empty-state">没有匹配的工具</p>}
                   </div>
                 </section>
+                  </div>
+                ) : (
+                  <div className="mcp-workspace">
+                    <McpServerConfigView onChanged={applyMcpServerState} state={mcpServers} />
+                    <section className="config-section wide mcp-call-console">
+                      <McpView
+                        isRunning={isMcpRunning}
+                        mcpResult={mcpResult}
+                        mcpTools={mcpTools}
+                        onCall={callMcp}
+                        onResolveApproval={resolveApproval}
+                        permissionMode={effectivePermissionMode}
+                        resolvingApprovalId={resolvingApprovalId}
+                      />
+                    </section>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="config-inspector">
@@ -983,21 +1257,6 @@ async function handleGenerateReport() {
                   >
                     <DatabaseZap size={15} aria-hidden="true" />
                     <span>证据</span>
-                  </button>
-                  <button
-                    aria-controls="panel-mcp"
-                    aria-selected={tab === "mcp"}
-                    className={tab === "mcp" ? "active" : ""}
-                    id="tab-mcp"
-                    onClick={() => {
-                      setTab("mcp");
-                      setActivePanel("mcp");
-                    }}
-                    role="tab"
-                    type="button"
-                  >
-                    <PlugZap size={15} aria-hidden="true" />
-                    <span>MCP</span>
                   </button>
                 </div>
                 {tab === "plan" ? (
@@ -1057,19 +1316,6 @@ async function handleGenerateReport() {
                     {activeArtifacts.length > 0 ? <MitreMatrix artifacts={activeArtifacts} toolInvocations={activeToolInvocations} /> : null}
                   </div>
                 ) : null}
-                {tab === "mcp" ? (
-                  <div aria-labelledby="tab-mcp" id="panel-mcp" role="tabpanel">
-                    <McpView
-                      isRunning={isMcpRunning}
-                      mcpResult={mcpResult}
-                      mcpTools={mcpTools}
-                      onCall={callMcp}
-                      onResolveApproval={resolveApproval}
-                      permissionMode={effectivePermissionMode}
-                      resolvingApprovalId={resolvingApprovalId}
-                    />
-                  </div>
-                ) : null}
               </div>
             )}
           </section>
@@ -1078,7 +1324,7 @@ async function handleGenerateReport() {
         <header className="topbar">
           <div>
             <h2>安全运营控制台</h2>
-            <p>{enabledSkillCount} 个技能已启用 · {enabledMcpCount} 个 MCP 兼容 · {health?.actionLevel ?? "沙箱"} 访问</p>
+            <p>{enabledToolCount} 个工具已启用 · {enabledMcpCount} 个 MCP 工具 · {health?.actionLevel ?? "沙箱"} 访问</p>
           </div>
           <div className="topbar-actions">
             <div className="segmented" aria-label="权限模式">
@@ -1245,17 +1491,23 @@ function panelTitle(panel: WorkbenchPanel): string {
   if (panel === "dashboard") {
     return "仪表盘";
   }
+  if (panel === "archived") {
+    return "归档对话";
+  }
   if (panel === "knowledge-graph") {
     return "知识图谱";
   }
   if (panel === "model-config") {
     return "模型配置";
   }
+  if (panel === "plugins") {
+    return "插件";
+  }
   if (panel === "skills") {
     return "技能";
   }
-  if (panel === "mcp") {
-    return "MCP 工具";
+  if (panel === "tools") {
+    return "工具";
   }
   if (panel === "audit") {
     return "审计追踪";
@@ -1272,15 +1524,18 @@ function panelSubtitle(
     activeArtifacts: EvidenceArtifact[];
     activeToolInvocations: ToolInvocation[];
     enabledMcpCount: number;
-    enabledSkillCount: number;
+    enabledToolCount: number;
     mcpTools: McpToolSummary[];
     pendingApprovals: PendingApproval[];
-    tools: SkillManifest[];
+    tools: ToolManifest[];
     visibleAudit: AuditEvent[];
   }
 ): string {
   if (panel === "dashboard") {
     return "概览";
+  }
+  if (panel === "archived") {
+    return "已归档对话，可恢复或删除";
   }
   if (panel === "knowledge-graph") {
     return "";
@@ -1288,11 +1543,14 @@ function panelSubtitle(
   if (panel === "model-config") {
     return "启动前编辑 runtime/config/model.json 读取 · 启动后界面 CRUD 或从文件重载，均无需重启";
   }
-  if (panel === "skills") {
-    return `${context.enabledSkillCount}/${context.tools.length} 已启用 · ${context.enabledMcpCount} 个 MCP 兼容`;
+  if (panel === "plugins") {
+    return "插件安装状态与插件 MCP 连接";
   }
-  if (panel === "mcp") {
-    return `${context.mcpTools.length} 个工具 · ${context.pendingApprovals.length} 个待审批`;
+  if (panel === "skills") {
+    return "技能目录、来源与正文";
+  }
+  if (panel === "tools") {
+    return `${context.enabledToolCount}/${context.tools.length} 已启用 · ${context.enabledMcpCount} 个 MCP 工具`;
   }
   if (panel === "audit") {
     return `${context.visibleAudit.length} 条审计事件`;
@@ -1301,6 +1559,46 @@ function panelSubtitle(
     return `${context.activeArtifacts.length} 个证据工件`;
   }
   return `${context.activeToolInvocations.length} 次工具调用 · ${context.pendingApprovals.length} 个待审批`;
+}
+
+function ArchivedSessionsView({
+  archivedSessions,
+  onRestore,
+  onDelete
+}: {
+  archivedSessions: AgentSessionSummary[];
+  onRestore: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <section className="config-section wide archived-session-section">
+      <div className="section-label">
+        <ArchiveRestore size={14} aria-hidden="true" />
+        <span>归档对话</span>
+      </div>
+      {archivedSessions.length ? archivedSessions.map((session) => (
+        <div className="archived-session-row" key={session.id}>
+          <div className="archived-session-copy">
+            <strong>{sessionTitle(session)}</strong>
+            <small>
+              {session.messageCount} 条消息 · {session.toolInvocationCount} 次工具调用
+              {session.guidanceCount ? ` · ${session.guidanceCount} 引导` : ""}
+            </small>
+          </div>
+          <div className="archived-session-actions">
+            <button onClick={() => onRestore(session.id)} title="恢复对话" type="button">
+              <ArchiveRestore size={14} aria-hidden="true" />
+              <span>恢复</span>
+            </button>
+            <button className="danger" onClick={() => onDelete(session.id)} title="删除对话" type="button">
+              <Trash2 size={14} aria-hidden="true" />
+              <span>删除</span>
+            </button>
+          </div>
+        </div>
+      )) : <p className="empty-state">暂无归档对话</p>}
+    </section>
+  );
 }
 
 function renderMarkdown(text: string): string {
@@ -1482,10 +1780,24 @@ function auditEventsFromRunEvents(events: AgentRunEvent[]): AuditEvent[] {
     .map((event) => event.audit);
 }
 
-function defaultEnabledToolIds(tools: SkillManifest[]): string[] {
+function defaultEnabledToolIds(tools: ToolManifest[]): string[] {
   return tools
     .filter((tool) => tool.risk !== "high")
     .map((tool) => tool.id);
+}
+
+export function reconcileEnabledTools(
+  current: ReadonlySet<string>,
+  previousTools: ToolManifest[],
+  nextTools: ToolManifest[]
+): Set<string> {
+  const previousIds = new Set(previousTools.map((tool) => tool.id));
+  const nextIds = new Set(nextTools.map((tool) => tool.id));
+  const newDefaults = defaultEnabledToolIds(nextTools).filter((id) => !previousIds.has(id));
+  return new Set([
+    ...[...current].filter((id) => nextIds.has(id)),
+    ...newDefaults
+  ]);
 }
 
 function upsertInvocation(current: ToolInvocation[], invocation: ToolInvocation): ToolInvocation[] {
@@ -1960,7 +2272,7 @@ function DashboardView({
   onExportReport,
   onOpenReportDialog,
   sessions,
-  skillPacks,
+  skills,
   toolInvocations,
   tools
 }: {
@@ -1970,9 +2282,9 @@ function DashboardView({
   onExportReport: (fmt: "markdown" | "json") => void;
   onOpenReportDialog: () => void;
   sessions: AgentSessionSummary[];
-  skillPacks: SkillPackManifest[];
+  skills: SkillSummary[];
   toolInvocations: ToolInvocation[];
-  tools: SkillManifest[];
+  tools: ToolManifest[];
 }) {
   const totalToolCalls = toolInvocations.length;
   const lowRisk = toolInvocations.filter((t) => t.risk === "low").length;
@@ -2020,7 +2332,7 @@ function DashboardView({
         <div className="dashboard-card">
           <div className="dashboard-stat">
             <Sparkles size={18} aria-hidden="true" />
-            <span className="stat-value">{skillPacks.length}</span>
+            <span className="stat-value">{skills.length}</span>
           </div>
           <span className="stat-label">技能</span>
         </div>
@@ -2154,7 +2466,7 @@ function McpView({
 
   return (
     <div className="inspector-body">
-      <h3>MCP 工具</h3>
+      <h3>MCP 工具调用</h3>
       <form className="mcp-form" onSubmit={submitMcpTool}>
         <label className="mcp-field">
           <span>工具</span>
@@ -2184,7 +2496,7 @@ function McpView({
         {mcpTools.map((tool) => (
           <div className="mcp-row" key={tool.name}>
             <strong>{tool.name}</strong>
-            <small>{tool.manifest.skillPackId} · {tool.manifest.toolClass} · {tool.manifest.risk}</small>
+            <small>{tool.manifest.toolClass} · {tool.manifest.risk}</small>
           </div>
         ))}
       </div>
@@ -2210,7 +2522,7 @@ function McpView({
   );
 }
 
-function manifestFields(manifest: SkillManifest) {
+function manifestFields(manifest: ToolManifest) {
   const required = new Set(manifest.inputSchema.required ?? []);
   return Object.entries(manifest.inputSchema.properties)
     .filter(([, property]) => isRecord(property))
@@ -2221,7 +2533,7 @@ function manifestFields(manifest: SkillManifest) {
     }));
 }
 
-function defaultValuesForManifest(manifest: SkillManifest): Record<string, string> {
+function defaultValuesForManifest(manifest: ToolManifest): Record<string, string> {
   const values: Record<string, string> = {};
   for (const { name, property } of manifestFields(manifest)) {
     const enumValues = Array.isArray(property.enum)
@@ -2232,7 +2544,7 @@ function defaultValuesForManifest(manifest: SkillManifest): Record<string, strin
   return values;
 }
 
-function argsFromManifest(manifest: SkillManifest, values: Record<string, string>): Record<string, unknown> {
+function argsFromManifest(manifest: ToolManifest, values: Record<string, string>): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   for (const { name, property, required } of manifestFields(manifest)) {
     const raw = values[name] ?? "";

@@ -1,8 +1,8 @@
 # Wazuh SecOps Plugin
 
-这是可复用的 Wazuh 安全运营工具包，也是 Agent Skills 与 MCP stdio 包装。它是 Wazuh 领域能力的唯一 owner；主应用只做审批、审计、权限和 UI 适配。
+这是独立的 Wazuh 安全运营插件，包含 Agent Skills 与 MCP stdio 集成。它负责 Wazuh 领域实现；主应用只做审批、审计、权限和 UI 适配。
 
-## 当前能力
+## 当前功能
 
 - Wazuh Server API client 与 Indexer/OpenSearch alert search client。
 - 脱敏配置状态检查：不会输出密码、token 或完整凭证。
