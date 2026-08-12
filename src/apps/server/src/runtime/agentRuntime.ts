@@ -473,18 +473,38 @@ export class AgentRuntime {
         emit({ type: "audit", audit: responseAudit });
       } else {
         // ══════════════════════════════════════════════════════════════
-        // Deterministic local pre-route followed by one final model execution.
+        // 新默认路径：确定性本地预路由后一次最终模型执行；
+        // single=旧单阶段兼容基线（不预路由，暴露全部启用工具）。
         // ══════════════════════════════════════════════════════════════
-        routing = measureRouting(() => toolRouter.route({
-          registry: this.options.registry,
-          messages: request.messages,
-          enabledTools: effectiveEnabledTools,
-          permissionMode: effectivePermissionMode,
-          actionLevel: this.options.actionLevel
-        }));
+        if (routingMode === "single") {
+          const singleToolIds = this.options.registry.manifests()
+            .filter((manifest) => (
+              effectiveEnabledTools === undefined || effectiveEnabledTools.includes(manifest.id)
+            ))
+            .map((manifest) => manifest.id);
+          routing = {
+            mode: "single",
+            selectedToolIds: singleToolIds,
+            groups: [],
+            confidence: { level: "high", score: 1 },
+            reasons: ["Legacy single-stage mode requested; no deterministic pre-route is applied."],
+            additionalModelStage: {
+              used: false,
+              reason: "Legacy single-stage mode performs exactly one final model execution."
+            }
+          };
+        } else {
+          routing = measureRouting(() => toolRouter.route({
+            registry: this.options.registry,
+            messages: request.messages,
+            enabledTools: effectiveEnabledTools,
+            permissionMode: effectivePermissionMode,
+            actionLevel: this.options.actionLevel
+          }));
+        }
         const routeAudit = event(
           "routing_decision",
-          "Deterministic route",
+          routingMode === "single" ? "Legacy single-stage route" : "Deterministic route",
           routingDetail(routing)
         );
         audit.push(routeAudit);

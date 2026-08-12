@@ -8,7 +8,8 @@ export type ToolClass = "perception" | "reasoning" | "evidence" | "action";
 
 export type AutomationLevel = "observe" | "sandbox" | "full-access";
 
-export type AgentRoutingMode = "deterministic" | "layered";
+/** single=旧单阶段兼容基线；layered=旧双阶段回滚；deterministic=新默认路径。 */
+export type AgentRoutingMode = "single" | "deterministic" | "layered";
 
 export type ToolGuidanceKind = "precondition" | "missing_context" | "policy" | "validation";
 

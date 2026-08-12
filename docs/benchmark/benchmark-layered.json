@@ -1,0 +1,994 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-12T11:52:12.812Z",
+  "mode": "layered",
+  "baseUrl": "http://127.0.0.1:4322",
+  "runs": 3,
+  "scenarios": {
+    "simple": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 2714.4,
+          "totalDurationMs": 2676.7,
+          "localOrchestrationDurationMs": 17.69,
+          "localRoutingDurationMs": 1.29,
+          "timeToFirstTextMs": 2495.78,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 2659,
+          "inputTokens": 1576,
+          "outputTokens": 117,
+          "reasoningTokens": 58,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 2286.44,
+          "totalDurationMs": 2280.94,
+          "localOrchestrationDurationMs": 6.5,
+          "localRoutingDurationMs": 0.38,
+          "timeToFirstTextMs": 2264.24,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 2274.44,
+          "inputTokens": 1573,
+          "outputTokens": 119,
+          "reasoningTokens": 87,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 1870.43,
+          "totalDurationMs": 1865.25,
+          "localOrchestrationDurationMs": 6.66,
+          "localRoutingDurationMs": 0.39,
+          "timeToFirstTextMs": 1709.79,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 1858.59,
+          "inputTokens": 1565,
+          "outputTokens": 75,
+          "reasoningTokens": 37,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 2286.44,
+          "p95": 2714.4
+        },
+        "totalDurationMs": {
+          "median": 2280.94,
+          "p95": 2676.7
+        },
+        "timeToFirstTextMs": {
+          "median": 2264.24,
+          "p95": 2495.78
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 1573,
+          "p95": 1576
+        },
+        "outputTokens": {
+          "median": 117,
+          "p95": 119
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      }
+    },
+    "read-tool": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 6447.43,
+          "totalDurationMs": 6443.7,
+          "localOrchestrationDurationMs": 9.65,
+          "localRoutingDurationMs": 0.45,
+          "modelRequestCount": 3,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 6434.05,
+          "inputTokens": 4096,
+          "outputTokens": 472,
+          "reasoningTokens": 76,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 1,
+          "toolTotalDurationMs": 1.74,
+          "cacheHits": 0,
+          "cacheMisses": 1,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 6916.19,
+          "totalDurationMs": 6912.36,
+          "localOrchestrationDurationMs": 32.64,
+          "localRoutingDurationMs": 0.44,
+          "modelRequestCount": 3,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 6879.7,
+          "inputTokens": 4193,
+          "outputTokens": 563,
+          "reasoningTokens": 77,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.34,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.45,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 10021.12,
+          "totalDurationMs": 10017.5,
+          "localOrchestrationDurationMs": 8.77,
+          "localRoutingDurationMs": 0.62,
+          "timeToFirstTextMs": 7271.99,
+          "modelRequestCount": 4,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 10008.73,
+          "inputTokens": 5881,
+          "outputTokens": 937,
+          "reasoningTokens": 135,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.26,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.45,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 6916.19,
+          "p95": 10021.12
+        },
+        "totalDurationMs": {
+          "median": 6912.36,
+          "p95": 10017.5
+        },
+        "timeToFirstTextMs": {
+          "median": 7271.99,
+          "p95": 7271.99
+        },
+        "modelRequestCount": {
+          "median": 3,
+          "p95": 4
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 0.34,
+          "p95": 1.74
+        },
+        "cacheHits": 2,
+        "cacheMisses": 1,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.45,
+          "p95": 0.45
+        },
+        "inputTokens": {
+          "median": 4193,
+          "p95": 5881
+        },
+        "outputTokens": {
+          "median": 563,
+          "p95": 937
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      }
+    },
+    "cached-read": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 7784.19,
+          "totalDurationMs": 7767.37,
+          "localOrchestrationDurationMs": 7.43,
+          "localRoutingDurationMs": 0.43,
+          "timeToFirstTextMs": 6892.78,
+          "modelRequestCount": 3,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 7759.92,
+          "inputTokens": 4248,
+          "outputTokens": 756,
+          "reasoningTokens": 110,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.38,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.45,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 5860.45,
+          "totalDurationMs": 5853.47,
+          "localOrchestrationDurationMs": 6.49,
+          "localRoutingDurationMs": 0.42,
+          "timeToFirstTextMs": 5794.56,
+          "modelRequestCount": 3,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 5846.97,
+          "inputTokens": 4196,
+          "outputTokens": 555,
+          "reasoningTokens": 103,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.29,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.45,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 7295.09,
+          "totalDurationMs": 7291.46,
+          "localOrchestrationDurationMs": 6.26,
+          "localRoutingDurationMs": 0.4,
+          "timeToFirstTextMs": 5690.56,
+          "modelRequestCount": 3,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 7285.19,
+          "inputTokens": 4197,
+          "outputTokens": 729,
+          "reasoningTokens": 149,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.25,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.45,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 7295.09,
+          "p95": 7784.19
+        },
+        "totalDurationMs": {
+          "median": 7291.46,
+          "p95": 7767.37
+        },
+        "timeToFirstTextMs": {
+          "median": 5794.56,
+          "p95": 6892.78
+        },
+        "modelRequestCount": {
+          "median": 3,
+          "p95": 3
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0.29,
+          "p95": 0.38
+        },
+        "cacheHits": 3,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.45,
+          "p95": 0.45
+        },
+        "inputTokens": {
+          "median": 4197,
+          "p95": 4248
+        },
+        "outputTokens": {
+          "median": 729,
+          "p95": 756
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      }
+    },
+    "long-context": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 2650.08,
+          "totalDurationMs": 2641.73,
+          "localOrchestrationDurationMs": 5.92,
+          "localRoutingDurationMs": 0.41,
+          "timeToFirstTextMs": 2408.1,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 2635.8,
+          "inputTokens": 2116,
+          "outputTokens": 157,
+          "reasoningTokens": 108,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 2398.21,
+          "totalDurationMs": 2394.08,
+          "localOrchestrationDurationMs": 5.52,
+          "localRoutingDurationMs": 0.29,
+          "timeToFirstTextMs": 2284.94,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 2388.54,
+          "inputTokens": 2113,
+          "outputTokens": 133,
+          "reasoningTokens": 100,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "layered",
+          "clientObservedDurationMs": 3391.14,
+          "totalDurationMs": 3387.23,
+          "localOrchestrationDurationMs": 6.35,
+          "localRoutingDurationMs": 0.28,
+          "timeToFirstTextMs": 3288,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 3380.87,
+          "inputTokens": 2118,
+          "outputTokens": 287,
+          "reasoningTokens": 248,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "layered",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 0.85
+            },
+            "additionalModelStage": {
+              "used": true,
+              "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 2650.08,
+          "p95": 3391.14
+        },
+        "totalDurationMs": {
+          "median": 2641.73,
+          "p95": 3387.23
+        },
+        "timeToFirstTextMs": {
+          "median": 2408.1,
+          "p95": 3288
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 2116,
+          "p95": 2118
+        },
+        "outputTokens": {
+          "median": 157,
+          "p95": 287
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      }
+    },
+    "plugin-reload": {
+      "status": "completed",
+      "tool": {
+        "id": "shuffle.config.status",
+        "name": "Shuffle Configuration Status"
+      },
+      "routed": true,
+      "run": {
+        "status": "completed",
+        "mode": "layered",
+        "clientObservedDurationMs": 10866.02,
+        "totalDurationMs": 10857.81,
+        "localOrchestrationDurationMs": 27.91,
+        "localRoutingDurationMs": 1.38,
+        "timeToFirstTextMs": 7419.48,
+        "modelRequestCount": 3,
+        "modelRetryCount": 0,
+        "modelTotalDurationMs": 10829.85,
+        "inputTokens": 3762,
+        "outputTokens": 1049,
+        "reasoningTokens": 517,
+        "toolCallCount": 1,
+        "toolHandlerCallCount": 1,
+        "toolTotalDurationMs": 4.07,
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 1,
+        "cacheEvictions": 0,
+        "cacheExpiredEntries": 0,
+        "cacheInvalidatedEntries": 0,
+        "cacheAvoidedToolDurationMs": 0,
+        "persistenceOperationCount": 0,
+        "persistenceDurationMs": 0,
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "maxInputTokens": 64000,
+          "reservedOutputTokens": 4000,
+          "withinBudget": true,
+          "summarizedMessages": 0,
+          "droppedMessages": 0
+        },
+        "routing": {
+          "mode": "layered",
+          "selectedToolIds": [
+            "shuffle.config.status"
+          ],
+          "confidence": {
+            "level": "medium",
+            "score": 0.65
+          },
+          "additionalModelStage": {
+            "used": true,
+            "reason": "SECOPS_AGENT_ROUTING_MODE=layered enables the temporary two-stage rollback path."
+          }
+        }
+      },
+      "summary": {
+        "sampleCount": 1,
+        "completedRuns": 1,
+        "clientObservedDurationMs": {
+          "median": 10866.02,
+          "p95": 10866.02
+        },
+        "totalDurationMs": {
+          "median": 10857.81,
+          "p95": 10857.81
+        },
+        "timeToFirstTextMs": {
+          "median": 7419.48,
+          "p95": 7419.48
+        },
+        "modelRequestCount": {
+          "median": 3,
+          "p95": 3
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 4.07,
+          "p95": 4.07
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 1,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 3762,
+          "p95": 3762
+        },
+        "outputTokens": {
+          "median": 1049,
+          "p95": 1049
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "routed": true,
+        "expectation": {
+          "modelRequestCount": 1,
+          "routed": true
+        }
+      }
+    }
+  }
+}
