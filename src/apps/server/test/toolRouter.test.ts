@@ -4,18 +4,17 @@ import { toolRouter } from "../src/runtime/toolRouter.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/types.js";
 
-function pluginTool(apiName: string, manifestId: string, packId: string, deferLoading = true): SecOpsTool {
+function pluginTool(apiName: string, manifestId: string, sourceTag: string, deferLoading = true): SecOpsTool {
   return {
     apiName,
     manifest: {
       id: manifestId,
-      skillPackId: packId,
       name: manifestId,
       description: "Plugin tool.",
       toolClass: "perception",
       risk: "low",
       deferLoading,
-      tags: [packId],
+      tags: [sourceTag],
       mcpCompatible: true,
       inputSchema: { type: "object", properties: {} }
     },

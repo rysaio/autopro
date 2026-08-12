@@ -52,7 +52,6 @@ describe("wazuh plugin tools", () => {
 
     expect(tools.map((tool) => tool.manifest.id)).toEqual(expectedManifests);
     expect(tools.map((tool) => tool.apiName)).toEqual(expectedApiNames);
-    expect(tools.every((tool) => tool.manifest.skillPackId === "secops-wazuh")).toBe(true);
     expect(tools.every((tool) => tool.manifest.mcpCompatible)).toBe(true);
   });
 

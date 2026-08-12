@@ -1,5 +1,5 @@
-﻿import { describe, expect, it } from "vitest";
-import type { EvidenceArtifact, SkillManifest, ToolGuidance, ToolInvocation } from "@secops-agent/shared";
+import { describe, expect, it } from "vitest";
+import type { EvidenceArtifact, ToolManifest, ToolGuidance, ToolInvocation } from "@secops-agent/shared";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { ModelTool } from "../src/providers/types.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/types.js";
@@ -34,40 +34,8 @@ describe("ToolRegistry", () => {
     expect(manifests).toHaveLength(12);
     expect(new Set(manifests.map((manifest) => manifest.id)).size).toBe(manifests.length);
     expect(manifests.every((manifest) => manifest.mcpCompatible)).toBe(true);
-    expect(manifests.every((manifest) => manifest.skillPackId)).toBe(true);
     expect(manifests.filter((manifest) => manifest.toolClass === "action")).toHaveLength(3);
     expect(manifests.find((manifest) => manifest.id === "full_access.exec")?.risk).toBe("high");
-  });
-
-  it("groups registered tools into skill packs", () => {
-    const registry = new ToolRegistry();
-    const packs = registry.skillPacks();
-
-    expect(packs.map((pack) => pack.id)).toEqual([
-      "secops-actions",
-      "secops-core",
-      "secops-full-access",
-      "secops-reports"
-    ]);
-    expect(packs.find((pack) => pack.id === "secops-core")?.tools).toEqual([
-      "alert.triage.playbook",
-      "asset.inventory.lookup",
-      "case.evidence.pack",
-      "detection.rule.search",
-      "ioc.enrich",
-      "mitre.attack.search",
-      "threat.intel.lookup"
-    ]);
-    expect(packs.find((pack) => pack.id === "secops-reports")?.tools).toEqual([
-      "report.export",
-      "report.generate"
-    ]);
-    expect(packs.find((pack) => pack.id === "secops-full-access")?.tools).toEqual(["full_access.exec"]);
-    expect(packs.find((pack) => pack.id === "secops-actions")?.tools).toEqual([
-      "case.note.write",
-      "command.run.sandbox"
-    ]);
-    expect(packs.every((pack) => pack.mcpCompatible)).toBe(true);
   });
 
   it("registers and removes external plugin tools dynamically", () => {
@@ -80,8 +48,10 @@ describe("ToolRegistry", () => {
 
     registry.registerTools([external]);
     expect(registry.manifests()).toHaveLength(13);
-    expect(registry.manifests().find((manifest) => manifest.id === "external.hello")?.skillPackId).toBe("test-pack");
-    expect(registry.skillPacks().find((pack) => pack.id === "test-pack")?.tools).toEqual(["external.hello"]);
+    expect(registry.manifests().find((manifest) => manifest.id === "external.hello")).toMatchObject({
+      id: "external.hello",
+      name: "External Hello"
+    });
 
     registry.unregisterExternalTools();
     expect(registry.manifests()).toHaveLength(12);
@@ -367,7 +337,7 @@ describe("ToolRegistry", () => {
 class TestTool implements SecOpsTool {
   constructor(
     readonly apiName: string,
-    readonly manifest: SkillManifest,
+    readonly manifest: ToolManifest,
     private readonly handler: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolExecutionResult>
   ) {}
 
@@ -387,10 +357,9 @@ class TestTool implements SecOpsTool {
   }
 }
 
-function testManifest(id: string, name: string): SkillManifest {
+function testManifest(id: string, name: string): ToolManifest {
   return {
     id,
-    skillPackId: "test-pack",
     name,
     description: "Test tool.",
     toolClass: "perception",

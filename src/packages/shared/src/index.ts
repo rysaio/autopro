@@ -52,9 +52,8 @@ export interface ToolSchema {
   additionalProperties?: boolean;
 }
 
-export interface SkillManifest {
+export interface ToolManifest {
   id: string;
-  skillPackId: string;
   name: string;
   description: string;
   toolClass: ToolClass;
@@ -66,14 +65,21 @@ export interface SkillManifest {
   mcpCompatible: boolean;
 }
 
-export interface SkillPackManifest {
+export type SkillSource = "standalone" | "plugin";
+
+export interface SkillSummary {
   id: string;
   name: string;
   description: string;
-  version: string;
-  tags: string[];
-  tools: string[];
-  mcpCompatible: boolean;
+  source: SkillSource;
+  status: "loaded" | "error";
+  pluginId?: string;
+  error?: string;
+}
+
+export interface SkillContent extends SkillSummary {
+  status: "loaded";
+  content: string;
 }
 
 export interface ToolInvocation {
@@ -236,9 +242,39 @@ export interface PluginSummary {
   id: string;
   name: string;
   version: string;
-  status: "loaded" | "error";
+  description: string;
+  status: "loaded" | "degraded" | "error";
   toolCount: number;
+  skillCount: number;
+  mcpServers?: Array<{
+    name: string;
+    status: "loaded" | "error";
+    toolCount: number;
+    error?: string;
+  }>;
   error?: string;
+}
+
+export type McpServerTransport = "stdio" | "streamable-http";
+
+export interface McpServerSummary {
+  id: string;
+  name: string;
+  transport: McpServerTransport;
+  enabled: boolean;
+  status: "connected" | "disabled" | "error";
+  toolCount: number;
+  envKeys: string[];
+  headerNames: string[];
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  url?: string;
+  error?: string;
+}
+
+export interface McpServerConfigState {
+  servers: McpServerSummary[];
 }
 
 /** AgentEnvironment 基座聚合状态：模型连接 + 插件外围设施 + 运行时设置。 */

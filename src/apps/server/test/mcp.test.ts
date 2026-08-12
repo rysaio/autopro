@@ -1,6 +1,6 @@
-﻿import { rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
-import type { SkillManifest } from "@secops-agent/shared";
+import type { ToolManifest } from "@secops-agent/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildServer } from "../src/app.js";
 import { mcpInputSchemaForManifest } from "../src/mcp/secopsMcpServer.js";
@@ -8,9 +8,8 @@ import { testConfig } from "./fixtures/testConfig.js";
 
 describe("MCP facade", () => {
   it("fails fast for unsupported manifest input schemas", () => {
-    const base: SkillManifest = {
+    const base: ToolManifest = {
       id: "unsupported.test",
-      skillPackId: "test-pack",
       name: "Unsupported",
       description: "Test tool with unsupported inputs.",
       toolClass: "perception",
@@ -27,7 +26,7 @@ describe("MCP facade", () => {
     };
 
     // required key that is not in properties
-    const unsupportedRequired: SkillManifest = {
+    const unsupportedRequired: ToolManifest = {
       ...base,
       id: "unsupported.required",
       inputSchema: {
@@ -39,7 +38,7 @@ describe("MCP facade", () => {
         additionalProperties: false
       }
     };
-    const mixedEnum: SkillManifest = {
+    const mixedEnum: ToolManifest = {
       ...base,
       id: "unsupported.enum",
       inputSchema: {
@@ -70,16 +69,13 @@ describe("MCP facade", () => {
       url: "/api/mcp/tools"
     });
     expect(listResponse.statusCode).toBe(200);
-    expect(listResponse.json().tools).toHaveLength(12);
+    expect(listResponse.json().tools).toHaveLength(13);
 
-    const skillResponse = await app.inject({
+    const removedEndpoint = await app.inject({
       method: "GET",
-      url: "/api/mcp/skills"
+      url: "/api/mcp/tool-packs"
     });
-    expect(skillResponse.statusCode).toBe(200);
-    expect(skillResponse.json().skills.map((skill: { id: string }) => skill.id)).toContain("secops-actions");
-    expect(skillResponse.json().skills.map((skill: { id: string }) => skill.id)).toContain("secops-core");
-    expect(skillResponse.json().skills.map((skill: { id: string }) => skill.id)).toContain("secops-reports");
+    expect(removedEndpoint.statusCode).toBe(404);
 
     await app.close();
     await rm(sandboxRoot, { recursive: true, force: true });

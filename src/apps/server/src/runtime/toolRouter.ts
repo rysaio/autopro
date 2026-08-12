@@ -21,20 +21,10 @@ export type ToolCategory =
   | "reporting"        // 报告生成：事件报告、证据导出
   | "sandbox-actions"; // 沙箱操作：案例笔记、沙箱命令、全权限执行
 
-/** 工具分类映射：根据 skillPackId 或 apiName 前缀确定类别 */
-const SKILLPACK_CATEGORY: Record<string, ToolCategory> = {
-  "secops-wazuh": "wazuh-platform",
-  "secops-shuffle": "shuffle-soar",
-  "secops-reports": "reporting",
-};
-
 const CATEGORY_PATTERNS: [string, ToolCategory][] = [
   ["wazuh.", "wazuh-platform"],
   ["shuffle.", "shuffle-soar"],
-  ["secops_report_", "reporting"],
-  ["secops_case_note_write", "sandbox-actions"],
-  ["secops_command_run_sandbox", "sandbox-actions"],
-  ["secops_full_access_exec", "sandbox-actions"],
+  ["report.", "reporting"],
 ];
 
 export class ToolRouter {
@@ -66,19 +56,6 @@ export class ToolRouter {
         this.deferredIds.push(m.id);
       } else {
         this.alwaysVisibleIds.push(m.id);
-      }
-      // 核心分诊工具：SecOps Core 的 perception/reasoning 工具
-      if (m.skillPackId === "secops-core") {
-        this.categoryMap.get("core-triage")!.push(m.id);
-        continue;
-      }
-      // 按 skillPackId 分类
-      if (m.skillPackId) {
-        const cat = SKILLPACK_CATEGORY[m.skillPackId];
-        if (cat) {
-          this.categoryMap.get(cat)!.push(m.id);
-          continue;
-        }
       }
       // 动作工具
       if (m.toolClass === "action") {

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { EvidenceArtifact, SkillManifest, ToolClass, ToolRisk } from "@secops-agent/shared";
+import type { EvidenceArtifact, ToolManifest, ToolClass, ToolRisk } from "@secops-agent/shared";
 import type { ModelTool } from "../providers/types.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "./types.js";
 
@@ -13,7 +13,7 @@ type ToolHandler = (args: Record<string, unknown>, context: ToolContext) => Prom
 class ActionTool implements SecOpsTool {
   constructor(
     readonly apiName: string,
-    readonly manifest: SkillManifest,
+    readonly manifest: ToolManifest,
     private readonly handler: ToolHandler
   ) {}
 
@@ -158,11 +158,10 @@ function manifest(input: {
   toolClass: ToolClass;
   risk: ToolRisk;
   tags: string[];
-  inputSchema: SkillManifest["inputSchema"];
-}): SkillManifest {
+  inputSchema: ToolManifest["inputSchema"];
+}): ToolManifest {
   return {
     ...input,
-    skillPackId: input.id === "full_access.exec" ? "secops-full-access" : "secops-actions",
     deferLoading: true,
     mcpCompatible: true
   };

@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 
 try {
   ensureModelConfig();
+  prepareRuntimeCapabilities();
   const server = startNpmScript("dev:server");
   console.log(`[dev] waiting for backend: ${apiUrl}`);
   await waitForApi(server);
@@ -57,6 +58,40 @@ function ensureModelConfig() {
   mkdirSync(path.dirname(configPath), { recursive: true });
   copyFileSync(templatePath, configPath);
   console.log(`[dev] created default model config: ${configPath}`);
+}
+
+function prepareRuntimeCapabilities() {
+  const runtimeRoot = path.join(root, "runtime");
+  const pluginsRoot = path.join(runtimeRoot, "plugins");
+  mkdirSync(path.join(runtimeRoot, "skills"), { recursive: true });
+  mkdirSync(pluginsRoot, { recursive: true });
+  const plugins = [
+    { workspace: "@secops-agent/wazuh-secops", directory: "wazuh-secops" },
+    { workspace: "@secops-agent/shuffle-secops", directory: "shuffle-secops" }
+  ];
+  for (const plugin of plugins) {
+    if (process.platform === "win32") {
+      execFileSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `npm run build -w ${plugin.workspace}`], {
+        cwd: root,
+        stdio: "inherit"
+      });
+    } else {
+      execFileSync("npm", ["run", "build", "-w", plugin.workspace], {
+        cwd: root,
+        stdio: "inherit"
+      });
+    }
+    const sourceDir = path.join(root, "plugins", plugin.directory);
+    const targetDir = path.join(pluginsRoot, plugin.directory);
+    mkdirSync(targetDir, { recursive: true });
+    for (const item of ["dist", "package.json", ".mcp.json", ".codex-plugin", "skills", "README.md"]) {
+      const sourceItem = path.join(sourceDir, item);
+      if (existsSync(sourceItem)) {
+        cpSync(sourceItem, path.join(targetDir, item), { recursive: true, force: true });
+      }
+    }
+    console.log(`[dev] prepared runtime plugin: ${plugin.directory}`);
+  }
 }
 
 async function waitForApi(server) {

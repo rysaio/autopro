@@ -10,16 +10,20 @@ import type {
   ApprovalDecisionResult,
   AuditEvent,
   EnvironmentStatus,
+  McpServerConfigState,
   ModelConfigState,
   PermissionMode,
   PluginSummary,
   ProviderStatus,
-  RuntimeSettings
+  RuntimeSettings,
+  SkillContent,
+  SkillSummary
 } from "@secops-agent/shared";
 import type { AppConfig } from "./config.js";
 import { createAiSdkModel } from "./providers/aiSdkModelFactory.js";
 import { AgentEnvironment } from "./runtime/agentEnvironment.js";
 import { ModelConfigStore, type ModelConnection } from "./runtime/modelConfigStore.js";
+import { McpServerManager, type McpServerInput, type McpServerManagerOptions, type McpServerUpdate } from "./runtime/mcpServerManager.js";
 import { PluginManager, type PluginManagerOptions, type ResolvedMcpServer, type McpClientHandle } from "./plugins/pluginManager.js";
 import { AgentRuntime } from "./runtime/agentRuntime.js";
 import { AuditLog } from "./runtime/auditLog.js";
@@ -28,6 +32,8 @@ import { PostgresSessionStore } from "./runtime/postgresSessionStore.js";
 import { isAutomationLevel, RuntimeSettingsStore } from "./runtime/runtimeSettings.js";
 import { NoopSessionStateStore, type SessionStateStore } from "./runtime/sessionStateStore.js";
 import { ToolVisibilityStore } from "./runtime/toolVisibilityStore.js";
+import { SkillCatalog } from "./skills/catalog.js";
+import { createSkillReadTool } from "./skills/skillReadTool.js";
 import { createSecOpsMcpServer, mcpContext, mcpToolSummaries } from "./mcp/secopsMcpServer.js";
 import { registerStreamableMcpRoutes } from "./mcp/streamableHttp.js";
 import { ToolRegistry } from "./tools/registry.js";
@@ -37,6 +43,8 @@ export interface BuildServerOptions {
   createModel?: (connection: ModelConnection, request: AgentRunRequest) => LanguageModel;
   /** 测试注入：自定义插件 MCP 客户端工厂（默认为真实 stdio 连接）。 */
   createPluginClient?: PluginManagerOptions["createClient"];
+  /** 测试注入：自定义独立 MCP 客户端工厂。 */
+  createStandaloneMcpClient?: McpServerManagerOptions["createClient"];
   /** 关闭分层工具路由（测试用；默认开启）。 */
   enableLayeredRouting?: boolean;
 }
@@ -47,7 +55,9 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     ? new PostgresSessionStore(config.dataDir)
     : undefined;
   const sessionStateStore: SessionStateStore = durableSessionStore ?? new NoopSessionStateStore();
+  const skillCatalog = new SkillCatalog({ standaloneRoot: config.skillsDir });
   const registry = new ToolRegistry(undefined, durableSessionStore ?? new ApprovalStore(config.approvalStorePath));
+  registry.registerRuntimeTools([createSkillReadTool(skillCatalog)]);
   const auditLog = new AuditLog(config.auditLogPath);
   const runtimeSettings = new RuntimeSettingsStore(config.runtimeConfigPath, {
     actionLevel: config.actionLevel,
@@ -63,7 +73,13 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     ...(options.createPluginClient ? { createClient: options.createPluginClient } : {})
   });
   // AgentEnvironment 基座：统一管理配置（settings/models）与外围设施（plugins）
-  const environment = new AgentEnvironment(runtimeSettings, modelConfigStore, pluginManager);
+  const environment = new AgentEnvironment(runtimeSettings, modelConfigStore, pluginManager, skillCatalog);
+  const mcpServerManager = new McpServerManager({
+    filePath: config.mcpConfigPath,
+    workspaceRoot: config.workspaceRoot,
+    registry,
+    ...(options.createStandaloneMcpClient ? { createClient: options.createStandaloneMcpClient } : {})
+  });
 
   app.addHook("onRequest", async (request, reply) => {
     const host = normalizeHost(request.headers.host);
@@ -90,9 +106,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     await durableSessionStore?.migrate();
     // 启动时按基座顺序加载：settings/models 构造即加载，插件扫描加载；单插件失败不影响启动
     await environment.loadAll();
+    await mcpServerManager.load();
     applyToolVisibilityOverrides(registry, toolVisibilityStore);
   });
   app.addHook("onClose", async () => {
+    await mcpServerManager.disconnectAll();
     await pluginManager.disconnectAll();
     await durableSessionStore?.close();
   });
@@ -241,9 +259,19 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     return { visibility: toolVisibilityStore.get() };
   });
 
-  app.get("/api/skills", async () => ({
-    skills: registry.skillPacks()
-  }));
+  app.get("/api/skills", async () => ({ skills: skillCatalog.list() }));
+
+  app.get("/api/skills/:id", async (request, reply): Promise<SkillContent | unknown> => {
+    const params = request.params as { id: string };
+    const skill = skillCatalog.read(params.id);
+    return skill ?? reply.code(404).send({ error: `No loaded skill found for ${params.id}` });
+  });
+
+  app.post("/api/skills/reload", async (): Promise<{ skills: SkillSummary[] }> => {
+    await environment.reloadAll();
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
+    return { skills: skillCatalog.list() };
+  });
 
   // ── 插件热插拔 API：安装插件目录到 runtime/plugins/ 后 reload 一次即可 reach ──
   app.get("/api/plugins", async (): Promise<{ plugins: PluginSummary[] }> => ({
@@ -251,7 +279,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   }));
 
   app.post("/api/plugins/reload", async (): Promise<{ plugins: PluginSummary[] }> => {
-    await pluginManager.reload();
+    await environment.reloadAll();
     applyToolVisibilityOverrides(registry, toolVisibilityStore);
     return { plugins: pluginManager.status() };
   });
@@ -260,9 +288,53 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     tools: mcpToolSummaries(registry)
   }));
 
-  app.get("/api/mcp/skills", async () => ({
-    skills: registry.skillPacks()
-  }));
+  app.get("/api/mcp/servers", async (): Promise<McpServerConfigState> => mcpServerManager.list());
+
+  app.post("/api/mcp/servers", async (request, reply): Promise<McpServerConfigState | unknown> => {
+    try {
+      const state = await mcpServerManager.add(coerceMcpServerInput(coerceRecord(request.body)));
+      applyToolVisibilityOverrides(registry, toolVisibilityStore);
+      return state;
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.put("/api/mcp/servers/:id", async (request, reply): Promise<McpServerConfigState | unknown> => {
+    const params = request.params as { id: string };
+    try {
+      const state = await mcpServerManager.update(params.id, coerceMcpServerUpdate(coerceRecord(request.body)));
+      if (!state) {
+        return reply.code(404).send({ error: `No MCP server found for ${params.id}` });
+      }
+      applyToolVisibilityOverrides(registry, toolVisibilityStore);
+      return state;
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.delete("/api/mcp/servers/:id", async (request, reply): Promise<McpServerConfigState | unknown> => {
+    const params = request.params as { id: string };
+    const state = await mcpServerManager.remove(params.id);
+    return state ?? reply.code(404).send({ error: `No MCP server found for ${params.id}` });
+  });
+
+  app.post("/api/mcp/servers/:id/reconnect", async (request, reply): Promise<McpServerConfigState | unknown> => {
+    const params = request.params as { id: string };
+    const state = await mcpServerManager.reconnect(params.id);
+    if (!state) {
+      return reply.code(404).send({ error: `No MCP server found for ${params.id}` });
+    }
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
+    return state;
+  });
+
+  app.post("/api/mcp/servers/reload", async (): Promise<McpServerConfigState> => {
+    const state = await mcpServerManager.reload();
+    applyToolVisibilityOverrides(registry, toolVisibilityStore);
+    return state;
+  });
 
   app.get("/api/approvals", async () => ({
     approvals: await registry.pendingApprovals()
@@ -363,7 +435,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!connection) {
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection);
+    const runtime = createRuntime(config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection);
     return runtime.run(runRequest, (event) => auditLog.append(event));
   });
 
@@ -425,7 +497,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!connection) {
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, runRequest, options, sessionStateStore, connection);
+    const runtime = createRuntime(config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection);
     reply.hijack();
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -465,6 +537,7 @@ function createRuntime(
   config: AppConfig,
   settings: RuntimeSettings,
   registry: ToolRegistry,
+  skillCatalog: SkillCatalog,
   runRequest: AgentRunRequest,
   options: BuildServerOptions,
   sessionStateStore: SessionStateStore,
@@ -473,6 +546,7 @@ function createRuntime(
   return new AgentRuntime({
     model: options.createModel?.(connection, runRequest) ?? createAiSdkModel(connection),
     registry,
+    skillCatalog,
     modelName: connection.model,
     providerLabel: connection.provider,
     actionLevel: settings.actionLevel,
@@ -524,6 +598,61 @@ function coerceRecord(value: unknown): Record<string, unknown> {
 
 function stringField(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function coerceMcpServerInput(body: Record<string, unknown>): McpServerInput {
+  const input: McpServerInput = {
+    name: stringField(body.name),
+    transport: coerceMcpTransport(body.transport),
+    enabled: body.enabled !== false
+  };
+  assignMcpFields(input, body);
+  return input;
+}
+
+function coerceMcpServerUpdate(body: Record<string, unknown>): McpServerUpdate {
+  const input: McpServerUpdate = {};
+  if (typeof body.name === "string") input.name = body.name;
+  if (body.transport === "stdio" || body.transport === "streamable-http") input.transport = body.transport;
+  if (typeof body.enabled === "boolean") input.enabled = body.enabled;
+  assignMcpFields(input, body);
+  return input;
+}
+
+function assignMcpFields(target: McpServerInput | McpServerUpdate, body: Record<string, unknown>): void {
+  if (typeof body.command === "string") target.command = body.command;
+  if (body.args !== undefined) {
+    if (!Array.isArray(body.args) || body.args.some((item) => typeof item !== "string")) {
+      throw new Error("args must be an array of strings");
+    }
+    target.args = body.args;
+  }
+  if (typeof body.cwd === "string") target.cwd = body.cwd;
+  if (typeof body.url === "string") target.url = body.url;
+  if (body.env !== undefined) target.env = coerceStringRecord(body.env, "env");
+  if (body.headers !== undefined) target.headers = coerceStringRecord(body.headers, "headers");
+}
+
+function coerceStringRecord(value: unknown, field: string): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${field} must be an object of string values`);
+  }
+  const record = value as Record<string, unknown>;
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    if (typeof entry !== "string") {
+      throw new Error(`${field} values must be strings`);
+    }
+    result[key] = entry;
+  }
+  return result;
+}
+
+function coerceMcpTransport(value: unknown): "stdio" | "streamable-http" {
+  if (value === "stdio" || value === "streamable-http") {
+    return value;
+  }
+  throw new Error("transport must be stdio or streamable-http");
 }
 
 function coerceLimit(value: unknown, fallback: number): number {

@@ -122,6 +122,7 @@ const runtimeDirs = [
   ["runtime", "audit"],
   ["runtime", "approvals"],
   ["runtime", "config"],
+  ["runtime", "skills"],
   ["runtime", "plugins"]
 ];
 for (const parts of runtimeDirs) {

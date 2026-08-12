@@ -115,25 +115,14 @@ function createSequencedModel(actions: Array<{ tool: string; input?: Record<stri
 }
 
 describe("tool catalog API with plugins", () => {
-  it("exposes plugin tools and skill packs with manifest metadata", async () => {
+  it("exposes plugin tools with manifest metadata", async () => {
     const config = testConfig();
     await installFakePlugin(config.pluginsDir, "wazuh-demo", "Wazuh Demo");
     const app = buildServer(config, { createPluginClient });
 
-    const skillsResponse = await app.inject({ method: "GET", url: "/api/skills" });
-    expect(skillsResponse.statusCode).toBe(200);
-    expect(skillsResponse.json().skills).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "wazuh-demo",
-        name: "wazuh-demo",
-        mcpCompatible: true,
-        tools: ["wazuh.alerts.search", "wazuh.block_ip"]
-      })
-    ]));
-
     const toolsResponse = await app.inject({ method: "GET", url: "/api/tools" });
     expect(toolsResponse.statusCode).toBe(200);
-    const pluginTools = toolsResponse.json().tools.filter((tool: { skillPackId: string }) => tool.skillPackId === "wazuh-demo");
+    const pluginTools = toolsResponse.json().tools.filter((tool: { id: string }) => tool.id.startsWith("wazuh."));
     expect(pluginTools.map((tool: { id: string }) => tool.id)).toEqual(["wazuh.alerts.search", "wazuh.block_ip"]);
     expect(pluginTools.find((tool: { id: string }) => tool.id === "wazuh.block_ip")).toMatchObject({
       toolClass: "action",
@@ -170,7 +159,7 @@ describe("tool catalog API with plugins", () => {
     ]);
 
     const toolsResponse = await app.inject({ method: "GET", url: "/api/tools" });
-    const pluginTools = toolsResponse.json().tools.filter((tool: { skillPackId: string }) => tool.skillPackId === "shuffle-demo");
+    const pluginTools = toolsResponse.json().tools.filter((tool: { id: string }) => tool.id.startsWith("shuffle."));
     expect(pluginTools.map((tool: { id: string }) => tool.id)).toEqual(["shuffle.workflow.list"]);
 
     await app.close();

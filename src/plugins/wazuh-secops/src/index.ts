@@ -45,7 +45,7 @@ export {
 export type {
   EvidenceArtifact,
   ModelTool,
-  SkillManifest,
+  ToolManifest,
   ToolClass,
   ToolRisk,
   ToolSchema,

@@ -16,7 +16,7 @@ export type {
   ShuffleExecutionContext,
   ShuffleExecutionResult,
   ShufflePluginTool,
-  SkillManifest,
+  ToolManifest,
   ToolClass,
   ToolRisk,
   ToolSchema

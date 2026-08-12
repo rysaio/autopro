@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import type { SkillManifest, ToolClass, ToolRisk } from "./types.js";
+import type { ToolManifest, ToolClass, ToolRisk } from "./types.js";
 import { wazuhConfigStatus } from "../core/configStatus.js";
 import { WazuhClient, DemoWazuhClient, type WazuhSyscollectorDataset } from "../core/wazuhClient.js";
 import { WazuhIndexerClient, DemoWazuhIndexerClient, type WazuhAlertSearchInput } from "../core/indexerClient.js";
@@ -38,7 +38,7 @@ type ToolHandler = (args: Record<string, unknown>, context: WazuhExecutionContex
 class WazuhTool implements WazuhPluginTool {
   constructor(
     readonly apiName: string,
-    readonly manifest: SkillManifest,
+    readonly manifest: ToolManifest,
     private readonly handler: ToolHandler
   ) {}
 
@@ -696,11 +696,10 @@ function manifest(input: {
   toolClass: ToolClass;
   risk: ToolRisk;
   tags: string[];
-  inputSchema: SkillManifest["inputSchema"];
-}): SkillManifest {
+  inputSchema: ToolManifest["inputSchema"];
+}): ToolManifest {
   return {
     ...input,
-    skillPackId: "secops-wazuh",
     deferLoading: true,
     mcpCompatible: true
   };
@@ -796,7 +795,7 @@ function alertSearchRequest(args: Record<string, unknown>): WazuhAlertSearchInpu
 function timelineSchema(
   properties: Record<string, unknown>,
   required: string[]
-): SkillManifest["inputSchema"] {
+): ToolManifest["inputSchema"] {
   return {
     type: "object",
     properties: {

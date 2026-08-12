@@ -27,7 +27,7 @@ node -v
 
 rem PGlite creates these directories during init. They are empty and can be
 rem dropped by archive/build tools, so restore them before opening a durable DB.
-for %%D in ("runtime\pgdata" "runtime\pgdata\pg_commit_ts" "runtime\pgdata\pg_dynshmem" "runtime\pgdata\pg_logical" "runtime\pgdata\pg_logical\mappings" "runtime\pgdata\pg_logical\snapshots" "runtime\pgdata\pg_multixact" "runtime\pgdata\pg_multixact\members" "runtime\pgdata\pg_multixact\offsets" "runtime\pgdata\pg_notify" "runtime\pgdata\pg_replslot" "runtime\pgdata\pg_serial" "runtime\pgdata\pg_snapshots" "runtime\pgdata\pg_stat" "runtime\pgdata\pg_stat_tmp" "runtime\pgdata\pg_subtrans" "runtime\pgdata\pg_tblspc" "runtime\pgdata\pg_twophase" "runtime\pgdata\pg_wal" "runtime\pgdata\pg_wal\archive_status" "runtime\pgdata\pg_wal\summaries" "runtime\pgdata\pg_xact" "runtime\audit" "runtime\approvals" "runtime\sandbox" "runtime\config") do (
+for %%D in ("runtime\pgdata" "runtime\pgdata\pg_commit_ts" "runtime\pgdata\pg_dynshmem" "runtime\pgdata\pg_logical" "runtime\pgdata\pg_logical\mappings" "runtime\pgdata\pg_logical\snapshots" "runtime\pgdata\pg_multixact" "runtime\pgdata\pg_multixact\members" "runtime\pgdata\pg_multixact\offsets" "runtime\pgdata\pg_notify" "runtime\pgdata\pg_replslot" "runtime\pgdata\pg_serial" "runtime\pgdata\pg_snapshots" "runtime\pgdata\pg_stat" "runtime\pgdata\pg_stat_tmp" "runtime\pgdata\pg_subtrans" "runtime\pgdata\pg_tblspc" "runtime\pgdata\pg_twophase" "runtime\pgdata\pg_wal" "runtime\pgdata\pg_wal\archive_status" "runtime\pgdata\pg_wal\summaries" "runtime\pgdata\pg_xact" "runtime\audit" "runtime\approvals" "runtime\sandbox" "runtime\config" "runtime\skills" "runtime\plugins") do (
     if not exist "%%~D\" md "%%~D" >nul 2>&1
 )
 

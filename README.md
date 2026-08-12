@@ -240,12 +240,39 @@ curl -X POST http://127.0.0.1:4317/api/model-config \
 
 ### 插件配置（`runtime/plugins/`）
 
-wazuh / shuffle 等工具以 Codex 插件形态提供（`runtime/plugins/<name>/`，含 `.codex-plugin/plugin.json` 与 `.mcp.json`）：
+wazuh / shuffle 等集成以 Codex 插件形态提供（`runtime/plugins/<name>/`，manifest 可声明 `skills` 与 `mcpServers`）：
 
 - 发布包预置 `wazuh-secops`、`shuffle-secops` 两个插件；**安装新插件** = 把插件目录复制到 `runtime/plugins/`
 - 服务启动时自动扫描加载；运行中安装后调用 `POST /api/plugins/reload` 即可生效（无需重启）
-- `GET /api/plugins` 查看插件加载状态与工具数
+- `GET /api/plugins` 查看插件、每个 MCP server 与技能/工具数量的实际状态
 - 插件动作工具的审批/审计由主服务统一把关
+
+### 技能目录（`runtime/skills/`）
+
+独立 Skill 位于 `runtime/skills/<name>/SKILL.md`；插件 Skill 只从插件 manifest 的 `skills` 声明加载。`SKILL.md` 使用 YAML frontmatter，`name` 必须与目录名一致并提供 `description`。技能页面可查看来源、错误和正文，并可手动重载。
+
+Agent 的 system prompt 只包含有效 Skill 的 ID、名称和描述；正文通过只读 `secops_skill_read` 工具按需获取，不常驻模型上下文。Skill 清单与正文接口不会返回文件路径。
+
+```text
+GET  /api/skills
+GET  /api/skills/:id
+POST /api/skills/reload
+```
+
+### 独立 MCP 服务（`runtime/config/mcp.json`）
+
+不属于插件的 MCP 服务在前端“工具 > MCP 服务”中管理，支持 stdio 与 Streamable HTTP。新增、编辑、启停、重连和删除会即时更新工具注册，无需重启；也可以直接编辑配置文件后执行 `POST /api/mcp/servers/reload`。
+
+服务端只向前端返回环境变量和请求头的键名，值仅保存在本地配置文件与服务端内存中。未声明只读语义的第三方 MCP 工具按 action/high 处理，继续经过统一审批策略。
+
+```text
+GET    /api/mcp/servers
+POST   /api/mcp/servers
+PUT    /api/mcp/servers/:id
+DELETE /api/mcp/servers/:id
+POST   /api/mcp/servers/:id/reconnect
+POST   /api/mcp/servers/reload
+```
 
 ### 工具权限模型（全局三态）
 
@@ -287,6 +314,8 @@ DELETE /api/tools/visibility/:id       # 清除覆盖，回退到工具声明值
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `SECOPS_MODEL_CONFIG_PATH` | `runtime/config/model.json` | 模型配置文件路径 |
+| `SECOPS_SKILLS_DIR` | `runtime/skills` | 独立 Skill 目录 |
+| `SECOPS_MCP_CONFIG_PATH` | `runtime/config/mcp.json` | 独立 MCP 服务配置文件 |
 | `SECOPS_TOOL_VISIBILITY_PATH` | `runtime/config/toolVisibility.json` | 工具暴露级别用户覆盖文件 |
 | `SECOPS_PLUGINS_DIR` | `runtime/plugins` | 插件目录 |
 | `SECOPS_ACTION_LEVEL` | `sandbox` | 默认自动化级别（observe/sandbox/full-access） |

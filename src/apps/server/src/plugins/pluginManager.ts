@@ -1,29 +1,20 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import type { PluginSummary, ToolClass, ToolRisk, ToolSchema } from "@secops-agent/shared";
-import type { ModelTool } from "../providers/types.js";
-import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../tools/types.js";
+import type { PluginSummary, SkillSummary } from "@secops-agent/shared";
+import {
+  connectMcpClient,
+  externalMcpTool,
+  type McpClientHandle,
+  type ResolvedStdioMcpServer
+} from "../mcp/externalMcp.js";
+import type { SecOpsTool } from "../tools/types.js";
 import { ToolRegistry } from "../tools/registry.js";
+import type { PluginSkillSource } from "../skills/catalog.js";
 
 // ── 类型定义 ──
 
-export interface ResolvedMcpServer {
-  name: string;
-  command: string;
-  args: string[];
-  cwd: string;
-  env: Record<string, string>;
-}
-
-/** 可注入的 MCP 客户端句柄（测试用假实现，生产用 SDK Client）。 */
-export interface McpClientHandle {
-  listTools(): Promise<Tool[]>;
-  callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
-  close(): Promise<void>;
-}
+export type ResolvedMcpServer = ResolvedStdioMcpServer;
+export type { McpClientHandle };
 
 export interface PluginManagerOptions {
   pluginsDir: string;
@@ -35,6 +26,8 @@ export interface PluginManagerOptions {
 interface PluginManifestFile {
   name?: unknown;
   version?: unknown;
+  description?: unknown;
+  skills?: unknown;
   mcpServers?: unknown;
 }
 
@@ -47,10 +40,16 @@ interface PluginState {
   id: string;
   name: string;
   version: string;
-  status: "loaded" | "error";
+  description: string;
+  status: "loaded" | "degraded" | "error";
   toolCount: number;
   error?: string;
-  client?: McpClientHandle;
+  loadErrors: string[];
+  pluginRoot: string;
+  skillsRoot?: string;
+  skills: SkillSummary[];
+  clients: McpClientHandle[];
+  mcpServers: NonNullable<PluginSummary["mcpServers"]>;
 }
 
 // Codex 插件规范：manifest 为 .codex-plugin/plugin.json，mcpServers 字段指向
@@ -95,10 +94,10 @@ export class PluginManager {
 
   /** 断开全部插件 MCP 连接并从 registry 移除其工具。 */
   async disconnectAll(): Promise<void> {
-    this.options.registry.unregisterExternalTools();
-    const clients = [...this.plugins.values()].map((plugin) => plugin.client).filter(Boolean);
+    this.options.registry.unregisterExternalTools("plugins");
+    const clients = [...this.plugins.values()].flatMap((plugin) => plugin.clients);
     this.plugins.clear();
-    await Promise.allSettled(clients.map((client) => client?.close()));
+    await Promise.allSettled(clients.map((client) => client.close()));
   }
 
   status(): PluginSummary[] {
@@ -106,10 +105,28 @@ export class PluginManager {
       id: plugin.id,
       name: plugin.name,
       version: plugin.version,
+      description: plugin.description,
       status: plugin.status,
       toolCount: plugin.toolCount,
+      skillCount: plugin.skills.length,
+      mcpServers: plugin.mcpServers,
       ...(plugin.error ? { error: plugin.error } : {})
     }));
+  }
+
+  skillSources(): PluginSkillSource[] {
+    return [...this.plugins.values()].flatMap((plugin) => plugin.skillsRoot ? [{
+      pluginId: plugin.id,
+      pluginRoot: plugin.pluginRoot,
+      skillsRoot: plugin.skillsRoot
+    }] : []);
+  }
+
+  applySkillResults(skills: SkillSummary[]): void {
+    for (const plugin of this.plugins.values()) {
+      plugin.skills = skills.filter((skill) => skill.pluginId === plugin.id);
+      refreshPluginStatus(plugin);
+    }
   }
 
   private async loadPlugin(pluginId: string): Promise<void> {
@@ -119,40 +136,78 @@ export class PluginManager {
       this.setError(pluginId, "Missing plugin manifest (.codex-plugin/plugin.json)");
       return;
     }
+    const loadErrors: string[] = [];
+    const skillsRoot = typeof manifest.skills === "string" && manifest.skills.trim()
+      ? path.resolve(dir, manifest.skills)
+      : undefined;
+    if (manifest.skills !== undefined && !skillsRoot) {
+      loadErrors.push("Plugin skills declaration must be a non-empty path string");
+    }
     const mcpServers = readMcpServerConfigs(dir, manifest);
     const serverNames = Object.keys(mcpServers);
-    if (serverNames.length === 0) {
-      this.setError(pluginId, "Plugin declares no MCP servers");
-      return;
+    if (serverNames.length === 0 && (
+      manifest.mcpServers !== undefined || existsSync(path.join(dir, ".mcp.json"))
+    )) {
+      loadErrors.push("Plugin MCP configuration contains no valid servers");
     }
-    // 取插件声明的第一个 MCP server（插件通常只声明一个）
-    const serverName = serverNames[0] as string;
-    const config = mcpServers[serverName] as McpServerConfigFile;
-    const resolved: ResolvedMcpServer = {
-      name: serverName,
-      command: config.command as string,
-      args: Array.isArray(config.args) ? config.args.map(String) : [],
-      cwd: dir,
-      env: buildSpawnEnv(this.options.env ?? process.env)
+    const clients: McpClientHandle[] = [];
+    const serverStates: NonNullable<PluginSummary["mcpServers"]> = [];
+    let toolCount = 0;
+    for (const serverName of serverNames) {
+      const config = mcpServers[serverName] as McpServerConfigFile;
+      const resolved: ResolvedMcpServer = {
+        transport: "stdio",
+        name: serverName,
+        command: config.command as string,
+        args: Array.isArray(config.args) ? config.args.map(String) : [],
+        cwd: dir,
+        env: buildSpawnEnv(this.options.env ?? process.env)
+      };
+      let client: McpClientHandle | undefined;
+      try {
+        client = this.options.createClient
+          ? await this.options.createClient(resolved, pluginId)
+          : await connectMcpClient(resolved);
+        const connectedClient = client;
+        const tools = await connectedClient.listTools();
+        const adaptedTools: SecOpsTool[] = tools.map((tool) => externalMcpTool(
+          { sourceId: `${pluginId}.${serverName}`, tags: ["plugin", pluginId] },
+          tool,
+          (args) => connectedClient.callTool(tool.name, args)
+        ));
+        this.options.registry.registerTools(adaptedTools, "plugins");
+        clients.push(connectedClient);
+        toolCount += adaptedTools.length;
+        serverStates.push({ name: serverName, status: "loaded", toolCount: adaptedTools.length });
+      } catch (error) {
+        await client?.close().catch(() => undefined);
+        serverStates.push({
+          name: serverName,
+          status: "error",
+          toolCount: 0,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    const state: PluginState = {
+      id: pluginId,
+      name: manifest.name,
+      version: manifest.version ?? "",
+      description: manifest.description ?? "",
+      status: "error",
+      toolCount,
+      loadErrors,
+      pluginRoot: dir,
+      ...(skillsRoot ? { skillsRoot } : {}),
+      skills: [],
+      clients,
+      mcpServers: serverStates
     };
-    try {
-      const client = this.options.createClient
-        ? await this.options.createClient(resolved, pluginId)
-        : await connectStdioClient(resolved);
-      const tools = await client.listTools();
-      const secOpsTools = tools.map((tool) => mcpToolToSecOpsTool(pluginId, tool, (args) => client.callTool(tool.name, args)));
-      this.options.registry.registerTools(secOpsTools);
-      this.plugins.set(pluginId, {
-        id: pluginId,
-        name: manifest.name,
-        version: manifest.version ?? "",
-        status: "loaded",
-        toolCount: tools.length,
-        client
-      });
-    } catch (error) {
-      this.setError(pluginId, error instanceof Error ? error.message : String(error));
+    if (!skillsRoot && serverNames.length === 0 && loadErrors.length === 0) {
+      state.loadErrors.push("Plugin declares no skills or MCP servers");
     }
+    refreshPluginStatus(state);
+    this.plugins.set(pluginId, state);
   }
 
   private setError(pluginId: string, message: string): void {
@@ -161,17 +216,51 @@ export class PluginManager {
       id: pluginId,
       name: existing?.name ?? pluginId,
       version: existing?.version ?? "",
+      description: existing?.description ?? "",
       status: "error",
       toolCount: 0,
+      loadErrors: [message],
+      pluginRoot: path.join(this.options.pluginsDir, pluginId),
+      skills: [],
+      clients: [],
+      mcpServers: [],
       error: message
     };
     this.plugins.set(pluginId, state);
   }
 }
 
+function refreshPluginStatus(plugin: PluginState): void {
+  const errors = [
+    ...plugin.loadErrors,
+    ...plugin.mcpServers
+      .filter((server) => server.status === "error")
+      .map((server) => `${server.name}: ${server.error ?? "connection failed"}`),
+    ...plugin.skills
+      .filter((skill) => skill.status === "error")
+      .map((skill) => `${skill.name}: ${skill.error ?? "load failed"}`)
+  ];
+  const hasUsableContent = plugin.clients.length > 0 || plugin.skills.some((skill) => skill.status === "loaded");
+  plugin.status = hasUsableContent ? (errors.length ? "degraded" : "loaded") : "error";
+  if (!hasUsableContent && errors.length === 0) {
+    errors.push("Plugin has no usable skills or MCP servers");
+  }
+  if (errors.length) {
+    plugin.error = errors.join("; ");
+  } else {
+    delete plugin.error;
+  }
+}
+
 // ── manifest 与 MCP 配置读取 ──
 
-function readPluginManifest(dir: string): { name: string; version?: string; mcpServers?: unknown } | undefined {
+function readPluginManifest(dir: string): {
+  name: string;
+  version?: string;
+  description?: string;
+  skills?: unknown;
+  mcpServers?: unknown;
+} | undefined {
   for (const relative of MANIFEST_CANDIDATES) {
     const manifestPath = path.join(dir, relative);
     if (!existsSync(manifestPath)) {
@@ -193,6 +282,8 @@ function readPluginManifest(dir: string): { name: string; version?: string; mcpS
     return {
       name: manifest.name,
       ...(typeof manifest.version === "string" ? { version: manifest.version } : {}),
+      ...(typeof manifest.description === "string" ? { description: manifest.description } : {}),
+      ...(manifest.skills !== undefined ? { skills: manifest.skills } : {}),
       ...(manifest.mcpServers !== undefined ? { mcpServers: manifest.mcpServers } : {})
     };
   }
@@ -253,125 +344,4 @@ function buildSpawnEnv(base: NodeJS.ProcessEnv): Record<string, string> {
   env.SECOPS_ACTION_LEVEL = "full-access";
   Object.assign(env, ACTION_ALLOW_ENV);
   return env;
-}
-
-async function connectStdioClient(server: ResolvedMcpServer): Promise<McpClientHandle> {
-  const client = new Client({ name: "secops-agent-host", version: "0.1.0" });
-  const transport = new StdioClientTransport({
-    command: server.command,
-    args: server.args,
-    cwd: server.cwd,
-    env: server.env,
-    stderr: "pipe"
-  });
-  await client.connect(transport);
-  return {
-    listTools: async () => {
-      const result = await client.listTools();
-      return result.tools;
-    },
-    callTool: async (name, args): Promise<CallToolResult> => {
-      const result = await client.callTool({ name, arguments: args });
-      // SDK 返回内联结构（与 CallToolResult 形状一致），此处显式断言
-      return result as CallToolResult;
-    },
-    close: async () => {
-      await client.close();
-    }
-  };
-}
-
-// ── MCP 工具 → SecOpsTool 适配 ──
-
-function mcpToolToSecOpsTool(
-  pluginId: string,
-  tool: Tool,
-  call: (args: Record<string, unknown>) => Promise<CallToolResult>
-): SecOpsTool {
-  const meta = tool._meta ?? {};
-  const manifestId = typeof meta.manifestId === "string" && meta.manifestId.length > 0
-    ? meta.manifestId
-    : `${pluginId}.${tool.name}`;
-  const schema = toToolSchema(tool.inputSchema);
-  const toolClass = toToolClass(meta.toolClass);
-  return {
-    apiName: tool.name,
-    manifest: {
-      id: manifestId,
-      skillPackId: pluginId,
-      name: typeof tool.title === "string" && tool.title.length > 0 ? tool.title : tool.name,
-      description: tool.description ?? "",
-      toolClass,
-      risk: toToolRisk(meta.risk),
-      deferLoading: meta.deferLoading === true,
-      inputSchema: schema,
-      tags: [pluginId],
-      mcpCompatible: true
-    },
-    toModelTool(): ModelTool {
-      return {
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description ?? "",
-          parameters: schema as unknown as Record<string, unknown>
-        }
-      };
-    },
-    async execute(args: Record<string, unknown>, _context: ToolContext): Promise<ToolExecutionResult> {
-      const result = await call(args);
-      return parseCallResult(result);
-    }
-  };
-}
-
-function parseCallResult(result: CallToolResult): ToolExecutionResult {
-  const text = result.content
-    .filter((content): content is Extract<typeof content, { type: "text" }> => content.type === "text")
-    .map((content) => content.text)
-    .join("\n");
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const record = parsed as Record<string, unknown>;
-      return {
-        output: "result" in record ? record.result : record,
-        ...(Array.isArray(record.artifacts) ? { artifacts: record.artifacts } : {})
-      };
-    }
-    return { output: parsed };
-  } catch {
-    return { output: text };
-  }
-}
-
-function toToolSchema(inputSchema: unknown): ToolSchema {
-  if (inputSchema && typeof inputSchema === "object" && !Array.isArray(inputSchema)) {
-    const schema = inputSchema as Record<string, unknown>;
-    if (schema.type === "object" && schema.properties && typeof schema.properties === "object") {
-      const result: ToolSchema = {
-        type: "object",
-        properties: schema.properties as Record<string, unknown>
-      };
-      if (Array.isArray(schema.required)) {
-        result.required = schema.required.map(String);
-      }
-      if (typeof schema.additionalProperties === "boolean") {
-        result.additionalProperties = schema.additionalProperties;
-      }
-      return result;
-    }
-  }
-  return { type: "object", properties: {} };
-}
-
-function toToolClass(value: unknown): ToolClass {
-  return value === "perception" || value === "reasoning" || value === "evidence" || value === "action"
-    ? value
-    : "perception";
-}
-
-function toToolRisk(value: unknown): ToolRisk {
-  // risk 缺失时默认 high（保守）：插件未声明风险即按高危 action 处理，仍需审批
-  return value === "low" || value === "medium" || value === "high" ? value : "high";
 }

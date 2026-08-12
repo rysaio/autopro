@@ -12,12 +12,15 @@ import { ToolRegistry } from "../tools/registry.js";
 import type { ToolExecutionRecord } from "../tools/types.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
 import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP } from "./systemPrompt.js";
+import { systemPromptWithSkills } from "./systemPrompt.js";
 import { ToolCache, type ToolCacheCategory } from "./toolCache.js";
 import { toolRouter } from "./toolRouter.js";
+import type { SkillCatalog } from "../skills/catalog.js";
 
 export interface AgentRuntimeOptions {
   model: LanguageModel;
   registry: ToolRegistry;
+  skillCatalog?: Pick<SkillCatalog, "promptSummary">;
   modelName: string;
   providerLabel: string;
   actionLevel: AgentRunContext["actionLevel"];
@@ -76,6 +79,7 @@ export class AgentRuntime {
     const effectiveEnabledTools = this.options.actionLevel === "full-access"
       ? undefined
       : request.enabledTools;
+    const skillSummary = this.options.skillCatalog?.promptSummary() ?? "";
     await stateStore.startRun({ sessionId, runId, startedAt });
     for (const message of messages) {
       persist(() => stateStore.appendMessage(sessionId, runId, message));
@@ -199,7 +203,7 @@ export class AgentRuntime {
         const triageToolIds = toolRouter.getTriageToolIds();
         const triageResult = await generateText({
           model: this.options.model,
-          system: SYSTEM_PROMPT_TRIAGE,
+          system: systemPromptWithSkills(SYSTEM_PROMPT_TRIAGE, skillSummary),
           messages: request.messages
             .filter((message) => message.role === "user" || message.role === "assistant")
             .map((message) => ({
@@ -252,7 +256,7 @@ export class AgentRuntime {
 
         const deepResult = await generateText({
           model: this.options.model,
-          system: SYSTEM_PROMPT_DEEP,
+          system: systemPromptWithSkills(SYSTEM_PROMPT_DEEP, skillSummary),
           messages: phase1Messages,
           tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord),
           stopWhen: stepCountIs(maxDeepRounds),
@@ -299,7 +303,7 @@ export class AgentRuntime {
 
         const result = await generateText({
           model: this.options.model,
-          system: SYSTEM_PROMPT_DEEP,
+          system: systemPromptWithSkills(SYSTEM_PROMPT_DEEP, skillSummary),
           messages: request.messages
             .filter((message) => message.role === "user" || message.role === "assistant")
             .map((message) => ({

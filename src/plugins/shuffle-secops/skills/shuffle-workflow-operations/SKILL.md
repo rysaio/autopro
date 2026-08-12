@@ -1,6 +1,6 @@
 ---
 name: shuffle-workflow-operations
-description: Use when operating Shuffle SOAR workflows through the Shuffle SecOps MCP tools: checking readiness, listing workflows, inspecting a workflow, executing an approved workflow, or reading execution results.
+description: 'Use when operating Shuffle SOAR workflows through the Shuffle SecOps MCP tools: checking readiness, listing workflows, inspecting a workflow, executing an approved workflow, or reading execution results.'
 ---
 
 # Shuffle Workflow Operations

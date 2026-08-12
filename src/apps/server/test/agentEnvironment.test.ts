@@ -8,6 +8,7 @@ import { ModelConfigStore } from "../src/runtime/modelConfigStore.js";
 import { RuntimeSettingsStore } from "../src/runtime/runtimeSettings.js";
 import { PluginManager, type McpClientHandle, type ResolvedMcpServer } from "../src/plugins/pluginManager.js";
 import { ToolRegistry } from "../src/tools/registry.js";
+import { SkillCatalog } from "../src/skills/catalog.js";
 
 async function buildEnvironment(settingsPath: string, modelPath: string, pluginsDir: string): Promise<AgentEnvironment> {
   const settings = new RuntimeSettingsStore(settingsPath, { actionLevel: "sandbox" });
@@ -33,7 +34,9 @@ async function buildEnvironment(settingsPath: string, modelPath: string, plugins
       };
     }
   });
-  return new AgentEnvironment(settings, models, plugins);
+  return new AgentEnvironment(settings, models, plugins, new SkillCatalog({
+    standaloneRoot: path.join(path.dirname(pluginsDir), "skills")
+  }));
 }
 
 describe("AgentEnvironment", () => {
@@ -68,7 +71,7 @@ describe("AgentEnvironment", () => {
         }),
         close: async () => undefined
       })
-    }));
+    }), new SkillCatalog({ standaloneRoot: path.join(dir, "skills") }));
     await environment.loadAll();
 
     const status = environment.status();
