@@ -256,8 +256,9 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
          ORDER BY latest_messages.created_at DESC, latest_messages.id DESC
          LIMIT 1
        ) latest ON true
+       WHERE ($2::boolean AND s.archived_at IS NOT NULL)
+          OR (NOT $2::boolean AND s.archived_at IS NULL)
        GROUP BY s.id, s.created_at, s.updated_at, latest.message
-       HAVING $2::boolean OR max(s.archived_at) IS NULL
        ORDER BY s.updated_at DESC, s.id DESC
        LIMIT $1`,
       [boundedLimit, includeArchived]

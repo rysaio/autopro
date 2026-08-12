@@ -266,6 +266,70 @@ h3 {
   color: #94a3b8;
 }
 
+.archived-session-section {
+  display: grid;
+  gap: 10px;
+}
+
+.archived-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #dbe3ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.archived-session-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.archived-session-copy strong {
+  color: #172b3f;
+  font-size: 13px;
+}
+
+.archived-session-copy small {
+  color: #697789;
+  font-size: 11px;
+}
+
+.archived-session-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.archived-session-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #d7dde7;
+  border-radius: 7px;
+  color: #334155;
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.archived-session-actions button:hover {
+  color: #0f766e;
+  border-color: rgba(15, 118, 110, 0.4);
+  background: #ffffff;
+}
+
+.archived-session-actions button.danger:hover {
+  color: #b42318;
+  border-color: rgba(180, 35, 24, 0.4);
+}
+
 .sidebar-empty {
   padding: 8px 2px;
 }

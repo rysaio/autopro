@@ -99,7 +99,7 @@ const seedMessages: ChatMessage[] = [
 ];
 
 type InspectorTab = "plan" | "audit" | "artifacts";
-type WorkbenchPanel = "plugins" | "skills" | "tools" | "dashboard" | "knowledge-graph" | "model-config" | InspectorTab;
+type WorkbenchPanel = "archived" | "plugins" | "skills" | "tools" | "dashboard" | "knowledge-graph" | "model-config" | InspectorTab;
 type ToolClassFilter = ToolClass | "all";
 
 const toolClassFilters: Array<{ id: ToolClassFilter; label: string }> = [
@@ -595,7 +595,7 @@ async function handleGenerateReport() {
   // 返回对话界面统一通过顶部「返回对话」按钮。
   function openPanel(panel: WorkbenchPanel) {
     setActivePanel(panel);
-    if (panel !== "plugins" && panel !== "skills" && panel !== "tools" && panel !== "dashboard" && panel !== "knowledge-graph" && panel !== "model-config") {
+    if (panel !== "archived" && panel !== "plugins" && panel !== "skills" && panel !== "tools" && panel !== "dashboard" && panel !== "knowledge-graph" && panel !== "model-config") {
       setTab(panel);
     }
   }
@@ -712,38 +712,6 @@ async function handleGenerateReport() {
           )) : (
             <p className="sidebar-empty">暂无保存的会话</p>
           )}
-          {archivedSessions.length ? (
-            <>
-              <div className="section-label archived-label">
-                <ArchiveRestore size={13} aria-hidden="true" />
-                <span>已归档</span>
-              </div>
-              {archivedSessions.map((session) => (
-                <div className="session-row archived" key={session.id}>
-                  <button
-                    className="session-open"
-                    disabled={isLoadingSession}
-                    onClick={() => loadSession(session.id)}
-                    type="button"
-                  >
-                    <strong>{sessionTitle(session)}</strong>
-                    <small>
-                      {session.messageCount} 条消息 · {session.toolInvocationCount} 次工具调用
-                      {session.guidanceCount ? ` · ${session.guidanceCount} 引导` : ""}
-                    </small>
-                  </button>
-                  <div className="session-actions">
-                    <button onClick={() => void unarchiveSessionById(session.id)} title="恢复" type="button">
-                      <ArchiveRestore size={13} aria-hidden="true" />
-                    </button>
-                    <button className="danger" onClick={() => void deleteSessionById(session.id)} title="删除" type="button">
-                      <Trash2 size={13} aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </>
-          ) : null}
         </div>
 
         <div className="nav-stack" aria-label="工作区工具">
@@ -759,6 +727,15 @@ async function handleGenerateReport() {
             <LayoutDashboard size={15} aria-hidden="true" />
             <span>仪表盘</span>
             <strong>{sessions.length}</strong>
+          </button>
+          <button
+            className={activePanel === "archived" ? "nav-item active" : "nav-item"}
+            onClick={() => openPanel("archived")}
+            type="button"
+          >
+            <Archive size={15} aria-hidden="true" />
+            <span>归档</span>
+            <strong>{archivedSessions.length}</strong>
           </button>
           <button
             className={activePanel === "model-config" ? "nav-item active" : "nav-item"}
@@ -905,6 +882,14 @@ async function handleGenerateReport() {
                   skills={skills}
                   toolInvocations={activeToolInvocations}
                   tools={tools}
+                />
+              </div>
+            ) : activePanel === "archived" ? (
+              <div className="config-inspector">
+                <ArchivedSessionsView
+                  archivedSessions={archivedSessions}
+                  onDelete={(id) => void deleteSessionById(id)}
+                  onRestore={(id) => void unarchiveSessionById(id)}
                 />
               </div>
             ) : activePanel === "knowledge-graph" ? (
@@ -1302,6 +1287,9 @@ function panelTitle(panel: WorkbenchPanel): string {
   if (panel === "dashboard") {
     return "仪表盘";
   }
+  if (panel === "archived") {
+    return "归档对话";
+  }
   if (panel === "knowledge-graph") {
     return "知识图谱";
   }
@@ -1342,6 +1330,9 @@ function panelSubtitle(
   if (panel === "dashboard") {
     return "概览";
   }
+  if (panel === "archived") {
+    return "已归档对话，可恢复或删除";
+  }
   if (panel === "knowledge-graph") {
     return "";
   }
@@ -1364,6 +1355,46 @@ function panelSubtitle(
     return `${context.activeArtifacts.length} 个证据工件`;
   }
   return `${context.activeToolInvocations.length} 次工具调用 · ${context.pendingApprovals.length} 个待审批`;
+}
+
+function ArchivedSessionsView({
+  archivedSessions,
+  onRestore,
+  onDelete
+}: {
+  archivedSessions: AgentSessionSummary[];
+  onRestore: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <section className="config-section wide archived-session-section">
+      <div className="section-label">
+        <ArchiveRestore size={14} aria-hidden="true" />
+        <span>归档对话</span>
+      </div>
+      {archivedSessions.length ? archivedSessions.map((session) => (
+        <div className="archived-session-row" key={session.id}>
+          <div className="archived-session-copy">
+            <strong>{sessionTitle(session)}</strong>
+            <small>
+              {session.messageCount} 条消息 · {session.toolInvocationCount} 次工具调用
+              {session.guidanceCount ? ` · ${session.guidanceCount} 引导` : ""}
+            </small>
+          </div>
+          <div className="archived-session-actions">
+            <button onClick={() => onRestore(session.id)} title="恢复对话" type="button">
+              <ArchiveRestore size={14} aria-hidden="true" />
+              <span>恢复</span>
+            </button>
+            <button className="danger" onClick={() => onDelete(session.id)} title="删除对话" type="button">
+              <Trash2 size={14} aria-hidden="true" />
+              <span>删除</span>
+            </button>
+          </div>
+        </div>
+      )) : <p className="empty-state">暂无归档对话</p>}
+    </section>
+  );
 }
 
 function renderMarkdown(text: string): string {

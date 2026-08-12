@@ -250,6 +250,7 @@ describe("PostgresSessionStore", () => {
     const runId = randomUUID();
     await store.startRun({ sessionId, runId, startedAt: new Date().toISOString() });
 
+    expect(await store.listSessions(50, true)).toHaveLength(0);
     expect(await store.archiveSession(sessionId)).toBe(true);
     expect(await store.listSessions()).toHaveLength(0);
     const archived = await store.listSessions(50, true);
@@ -257,6 +258,7 @@ describe("PostgresSessionStore", () => {
 
     expect(await store.unarchiveSession(sessionId)).toBe(true);
     expect(await store.listSessions()).toMatchObject([{ id: sessionId }]);
+    expect(await store.listSessions(50, true)).toHaveLength(0);
 
     expect(await store.deleteSession(sessionId)).toBe(true);
     await expect(store.restoreSession(sessionId)).resolves.toBeUndefined();
