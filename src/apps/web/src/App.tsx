@@ -89,15 +89,6 @@ import { McpServerConfigView } from "./McpServerConfigView.js";
 import { PluginView } from "./PluginView.js";
 import { SkillView } from "./SkillView.js";
 
-const seedMessages: ChatMessage[] = [
-  {
-    id: "seed-assistant",
-    role: "assistant",
-    content: "就绪。发送告警、IOC、资产或案件目标给我，我会从启用的工具中选择合适的执行入口，并在对话中展示调用过程，同时保留完整的审计追踪。",
-    createdAt: new Date().toISOString()
-  }
-];
-
 const WORKSPACE_MIN_HEIGHT = 160;
 const WORKSPACE_CONVERSATION_MIN = 64;
 const WORKSPACE_DIVIDER_SPACE = 24; // 分隔条 14px + 上下两处 4px gap
@@ -148,7 +139,7 @@ export function App() {
   const [mcpServers, setMcpServers] = useState<McpServerConfigState>({ servers: [] });
   const [archivedSessions, setArchivedSessions] = useState<AgentSessionSummary[]>([]);
   const [enabledTools, setEnabledTools] = useState<Set<string>>(new Set());
-  const [messages, setMessages] = useState<ChatMessage[]>(seedMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => crypto.randomUUID());
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [activeSession, setActiveSession] = useState<AgentSessionDetail | null>(null);
@@ -159,7 +150,7 @@ export function App() {
   const [persistedAudit, setPersistedAudit] = useState<AuditEvent[]>([]);
   const [mcpResult, setMcpResult] = useState<McpCallResult | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
-  const [prompt, setPrompt] = useState("请对这个安全信号进行分类，说明你使用了哪些工具，并推荐下一步安全操作。");
+  const [prompt, setPrompt] = useState("");
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("ask");
   const [toolClassFilter, setToolClassFilter] = useState<ToolClassFilter>("all");
   const [toolQuery, setToolQuery] = useState("");
@@ -287,7 +278,9 @@ export function App() {
   }, []);
 
   // 当前会话（未保存）在真实对话发生（至少一条用户消息）后，左侧才显示标题
-  const liveConversationActive = !sessions.some((session) => session.id === currentSessionId) && messages.length > 1;
+  const liveConversationActive = !sessions.some((session) => session.id === currentSessionId)
+    && messages.some((message) => message.role === "user");
+  const chatMessages = messages.filter((message) => message.role !== "tool");
   const fullAccessActive = health?.actionLevel === "full-access";
   const enabledToolList = useMemo(
     () => fullAccessActive ? tools.map((tool) => tool.id) : [...enabledTools],
@@ -384,7 +377,7 @@ export function App() {
         seenIds.add(message.id);
         return true;
       });
-      setMessages(dedupedMessages.length ? dedupedMessages : seedMessages);
+      setMessages(dedupedMessages.length ? dedupedMessages : []);
       setLastRun(detail.runs.at(-1) ?? null);
       setStreamAudit(detail.audit);
       setStreamArtifacts(detail.artifacts);
@@ -413,7 +406,7 @@ export function App() {
     setCurrentSessionId(crypto.randomUUID());
     setActiveSession(null);
     setLastRun(null);
-    setMessages(seedMessages);
+    setMessages([]);
     setStreamAudit([]);
     setStreamArtifacts([]);
     setStreamToolInvocations([]);
@@ -1405,8 +1398,14 @@ async function handleGenerateReport() {
         ) : null}
 
         <section className="chat-stage" aria-label="智能体对话">
-          <div className="transcript" aria-label="对话记录" ref={transcriptRef}>
-              {messages.filter((message) => message.role !== "tool").map((message) => (
+          <div
+            className={chatMessages.length || activeToolInvocations.length ? "transcript" : "transcript empty"}
+            aria-label="对话记录"
+            ref={transcriptRef}
+          >
+            {chatMessages.length || activeToolInvocations.length ? (
+              <>
+              {chatMessages.map((message) => (
                 <TranscriptMessage key={message.id} message={message} />
               ))}
               {activeToolInvocations.map((invocation) => (
@@ -1418,6 +1417,22 @@ async function handleGenerateReport() {
                   onDeny={() => resolveApproval(invocation.id, "deny")}
                 />
               ))}
+              </>
+            ) : (
+              <div className="chat-empty-state">
+                <div className="chat-empty-icon">
+                  <Bot size={26} aria-hidden="true" />
+                </div>
+                <h2>我是您的 SecOps 智能体助手</h2>
+                <p>可以帮您分析告警、查证 IOC、查询资产或跟进案件目标，并根据启用的技能选择合适的工具执行。</p>
+                <div className="chat-empty-hints">
+                  <span>告警分析</span>
+                  <span>IOC 查证</span>
+                  <span>资产查询</span>
+                  <span>案件调查</span>
+                </div>
+              </div>
+            )}
             </div>
         </section>
 

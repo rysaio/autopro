@@ -967,6 +967,59 @@ h3 {
   padding: 20px 22px 24px;
 }
 
+.transcript.empty {
+  align-content: center;
+  justify-items: center;
+}
+
+.chat-empty-state {
+  max-width: 520px;
+  padding: 32px 20px;
+  text-align: center;
+  color: #334155;
+}
+
+.chat-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 16px;
+  border-radius: 14px;
+  color: #ecfeff;
+  background: #0f766e;
+}
+
+.chat-empty-state h2 {
+  margin: 0 0 10px;
+  color: #0f172a;
+  font-size: 20px;
+}
+
+.chat-empty-state p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.chat-empty-hints {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.chat-empty-hints span {
+  padding: 6px 12px;
+  border: 1px solid #dbe3ea;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .message {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
