@@ -16,7 +16,7 @@ interface FakePluginSetup {
   resultByTool: Record<string, unknown>;
 }
 
-async function setupPluginManager(): Promise<{ manager: PluginManager; setup: FakePluginSetup }> {
+async function setupPluginManager(env: NodeJS.ProcessEnv = {}): Promise<{ manager: PluginManager; setup: FakePluginSetup }> {
   const pluginsDir = await mkdtemp(path.join(os.tmpdir(), "secops-plugin-"));
   const registry = new ToolRegistry();
   const setup: FakePluginSetup = {
@@ -31,6 +31,7 @@ async function setupPluginManager(): Promise<{ manager: PluginManager; setup: Fa
   const manager = new PluginManager({
     pluginsDir,
     registry,
+    env,
     createClient: async (server: ResolvedMcpServer, pluginId: string): Promise<McpClientHandle> => {
       setup.spawned.push(server);
       const tools = setup.toolsByServer[server.name] ?? setup.toolsByPlugin[pluginId] ?? [];
@@ -157,10 +158,58 @@ describe("PluginManager", () => {
 
     // spawn env：透传宿主环境 + 插件放行 + 动作审批归主服务
     expect(setup.spawned).toHaveLength(1);
-    expect(setup.spawned[0]?.cwd).toBe(path.join(setup.pluginsDir, "demo"));
-    expect(setup.spawned[0]?.env.SECOPS_ACTION_LEVEL).toBe("full-access");
-    expect(setup.spawned[0]?.env.WAZUH_MCP_ALLOW_ACTIONS).toBe("true");
-    expect(setup.spawned[0]?.env.SHUFFLE_MCP_ALLOW_ACTIONS).toBe("true");
+    expect(setup.spawned[0]?.transport).toBe("stdio");
+    if (setup.spawned[0]?.transport === "stdio") {
+      expect(setup.spawned[0].cwd).toBe(path.join(setup.pluginsDir, "demo"));
+      expect(setup.spawned[0].env.SECOPS_ACTION_LEVEL).toBe("full-access");
+      expect(setup.spawned[0].env.WAZUH_MCP_ALLOW_ACTIONS).toBe("true");
+      expect(setup.spawned[0].env.SHUFFLE_MCP_ALLOW_ACTIONS).toBe("true");
+    }
+
+    await manager.disconnectAll();
+  });
+
+  it("connects plugin MCP servers over streamable-http and resolves auth headers", async () => {
+    const { manager, setup } = await setupPluginManager({
+      DROPLINKED_MCP_API_KEY: "secret-key",
+      GITHUB_PAT_TOKEN: "gh-token"
+    });
+    setup.toolsByServer["droplinked"] = [tool("secops_droplinked_search", "droplinked.search")];
+    await installPlugin(setup.pluginsDir, "droplinked");
+    await writeFile(path.join(setup.pluginsDir, "droplinked", ".mcp.json"), JSON.stringify({
+      mcpServers: {
+        droplinked: {
+          type: "http",
+          url: "https://mcp.droplinked.com/mcp",
+          headers: {
+            "X-MCP-API-Key": "${DROPLINKED_MCP_API_KEY}",
+            "X-Static": "ok"
+          },
+          bearer_token_env_var: "GITHUB_PAT_TOKEN"
+        }
+      }
+    }), "utf8");
+
+    await manager.load();
+
+    expect(setup.spawned).toHaveLength(1);
+    expect(setup.spawned[0]?.transport).toBe("streamable-http");
+    if (setup.spawned[0]?.transport === "streamable-http") {
+      expect(setup.spawned[0].url).toBe("https://mcp.droplinked.com/mcp");
+      expect(setup.spawned[0].headers).toEqual({
+        "X-MCP-API-Key": "secret-key",
+        "X-Static": "ok",
+        Authorization: "Bearer gh-token"
+      });
+    }
+    expect(manager.status()[0]).toMatchObject({
+      id: "droplinked",
+      status: "loaded",
+      toolCount: 1,
+      mcpServers: [
+        { name: "droplinked", status: "loaded", toolCount: 1 }
+      ]
+    });
 
     await manager.disconnectAll();
   });

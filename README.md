@@ -367,6 +367,7 @@ wazuh 与 shuffle 工具不再编译进主服务，改为 Codex 插件模式：�
 
 - **内置插件**：`wazuh-secops`、`shuffle-secops` 随发布包预置在 `runtime/plugins/`（源码开发时在 `plugins/` 下 `npm run build -w @secops-agent/wazuh-secops` 等构建后复制到 `runtime/plugins/`，或直接以 `SECOPS_PLUGINS_DIR` 指向源码插件目录）
 - **安装新插件**：把插件目录复制到 `runtime/plugins/<name>/`（含 manifest 与 `.mcp.json`）
+- **MCP 连接方式**：`.mcp.json` 同时支持 stdio（`command`/`args`）和 streamable-http（`type: http` 或 `streamable-http` + `url`）；HTTP 插件可声明 `headers`/`http_headers`（支持 `${ENV_VAR}` 插值）、`env_http_headers` 和 `bearer_token_env_var`
 - **生效方式**：服务启动时自动扫描加载；运行中安装后调用一次 `POST /api/plugins/reload` 即可 reach（无需重启），`GET /api/plugins` 可查看加载状态与工具数
 - **审批归属**：插件动作工具的审批/审计仍由主服务统一把关（插件侧全放行，主服务 `decidePolicy` 决定是否执行）
 

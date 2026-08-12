@@ -5,7 +5,7 @@ import {
   connectMcpClient,
   externalMcpTool,
   type McpClientHandle,
-  type ResolvedStdioMcpServer
+  type ResolvedMcpConnection
 } from "../mcp/externalMcp.js";
 import type { SecOpsTool } from "../tools/types.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -13,7 +13,7 @@ import type { PluginSkillSource } from "../skills/catalog.js";
 
 // ── 类型定义 ──
 
-export type ResolvedMcpServer = ResolvedStdioMcpServer;
+export type ResolvedMcpServer = ResolvedMcpConnection;
 export type { McpClientHandle };
 
 export interface PluginManagerOptions {
@@ -32,8 +32,16 @@ interface PluginManifestFile {
 }
 
 interface McpServerConfigFile {
+  type?: unknown;
   command?: unknown;
   args?: unknown;
+  url?: unknown;
+  headers?: unknown;
+  httpHeaders?: unknown;
+  envHttpHeaders?: unknown;
+  env_http_headers?: unknown;
+  bearerTokenEnvVar?: unknown;
+  bearer_token_env_var?: unknown;
 }
 
 interface PluginState {
@@ -57,7 +65,7 @@ interface PluginState {
 const MANIFEST_CANDIDATES = [".codex-plugin/plugin.json"];
 
 // 插件自带 MCP server 的 action 开关：注入 true 让插件放行，动作审批统一由
-// 主服务 ToolRegistry.decidePolicy 把守（stdio 私有点对点，外部无法绕过）。
+// 主服务 ToolRegistry.decidePolicy 把守（stdio 与 HTTP 服务同样受主服务约束）。
 const ACTION_ALLOW_ENV: Record<string, string> = {
   WAZUH_MCP_ALLOW_ACTIONS: "true",
   SHUFFLE_MCP_ALLOW_ACTIONS: "true"
@@ -65,7 +73,7 @@ const ACTION_ALLOW_ENV: Record<string, string> = {
 
 /**
  * 插件管理器：扫描 runtime/plugins/<name>/，按 Claude Code / Codex 插件形态
- * （manifest + .mcp.json）spawn 插件自带 MCP server，把 listTools 结果注册为
+ * （manifest + .mcp.json）连接插件自带 MCP server（stdio 或 streamable-http），把 listTools 结果注册为
  * 主服务的 SecOpsTool。load()/reload() 实现“安装后重新加载一次即可 reach”。
  */
 export class PluginManager {
@@ -155,14 +163,7 @@ export class PluginManager {
     let toolCount = 0;
     for (const serverName of serverNames) {
       const config = mcpServers[serverName] as McpServerConfigFile;
-      const resolved: ResolvedMcpServer = {
-        transport: "stdio",
-        name: serverName,
-        command: config.command as string,
-        args: Array.isArray(config.args) ? config.args.map(String) : [],
-        cwd: dir,
-        env: buildSpawnEnv(this.options.env ?? process.env)
-      };
+      const resolved = resolveMcpServer(serverName, config, dir, this.options.env ?? process.env);
       let client: McpClientHandle | undefined;
       try {
         client = this.options.createClient
@@ -322,8 +323,10 @@ function readMcpServerConfigs(
         continue;
       }
       const cfg = config as McpServerConfigFile;
-      if (typeof cfg.command === "string" && cfg.command.length > 0) {
-        result[name] = { command: cfg.command, ...(Array.isArray(cfg.args) ? { args: cfg.args } : {}) };
+      const hasCommand = typeof cfg.command === "string" && cfg.command.length > 0;
+      const hasUrl = typeof cfg.url === "string" && cfg.url.trim().length > 0 && isHttpTransport(cfg.type);
+      if (hasCommand || hasUrl) {
+        result[name] = { ...cfg };
       }
     }
     if (Object.keys(result).length > 0) {
@@ -331,6 +334,108 @@ function readMcpServerConfigs(
     }
   }
   return {};
+}
+
+function resolveMcpServer(
+  name: string,
+  config: McpServerConfigFile,
+  pluginRoot: string,
+  env: NodeJS.ProcessEnv
+): ResolvedMcpServer {
+  if (typeof config.command === "string" && config.command.length > 0) {
+    return {
+      transport: "stdio",
+      name,
+      command: config.command,
+      args: Array.isArray(config.args) ? config.args.map(String) : [],
+      cwd: pluginRoot,
+      env: buildSpawnEnv(env)
+    };
+  }
+  const rawUrl = typeof config.url === "string" ? config.url.trim() : "";
+  if (!rawUrl) {
+    throw new Error(`MCP server ${name} must declare command or url`);
+  }
+  return {
+    transport: "streamable-http",
+    name,
+    url: normalizeHttpUrl(rawUrl),
+    headers: buildHttpHeaders(config, env)
+  };
+}
+
+function isHttpTransport(type: unknown): boolean {
+  if (type === undefined) {
+    return true;
+  }
+  return typeof type === "string" && (type.toLowerCase() === "http" || type.toLowerCase() === "streamable-http");
+}
+
+function normalizeHttpUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid MCP server URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`MCP server URL must use http or https: ${rawUrl}`);
+  }
+  return parsed.toString();
+}
+
+function buildHttpHeaders(config: McpServerConfigFile, env: NodeJS.ProcessEnv): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(stringRecord(config.headers ?? config.httpHeaders))) {
+    const resolved = resolveHeaderValue(value, env);
+    if (resolved !== undefined) {
+      headers[key] = resolved;
+    }
+  }
+  for (const [key, envVar] of Object.entries(stringRecord(config.envHttpHeaders ?? config.env_http_headers))) {
+    const value = env[envVar];
+    if (typeof value === "string" && value.length > 0) {
+      headers[key] = value;
+    }
+  }
+  const bearerTokenEnvVar = optionalString(config.bearerTokenEnvVar) ?? optionalString(config.bearer_token_env_var);
+  if (bearerTokenEnvVar) {
+    const token = env[bearerTokenEnvVar];
+    if (typeof token === "string" && token.length > 0) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "string") {
+      result[key] = entry;
+    }
+  }
+  return result;
+}
+
+function resolveHeaderValue(value: string, env: NodeJS.ProcessEnv): string | undefined {
+  let unresolved = false;
+  const resolved = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, key: string) => {
+    const replacement = env[key];
+    if (replacement === undefined || replacement === "") {
+      unresolved = true;
+      return "";
+    }
+    return replacement;
+  });
+  return unresolved ? undefined : resolved;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function buildSpawnEnv(base: NodeJS.ProcessEnv): Record<string, string> {

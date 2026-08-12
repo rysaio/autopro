@@ -24,6 +24,8 @@ export interface ResolvedHttpMcpServer {
 
 export type ResolvedMcpConnection = ResolvedStdioMcpServer | ResolvedHttpMcpServer;
 
+const HTTP_MCP_CONNECT_TIMEOUT_MS = 8_000;
+
 export interface McpClientHandle {
   listTools(): Promise<Tool[]>;
   callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
@@ -44,7 +46,22 @@ export async function connectMcpClient(server: ResolvedMcpConnection): Promise<M
     const transport = new StreamableHTTPClientTransport(new URL(server.url), {
       requestInit: { headers: server.headers }
     });
-    await client.connect(transport as Parameters<Client["connect"]>[0]);
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        client.connect(transport as Parameters<Client["connect"]>[0]),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error(
+            `MCP HTTP connection timed out after ${HTTP_MCP_CONNECT_TIMEOUT_MS}ms`
+          )), HTTP_MCP_CONNECT_TIMEOUT_MS);
+        })
+      ]);
+    } catch (error) {
+      await transport.close().catch(() => undefined);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
   return {
     listTools: async () => (await client.listTools()).tools,
