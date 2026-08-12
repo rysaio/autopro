@@ -3,7 +3,13 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import type { PluginSummary, ToolClass, ToolRisk, ToolSchema } from "@secops-agent/shared";
+import type {
+  PluginSummary,
+  ToolClass,
+  ToolRisk,
+  ToolRoutingHints,
+  ToolSchema
+} from "@secops-agent/shared";
 import type { ModelTool } from "../providers/types.js";
 import type { PluginCachePolicy, PluginCachePolicyStore } from "../runtime/pluginCachePolicyStore.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../tools/types.js";
@@ -39,6 +45,8 @@ interface PluginManifestFile {
   name?: unknown;
   version?: unknown;
   mcpServers?: unknown;
+  keywords?: unknown;
+  routing?: unknown;
 }
 
 interface McpServerConfigFile {
@@ -145,6 +153,8 @@ export class PluginManager {
       this.setError(pluginId, "Missing plugin manifest (.codex-plugin/plugin.json)");
       return;
     }
+    const pluginKeywords = toValidatedTags(manifest.keywords);
+    const pluginRouting = toRoutingHints(manifest.routing);
     const mcpServers = readMcpServerConfigs(dir, manifest);
     const serverNames = Object.keys(mcpServers);
     if (serverNames.length === 0) {
@@ -174,7 +184,15 @@ export class PluginManager {
           ? meta.manifestId
           : `${pluginId}.${tool.name}`;
         const cachePolicy = this.options.cachePolicyStore?.policyFor(manifestId);
-        return mcpToolToSecOpsTool(pluginId, generation, tool, (args) => client!.callTool(tool.name, args), cachePolicy);
+        return mcpToolToSecOpsTool(
+          pluginId,
+          generation,
+          tool,
+          (args) => client!.callTool(tool.name, args),
+          cachePolicy,
+          pluginKeywords,
+          pluginRouting
+        );
       });
       this.options.registry.registerTools(secOpsTools);
       this.plugins.set(pluginId, {
@@ -211,7 +229,9 @@ export class PluginManager {
 
 // ── manifest 与 MCP 配置读取 ──
 
-function readPluginManifest(dir: string): { name: string; version?: string; mcpServers?: unknown } | undefined {
+function readPluginManifest(
+  dir: string
+): { name: string; version?: string; mcpServers?: unknown; keywords?: string[]; routing?: ToolRoutingHints } | undefined {
   for (const relative of MANIFEST_CANDIDATES) {
     const manifestPath = path.join(dir, relative);
     if (!existsSync(manifestPath)) {
@@ -230,10 +250,14 @@ function readPluginManifest(dir: string): { name: string; version?: string; mcpS
     if (typeof manifest.name !== "string" || manifest.name.length === 0) {
       continue;
     }
+    const keywords = toValidatedTags(manifest.keywords);
+    const routing = toRoutingHints(manifest.routing);
     return {
       name: manifest.name,
       ...(typeof manifest.version === "string" ? { version: manifest.version } : {}),
-      ...(manifest.mcpServers !== undefined ? { mcpServers: manifest.mcpServers } : {})
+      ...(manifest.mcpServers !== undefined ? { mcpServers: manifest.mcpServers } : {}),
+      ...(keywords.length > 0 ? { keywords } : {}),
+      ...(routing ? { routing } : {})
     };
   }
   return undefined;
@@ -328,7 +352,9 @@ function mcpToolToSecOpsTool(
   generation: number,
   tool: Tool,
   call: (args: Record<string, unknown>) => Promise<CallToolResult>,
-  cachePolicy?: PluginCachePolicy
+  cachePolicy?: PluginCachePolicy,
+  pluginTags: string[] = [],
+  pluginRouting?: ToolRoutingHints
 ): SecOpsTool {
   const meta = tool._meta ?? {};
   const manifestId = typeof meta.manifestId === "string" && meta.manifestId.length > 0
@@ -336,6 +362,13 @@ function mcpToolToSecOpsTool(
     : `${pluginId}.${tool.name}`;
   const schema = toToolSchema(tool.inputSchema);
   const toolClass = toToolClass(meta.toolClass);
+  const routing = toRoutingHints(meta.routing) ?? pluginRouting;
+  const tags = uniqueStrings([
+    pluginId,
+    ...pluginTags,
+    ...toValidatedTags(meta.tags),
+    ...derivedAnnotationTags(tool)
+  ]);
   // 仅当 host 策略显式启用且工具不是 action、未被 MCP 注解标记为显式非只读时注入缓存策略。
   // MCP readOnly/idempotent 注解只用于拒绝 unsafe 策略，绝不自动启用缓存。
   const resultCache = cachePolicy && isCacheEligible(tool, toolClass)
@@ -355,10 +388,12 @@ function mcpToolToSecOpsTool(
       description: tool.description ?? "",
       toolClass,
       risk: toToolRisk(meta.risk),
-      deferLoading: meta.deferLoading === true,
+      // 缺失/无效的 deferLoading 默认按需（true）：未知插件工具不得因此变成常驻。
+      deferLoading: meta.deferLoading !== false,
       inputSchema: schema,
-      tags: [pluginId],
+      tags,
       mcpCompatible: true,
+      ...(routing ? { routing } : {}),
       ...(resultCache ? { resultCache } : {})
     },
     toModelTool(): ModelTool {
@@ -427,6 +462,63 @@ function toToolClass(value: unknown): ToolClass {
 function toToolRisk(value: unknown): ToolRisk {
   // risk 缺失时默认 high（保守）：插件未声明风险即按高危 action 处理，仍需审批
   return value === "low" || value === "medium" || value === "high" ? value : "high";
+}
+
+/**
+ * Validates optional routing metadata. Missing or malformed values return
+ * undefined so the router falls back to hints derived from identity, name,
+ * description, and tags. Invalid entries are ignored rather than trusted.
+ */
+function toRoutingHints(value: unknown): ToolRoutingHints | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const group = typeof raw.group === "string" && raw.group.trim().length > 0
+    ? raw.group.trim()
+    : undefined;
+  const keywords = toValidatedTags(raw.keywords);
+  if (!group && keywords.length === 0) {
+    return undefined;
+  }
+  return {
+    ...(group ? { group } : {}),
+    ...(keywords.length > 0 ? { keywords } : {})
+  };
+}
+
+/** Accepts only non-empty strings; duplicate and malformed entries are dropped. */
+function toValidatedTags(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return uniqueStrings(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim()));
+}
+
+/** Derives safe routing tags from standard MCP tool annotations (compatible metadata). */
+function derivedAnnotationTags(tool: Tool): string[] {
+  const meta = tool._meta ?? {};
+  const annotations = (tool as { annotations?: Record<string, unknown> }).annotations ?? {};
+  const tags: string[] = [];
+  if (booleanHint(meta.readOnlyHint ?? annotations.readOnlyHint)) {
+    tags.push("read-only");
+  }
+  if (booleanHint(meta.destructiveHint ?? annotations.destructiveHint)) {
+    tags.push("destructive");
+  }
+  if (booleanHint(meta.openWorldHint ?? annotations.openWorldHint)) {
+    tags.push("open-world");
+  }
+  return tags;
+}
+
+function booleanHint(value: unknown): boolean {
+  return value === true;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 /** Host isolation scope for a plugin's cached results. */

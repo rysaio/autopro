@@ -36,7 +36,7 @@ $env:SECOPS_AGENT_ROUTING_MODE = "layered"
 
 未设置或设为其他值时使用 `deterministic`。回滚模式同样严格应用 `enabledTools`、action 策略和原始消息保留规则。
 
-每个工具的 `deferLoading` 声明继续用于常驻/按需暴露：`false` 表示常驻，`true` 表示只有命中对应路由分组时才加载。插件通过 MCP `_meta.deferLoading` 透传默认值，用户可通过 API 覆盖任意已注册工具：
+每个工具的 `deferLoading` 声明继续用于常驻/按需暴露：`false` 表示常驻，`true` 表示只有命中对应路由分组时才加载。插件通过 MCP `_meta.deferLoading` 透传默认值；插件工具缺失或声明无效时默认 `true`（按需），避免未知插件工具因缺少元数据而永久常驻。用户可通过 API 覆盖任意已注册工具：
 
 用户可以通过 API 覆盖任意已注册工具：
 
@@ -57,6 +57,14 @@ DELETE /api/tools/visibility/wazuh.alerts.search
 
 覆盖持久化在 `runtime/config/toolVisibility.json`，服务重启或插件 reload 后仍然生效。
 `GET /api/tools` 返回应用覆盖后的最终 `deferLoading` 状态。
+
+任意已安装插件工具不依赖第一方名称或硬编码前缀，也可被确定性路由发现。插件可在
+`.codex-plugin/plugin.json` 声明 `routing: { group, keywords }`，或在 MCP 工具
+`_meta.routing` 中声明同样的字段（per-tool 优先）；主服务只接受校验通过的非空字符串，
+缺失或无效时回退到从工具 id、name、description、tags（插件 keywords、`_meta.tags`
+与 MCP annotations 派生标签）中提取的通用路由提示。未命中第一方分类的 deferred
+工具只有在请求匹配其路由提示时才会被选中，不进入不相关的高置信度请求；路由索引在
+每次 agent run 前重建，插件 reload 后新装/卸载立即生效。
 
 ### 创新二：语义工具缓存 (Semantic Tool Cache)
 

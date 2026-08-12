@@ -64,6 +64,14 @@ export interface ToolResultCachePolicy {
   namespace?: string;
 }
 
+/** Optional plugin-declared generic routing hints for the deterministic router. */
+export interface ToolRoutingHints {
+  /** Explicit routing group label (e.g. "customer-search"); free-form validated non-empty string. */
+  group?: string;
+  /** Explicit trigger keywords; each validated non-empty string. */
+  keywords?: string[];
+}
+
 export interface SkillManifest {
   id: string;
   skillPackId: string;
@@ -76,6 +84,8 @@ export interface SkillManifest {
   inputSchema: ToolSchema;
   tags: string[];
   mcpCompatible: boolean;
+  /** Optional generic routing hints; missing or invalid values fall back to derived hints. */
+  routing?: ToolRoutingHints;
   /** Missing means disabled. Only explicitly approved read-only tools may opt in. */
   resultCache?: ToolResultCachePolicy;
 }

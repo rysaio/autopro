@@ -93,7 +93,8 @@ describe("PluginManager", () => {
     const manifestIds = setup.registry.manifests().map((m) => m.id);
     expect(manifestIds).toContain("demo.query");
     expect(manifestIds).toContain("demo.action");
-    expect(setup.registry.manifests().find((manifest) => manifest.id === "demo.query")?.deferLoading).toBe(false);
+    // 缺失 deferLoading 的插件工具默认按需（deferred），不会因缺少元数据而变成常驻。
+    expect(setup.registry.manifests().find((manifest) => manifest.id === "demo.query")?.deferLoading).toBe(true);
     expect(setup.registry.manifests().find((manifest) => manifest.id === "demo.action")?.deferLoading).toBe(true);
 
     // spawn env：透传宿主环境 + 插件放行 + 动作审批归主服务
@@ -102,6 +103,61 @@ describe("PluginManager", () => {
     expect(setup.spawned[0]?.env.SECOPS_ACTION_LEVEL).toBe("full-access");
     expect(setup.spawned[0]?.env.WAZUH_MCP_ALLOW_ACTIONS).toBe("true");
     expect(setup.spawned[0]?.env.SHUFFLE_MCP_ALLOW_ACTIONS).toBe("true");
+
+    await manager.disconnectAll();
+  });
+
+  it("validates optional routing metadata and plugin keywords into generic routing hints", async () => {
+    const { manager, setup } = await setupPluginManager();
+    setup.toolsByPlugin["demo"] = [
+      tool("secops_demo_query", "demo.query", {
+        description: "Search customer records by email address or phone number.",
+        _meta: {
+          manifestId: "demo.query",
+          risk: "low",
+          toolClass: "perception",
+          routing: { group: "customer-search", keywords: ["customer lookup", "crm search"] },
+          tags: ["customer", "crm"]
+        }
+      }),
+      tool("secops_demo_bad", "demo.bad", {
+        _meta: {
+          manifestId: "demo.bad",
+          risk: "low",
+          toolClass: "perception",
+          routing: { group: 42, keywords: ["", 7] },
+          deferLoading: "yes"
+        }
+      }),
+      tool("secops_demo_annotated", "demo.annotated", {
+        annotations: { readOnlyHint: true, destructiveHint: false },
+        _meta: { manifestId: "demo.annotated", risk: "low", toolClass: "perception", deferLoading: false }
+      })
+    ];
+    await installPlugin(setup.pluginsDir, "demo", {
+      keywords: ["demo", "customer-records"],
+      routing: { group: "demo-group", keywords: ["demo lookup"] }
+    });
+    await manager.load();
+
+    const manifests = new Map(setup.registry.manifests().map((m) => [m.id, m]));
+    // 合法 per-tool routing 生效；plugin 关键字与 _meta.tags 合并为路由标签。
+    expect(manifests.get("demo.query")?.routing).toEqual({
+      group: "customer-search",
+      keywords: ["customer lookup", "crm search"]
+    });
+    expect(manifests.get("demo.query")?.tags).toEqual(
+      expect.arrayContaining(["demo", "customer-records", "customer", "crm"])
+    );
+    // 无效 per-tool routing 回退到 plugin 级 routing；无效 deferLoading 回退为按需。
+    expect(manifests.get("demo.bad")?.routing).toEqual({
+      group: "demo-group",
+      keywords: ["demo lookup"]
+    });
+    expect(manifests.get("demo.bad")?.deferLoading).toBe(true);
+    // 显式 deferLoading=false 仍然生效；MCP 注解派生出只读标签。
+    expect(manifests.get("demo.annotated")?.deferLoading).toBe(false);
+    expect(manifests.get("demo.annotated")?.tags).toContain("read-only");
 
     await manager.disconnectAll();
   });

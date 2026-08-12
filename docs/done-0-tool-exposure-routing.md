@@ -3,6 +3,10 @@
 日期：2026-08-05
 状态：已完成（2026-08-07）
 
+> 2026-08-12 更新（Issue #4）：插件工具 `_meta.deferLoading` 缺失或无效时的默认值
+> 从 `false`（常驻）改为 `true`（按需），避免未知插件工具因缺少元数据而永久 resident。
+> 显式 `false` 仍表示常驻。详见 `docs/done-4-plugin-generic-routing.md`。
+
 ## 1. 背景与目标
 
 当前分层工具路由（`src/apps/server/src/runtime/toolRouter.ts` + `agentRuntime.ts`）的

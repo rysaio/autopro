@@ -5,7 +5,7 @@ import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer } from "../src/app.js";
 import type { McpClientHandle, ResolvedMcpServer } from "../src/plugins/pluginManager.js";
 import { testConfig, scriptedModelForRequest } from "./fixtures/testConfig.js";
-import { streamResultFromGenerateResult } from "./fixtures/scriptedModel.js";
+import { createScriptedModel, streamResultFromGenerateResult } from "./fixtures/scriptedModel.js";
 
 /** 在测试 pluginsDir 下创建假插件目录（manifest + .mcp.json，client 由注入提供）。 */
 async function installFakePlugin(pluginsDir: string, id: string, name: string): Promise<void> {
@@ -51,6 +51,22 @@ function fakePluginClient(pluginId: string): McpClientHandle {
           }
         }
       ]
+    : pluginId === "generic-demo"
+      ? [
+          {
+            name: "demo_customer_search",
+            title: "Customer Search",
+            description: "Search customer records by email address or phone number.",
+            inputSchema: { type: "object", properties: { email: { type: "string" } } },
+            _meta: {
+              manifestId: "demo.customer.search",
+              risk: "low",
+              toolClass: "perception",
+              deferLoading: true,
+              routing: { keywords: ["customer records", "customer lookup"] }
+            }
+          }
+        ]
     : [
         {
           name: "secops_shuffle_workflow_list",
@@ -367,6 +383,58 @@ describe("tool catalog API with plugins", () => {
       }
     });
     expect(after.json().invocation.status).toBe("executed");
+
+    await app.close();
+  });
+
+  it("routes a generically named plugin tool after runtime reload and drops it after removal", async () => {
+    const config = testConfig();
+    const app = buildServer(config, {
+      createModel: () => createScriptedModel("No tool needed."),
+      createPluginClient
+    });
+
+    const before = await app.inject({ method: "GET", url: "/api/plugins" });
+    expect(before.json().plugins).toEqual([]);
+
+    // 运行中安装一个泛化命名的插件并 reload，无需重启即可被路由发现。
+    await installFakePlugin(config.pluginsDir, "generic-demo", "Generic Demo");
+    const reloaded = await app.inject({ method: "POST", url: "/api/plugins/reload" });
+    expect(reloaded.statusCode).toBe(200);
+
+    const matched = await app.inject({
+      method: "POST",
+      url: "/api/agent/run",
+      payload: {
+        messages: [{ role: "user", content: "Find customer records for alice@example.com." }],
+        enabledTools: ["demo.customer.search"],
+        permissionMode: "auto"
+      }
+    });
+    expect(matched.statusCode).toBe(200);
+    expect(matched.json().routing.selectedToolIds).toContain("demo.customer.search");
+
+    // 不相关的可信请求不会暴露同一个 deferred 插件工具。
+    const unrelated = await app.inject({
+      method: "POST",
+      url: "/api/agent/run",
+      payload: {
+        messages: [{ role: "user", content: "Investigate IOC 198.51.100.23." }],
+        enabledTools: ["demo.customer.search", "ioc.enrich"],
+        permissionMode: "auto"
+      }
+    });
+    expect(unrelated.statusCode).toBe(200);
+    expect(unrelated.json().routing.selectedToolIds).not.toContain("demo.customer.search");
+
+    // 删除插件并 reload 后，路由发现随注册表一起移除旧工具。
+    const { rm } = await import("node:fs/promises");
+    await rm(path.join(config.pluginsDir, "generic-demo"), { recursive: true, force: true });
+    const reloadedAfterRemoval = await app.inject({ method: "POST", url: "/api/plugins/reload" });
+    expect(reloadedAfterRemoval.statusCode).toBe(200);
+
+    const tools = await app.inject({ method: "GET", url: "/api/tools" });
+    expect(tools.json().tools.map((tool: { id: string }) => tool.id)).not.toContain("demo.customer.search");
 
     await app.close();
   });

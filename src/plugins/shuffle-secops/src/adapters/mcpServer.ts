@@ -35,7 +35,8 @@ export function createShuffleMcpServer(options: ShuffleMcpServerOptions = {}): M
           manifestId: tool.manifest.id,
           risk: tool.manifest.risk,
           toolClass: tool.manifest.toolClass,
-          deferLoading: tool.manifest.deferLoading
+          deferLoading: tool.manifest.deferLoading,
+          ...(tool.manifest.routing ? { routing: tool.manifest.routing } : {})
         }
       },
       async (args: Record<string, unknown>) => {
