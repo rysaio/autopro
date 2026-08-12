@@ -604,6 +604,11 @@ function createRuntime(
         workspaceRoot: config.workspaceRoot,
         sessionStateStore,
         runTimeoutMs: config.agentRunTimeoutMs,
+        contextBudget: {
+          maxInputTokens: config.contextBudgetMaxInputTokens,
+          reservedOutputTokens: config.contextBudgetReservedOutputTokens,
+          keepRecentMessages: config.contextBudgetKeepRecentMessages
+        },
         persistQueue: {
           capacity: config.persistQueueCapacity,
           batchSize: config.persistQueueBatchSize,
@@ -632,6 +637,11 @@ function createRuntime(
       workspaceRoot: config.workspaceRoot,
       sessionStateStore,
       runTimeoutMs: config.agentRunTimeoutMs,
+      contextBudget: {
+        maxInputTokens: config.contextBudgetMaxInputTokens,
+        reservedOutputTokens: config.contextBudgetReservedOutputTokens,
+        keepRecentMessages: config.contextBudgetKeepRecentMessages
+      },
       persistQueue: {
         capacity: config.persistQueueCapacity,
         batchSize: config.persistQueueBatchSize,
