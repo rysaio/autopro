@@ -246,12 +246,19 @@ export interface PluginSummary {
   status: "loaded" | "degraded" | "error";
   toolCount: number;
   skillCount: number;
-  mcpServers?: Array<{
-    name: string;
-    status: "loaded" | "error";
-    toolCount: number;
-    error?: string;
-  }>;
+  mcpServers?: PluginMcpServerSummary[];
+  error?: string;
+}
+
+export interface PluginMcpServerSummary {
+  name: string;
+  status: "loaded" | "error";
+  toolCount: number;
+  transport?: "stdio" | "streamable-http";
+  url?: string;
+  command?: string;
+  args?: string[];
+  headerNames?: string[];
   error?: string;
 }
 
@@ -271,6 +278,8 @@ export interface McpServerSummary {
   cwd?: string;
   url?: string;
   error?: string;
+  source?: "standalone" | "plugin";
+  pluginId?: string;
 }
 
 export interface McpServerConfigState {

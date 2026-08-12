@@ -583,6 +583,7 @@ async function handleGenerateReport() {
     const state = await reloadPlugins();
     setPlugins(state);
     setSkills(await fetchSkills());
+    setMcpServers(await fetchMcpServers());
     await refreshToolsAfterReload();
     return state;
   }

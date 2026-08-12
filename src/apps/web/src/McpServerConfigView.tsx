@@ -96,6 +96,9 @@ export function McpServerConfigView({ state, onChanged }: McpServerConfigViewPro
   }
 
   function openEdit(server: McpServerSummary) {
+    if (server.source === "plugin") {
+      return;
+    }
     setForm({
       id: server.id,
       name: server.name,
@@ -138,6 +141,9 @@ export function McpServerConfigView({ state, onChanged }: McpServerConfigViewPro
   }
 
   function toggleEnabled(server: McpServerSummary) {
+    if (server.source === "plugin") {
+      return;
+    }
     void runAction(
       server.id,
       () => updateMcpServer(server.id, { enabled: !server.enabled }),
@@ -146,6 +152,9 @@ export function McpServerConfigView({ state, onChanged }: McpServerConfigViewPro
   }
 
   function remove(server: McpServerSummary) {
+    if (server.source === "plugin") {
+      return;
+    }
     if (!window.confirm(`确认删除 MCP 服务「${server.name}」？`)) {
       return;
     }
@@ -185,9 +194,9 @@ export function McpServerConfigView({ state, onChanged }: McpServerConfigViewPro
                 aria-label={`${server.enabled ? "停用" : "启用"} ${server.name}`}
                 aria-pressed={server.enabled}
                 className={`mcp-server-toggle ${server.enabled ? "active" : ""}`}
-                disabled={busyId !== null}
+                disabled={busyId !== null || server.source === "plugin"}
                 onClick={() => toggleEnabled(server)}
-                title={server.enabled ? "停用服务" : "启用服务"}
+                title={server.source === "plugin" ? "插件管理的服务不可停用" : server.enabled ? "停用服务" : "启用服务"}
                 type="button"
               >
                 <span />
@@ -196,12 +205,13 @@ export function McpServerConfigView({ state, onChanged }: McpServerConfigViewPro
                 <div className="mcp-server-title">
                   {server.status === "connected" ? <CheckCircle2 size={15} aria-hidden="true" /> : server.status === "disabled" ? <CircleOff size={15} aria-hidden="true" /> : <AlertTriangle size={15} aria-hidden="true" />}
                   <strong>{server.name}</strong>
-                  <em>{transportLabel(server.transport)}</em>
+                  <em>{server.source === "plugin" ? `插件 · ${transportLabel(server.transport)}` : transportLabel(server.transport)}</em>
                 </div>
                 <p>{server.transport === "stdio" ? [server.command, ...(server.args ?? [])].join(" ") : server.url}</p>
                 <small>
                   {server.status === "connected" ? `${server.toolCount} 个工具` : server.status === "disabled" ? "已停用" : server.error}
                 </small>
+                {server.pluginId ? <small>来自插件：{server.pluginId}</small> : null}
                 {server.envKeys.length || server.headerNames.length ? (
                   <div className="mcp-secret-keys">
                     {[...server.envKeys, ...server.headerNames].map((key) => <span key={key}>{key}</span>)}
@@ -209,11 +219,11 @@ export function McpServerConfigView({ state, onChanged }: McpServerConfigViewPro
                 ) : null}
               </div>
               <div className="mcp-server-row-actions">
-                <button disabled={busyId !== null || !server.enabled} onClick={() => void runAction(server.id, () => reconnectMcpServer(server.id), `${server.name} 已重新连接`)} title="重新连接" type="button">
+                <button disabled={busyId !== null || !server.enabled || server.source === "plugin"} onClick={() => void runAction(server.id, () => reconnectMcpServer(server.id), `${server.name} 已重新连接`)} title={server.source === "plugin" ? "插件管理的服务不可重连" : "重新连接"} type="button">
                   {busyId === server.id ? <Loader2 className="spin" size={15} aria-hidden="true" /> : <RefreshCw size={15} aria-hidden="true" />}
                 </button>
-                <button disabled={busyId !== null} onClick={() => openEdit(server)} title="编辑" type="button"><Pencil size={15} aria-hidden="true" /></button>
-                <button className="danger" disabled={busyId !== null} onClick={() => remove(server)} title="删除" type="button"><Trash2 size={15} aria-hidden="true" /></button>
+                <button disabled={busyId !== null || server.source === "plugin"} onClick={() => openEdit(server)} title={server.source === "plugin" ? "插件管理的服务不可编辑" : "编辑"} type="button"><Pencil size={15} aria-hidden="true" /></button>
+                <button className="danger" disabled={busyId !== null || server.source === "plugin"} onClick={() => remove(server)} title={server.source === "plugin" ? "插件管理的服务不可删除" : "删除"} type="button"><Trash2 size={15} aria-hidden="true" /></button>
               </div>
             </div>
           )) : <p className="empty-state">暂无 MCP 服务</p>}

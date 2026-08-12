@@ -140,6 +140,58 @@ describe("tool catalog API with plugins", () => {
       expect.objectContaining({ id: "wazuh-demo", name: "Wazuh Demo", version: "1.0.0", status: "loaded", toolCount: 2 })
     ]);
 
+    const mcpServersResponse = await app.inject({ method: "GET", url: "/api/mcp/servers" });
+    expect(mcpServersResponse.json().servers).toEqual([
+      expect.objectContaining({
+        id: "plugin:wazuh-demo:wazuh-demo",
+        name: "wazuh-demo",
+        transport: "stdio",
+        status: "connected",
+        toolCount: 2,
+        source: "plugin",
+        pluginId: "wazuh-demo",
+        command: "node"
+      })
+    ]);
+
+    const blockedUpdate = await app.inject({
+      method: "PUT",
+      url: "/api/mcp/servers/plugin:wazuh-demo:wazuh-demo",
+      payload: { enabled: false }
+    });
+    expect(blockedUpdate.statusCode).toBe(400);
+
+    await app.close();
+  });
+
+  it("exposes plugin streamable-http servers in the MCP server API", async () => {
+    const config = testConfig();
+    await installFakePlugin(config.pluginsDir, "http-demo", "HTTP Demo");
+    await writeFile(path.join(config.pluginsDir, "http-demo", ".mcp.json"), JSON.stringify({
+      mcpServers: {
+        "http-demo": {
+          type: "http",
+          url: "http://127.0.0.1:1110/mcp"
+        }
+      }
+    }), "utf8");
+    const app = buildServer(config, { createPluginClient });
+
+    const response = await app.inject({ method: "GET", url: "/api/mcp/servers" });
+    expect(response.json().servers).toEqual([
+      expect.objectContaining({
+        id: "plugin:http-demo:http-demo",
+        name: "http-demo",
+        transport: "streamable-http",
+        status: "connected",
+        toolCount: 1,
+        url: "http://127.0.0.1:1110/mcp",
+        source: "plugin",
+        pluginId: "http-demo",
+        headerNames: []
+      })
+    ]);
+
     await app.close();
   });
 

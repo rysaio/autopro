@@ -163,9 +163,10 @@ export class PluginManager {
     let toolCount = 0;
     for (const serverName of serverNames) {
       const config = mcpServers[serverName] as McpServerConfigFile;
-      const resolved = resolveMcpServer(serverName, config, dir, this.options.env ?? process.env);
       let client: McpClientHandle | undefined;
+      let resolved: ResolvedMcpServer | undefined;
       try {
+        resolved = resolveMcpServer(serverName, config, dir, this.options.env ?? process.env);
         client = this.options.createClient
           ? await this.options.createClient(resolved, pluginId)
           : await connectMcpClient(resolved);
@@ -179,15 +180,16 @@ export class PluginManager {
         this.options.registry.registerTools(adaptedTools, "plugins");
         clients.push(connectedClient);
         toolCount += adaptedTools.length;
-        serverStates.push({ name: serverName, status: "loaded", toolCount: adaptedTools.length });
+        serverStates.push(pluginMcpServerSummary(serverName, resolved, "loaded", adaptedTools.length));
       } catch (error) {
         await client?.close().catch(() => undefined);
-        serverStates.push({
-          name: serverName,
-          status: "error",
-          toolCount: 0,
-          error: error instanceof Error ? error.message : String(error)
-        });
+        serverStates.push(pluginMcpServerSummary(
+          serverName,
+          resolved,
+          "error",
+          0,
+          error instanceof Error ? error.message : String(error)
+        ));
       }
     }
     const state: PluginState = {
@@ -334,6 +336,28 @@ function readMcpServerConfigs(
     }
   }
   return {};
+}
+
+function pluginMcpServerSummary(
+  name: string,
+  resolved: ResolvedMcpServer | undefined,
+  status: "loaded" | "error",
+  toolCount: number,
+  error?: string
+): NonNullable<PluginSummary["mcpServers"]>[number] {
+  return {
+    name,
+    status,
+    toolCount,
+    ...(resolved ? { transport: resolved.transport } : {}),
+    ...(resolved?.transport === "streamable-http"
+      ? { url: resolved.url, headerNames: Object.keys(resolved.headers).sort() }
+      : {}),
+    ...(resolved?.transport === "stdio"
+      ? { command: resolved.command, args: resolved.args }
+      : {}),
+    ...(error ? { error } : {})
+  };
 }
 
 function resolveMcpServer(

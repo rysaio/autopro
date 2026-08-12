@@ -11,8 +11,10 @@ import type {
   AuditEvent,
   EnvironmentStatus,
   McpServerConfigState,
+  McpServerSummary,
   ModelConfigState,
   PermissionMode,
+  PluginMcpServerSummary,
   PluginSummary,
   ProviderStatus,
   RuntimeSettings,
@@ -79,6 +81,14 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     workspaceRoot: config.workspaceRoot,
     registry,
     ...(options.createStandaloneMcpClient ? { createClient: options.createStandaloneMcpClient } : {})
+  });
+  const mcpServersState = (): McpServerConfigState => ({
+    servers: [
+      ...mcpServerManager.list().servers,
+      ...pluginManager.status().flatMap((plugin) =>
+        (plugin.mcpServers ?? []).map((server) => pluginMcpServerSummary(plugin, server))
+      )
+    ]
   });
 
   app.addHook("onRequest", async (request, reply) => {
@@ -288,13 +298,13 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     tools: mcpToolSummaries(registry)
   }));
 
-  app.get("/api/mcp/servers", async (): Promise<McpServerConfigState> => mcpServerManager.list());
+  app.get("/api/mcp/servers", async (): Promise<McpServerConfigState> => mcpServersState());
 
   app.post("/api/mcp/servers", async (request, reply): Promise<McpServerConfigState | unknown> => {
     try {
-      const state = await mcpServerManager.add(coerceMcpServerInput(coerceRecord(request.body)));
+      await mcpServerManager.add(coerceMcpServerInput(coerceRecord(request.body)));
       applyToolVisibilityOverrides(registry, toolVisibilityStore);
-      return state;
+      return mcpServersState();
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -302,13 +312,16 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
 
   app.put("/api/mcp/servers/:id", async (request, reply): Promise<McpServerConfigState | unknown> => {
     const params = request.params as { id: string };
+    if (isPluginMcpServerId(params.id)) {
+      return reply.code(400).send({ error: "Plugin-managed MCP server cannot be modified" });
+    }
     try {
-      const state = await mcpServerManager.update(params.id, coerceMcpServerUpdate(coerceRecord(request.body)));
-      if (!state) {
+      const updated = await mcpServerManager.update(params.id, coerceMcpServerUpdate(coerceRecord(request.body)));
+      if (!updated) {
         return reply.code(404).send({ error: `No MCP server found for ${params.id}` });
       }
       applyToolVisibilityOverrides(registry, toolVisibilityStore);
-      return state;
+      return mcpServersState();
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -316,24 +329,33 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
 
   app.delete("/api/mcp/servers/:id", async (request, reply): Promise<McpServerConfigState | unknown> => {
     const params = request.params as { id: string };
-    const state = await mcpServerManager.remove(params.id);
-    return state ?? reply.code(404).send({ error: `No MCP server found for ${params.id}` });
+    if (isPluginMcpServerId(params.id)) {
+      return reply.code(400).send({ error: "Plugin-managed MCP server cannot be removed" });
+    }
+    const removed = await mcpServerManager.remove(params.id);
+    if (!removed) {
+      return reply.code(404).send({ error: `No MCP server found for ${params.id}` });
+    }
+    return mcpServersState();
   });
 
   app.post("/api/mcp/servers/:id/reconnect", async (request, reply): Promise<McpServerConfigState | unknown> => {
     const params = request.params as { id: string };
-    const state = await mcpServerManager.reconnect(params.id);
-    if (!state) {
+    if (isPluginMcpServerId(params.id)) {
+      return reply.code(400).send({ error: "Plugin-managed MCP server cannot be reconnected" });
+    }
+    const reconnected = await mcpServerManager.reconnect(params.id);
+    if (!reconnected) {
       return reply.code(404).send({ error: `No MCP server found for ${params.id}` });
     }
     applyToolVisibilityOverrides(registry, toolVisibilityStore);
-    return state;
+    return mcpServersState();
   });
 
   app.post("/api/mcp/servers/reload", async (): Promise<McpServerConfigState> => {
-    const state = await mcpServerManager.reload();
+    await mcpServerManager.reload();
     applyToolVisibilityOverrides(registry, toolVisibilityStore);
-    return state;
+    return mcpServersState();
   });
 
   app.get("/api/approvals", async () => ({
@@ -531,6 +553,32 @@ function applyToolVisibilityOverrides(registry: ToolRegistry, store: ToolVisibil
 
 function hasManifest(registry: ToolRegistry, id: string): boolean {
   return registry.manifests().some((manifest) => manifest.id === id);
+}
+
+function isPluginMcpServerId(id: string): boolean {
+  return id.startsWith("plugin:");
+}
+
+function pluginMcpServerSummary(
+  plugin: PluginSummary,
+  server: PluginMcpServerSummary
+): McpServerSummary {
+  return {
+    id: `plugin:${plugin.id}:${server.name}`,
+    name: server.name,
+    transport: server.transport ?? "stdio",
+    enabled: true,
+    status: server.status === "loaded" ? "connected" : "error",
+    toolCount: server.toolCount,
+    envKeys: [],
+    headerNames: server.headerNames ?? [],
+    source: "plugin",
+    pluginId: plugin.id,
+    ...(server.url ? { url: server.url } : {}),
+    ...(server.command ? { command: server.command } : {}),
+    ...(server.args ? { args: server.args } : {}),
+    ...(server.error ? { error: server.error } : {})
+  };
 }
 
 function createRuntime(
