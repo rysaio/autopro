@@ -116,6 +116,55 @@ h3 {
   border-right: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.sidebar-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 14px;
+  border-radius: 6px;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease;
+}
+
+.sidebar-divider::after {
+  content: "";
+  width: 26px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.5);
+  box-shadow: 0 5px 0 rgba(148, 163, 184, 0.5);
+  transition: background 120ms ease, box-shadow 120ms ease, width 140ms ease;
+}
+
+.sidebar-divider:hover,
+.sidebar-divider:focus-visible,
+.sidebar-divider.resizing {
+  background: rgba(20, 184, 166, 0.1);
+}
+
+.sidebar-divider:hover::after,
+.sidebar-divider.resizing::after {
+  background: rgba(20, 184, 166, 0.85);
+  box-shadow: 0 5px 0 rgba(20, 184, 166, 0.85);
+}
+
+.sidebar-divider:active::after {
+  width: 34px;
+}
+
+.sidebar-divider:focus-visible {
+  outline: 2px solid rgba(20, 184, 166, 0.9);
+  outline-offset: -2px;
+}
+
+.sidebar-divider.resizing,
+.nav-stack.resizing {
+  user-select: none;
+}
+
 .brand-row {
   display: flex;
   align-items: center;
@@ -148,7 +197,9 @@ h3 {
   display: grid;
   gap: 2px;
   padding: 0;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .conversation-list {
@@ -1638,11 +1689,19 @@ h3 {
   }
 
   .sidebar {
-    height: auto;
+    height: auto !important;
     max-height: min(720px, 92vh);
     overflow: hidden;
     border-right: 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .sidebar-divider {
+    display: none;
+  }
+
+  .nav-stack {
+    height: auto !important;
   }
 
   .tool-list {

@@ -32,7 +32,7 @@ import {
   Wrench
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import type {
   AgentRun,
   AgentRunEvent,
@@ -98,6 +98,33 @@ const seedMessages: ChatMessage[] = [
   }
 ];
 
+const WORKSPACE_MIN_HEIGHT = 200;
+const WORKSPACE_DEFAULT_RATIO = 0.4;
+const WORKSPACE_DEFAULT_MAX = 520;
+const WORKSPACE_MAX_VIEWPORT_MARGIN = 120;
+const WORKSPACE_KEYBOARD_STEP = 24;
+const WORKSPACE_KEYBOARD_FAST_STEP = 96;
+
+function workspaceMaxHeight(): number {
+  if (typeof window === "undefined") {
+    return WORKSPACE_DEFAULT_MAX;
+  }
+  return Math.max(WORKSPACE_MIN_HEIGHT, window.innerHeight - WORKSPACE_MAX_VIEWPORT_MARGIN);
+}
+
+function clampWorkspaceHeight(height: number): number {
+  return Math.round(Math.min(Math.max(height, WORKSPACE_MIN_HEIGHT), workspaceMaxHeight()));
+}
+
+function defaultWorkspaceHeight(): number {
+  if (typeof window === "undefined") {
+    return WORKSPACE_DEFAULT_MAX;
+  }
+  return clampWorkspaceHeight(
+    Math.min(window.innerHeight * WORKSPACE_DEFAULT_RATIO, Math.min(WORKSPACE_DEFAULT_MAX, workspaceMaxHeight()))
+  );
+}
+
 type InspectorTab = "plan" | "audit" | "artifacts";
 type WorkbenchPanel = "archived" | "plugins" | "skills" | "tools" | "dashboard" | "knowledge-graph" | "model-config" | InspectorTab;
 type ToolClassFilter = ToolClass | "all";
@@ -157,6 +184,25 @@ export function App() {
   const [tab, setTab] = useState<InspectorTab>("plan");
   const [activePanel, setActivePanel] = useState<WorkbenchPanel | null>(null);
   const [toolWorkspaceTab, setToolWorkspaceTab] = useState<"scope" | "mcp">("scope");
+  const [workspaceHeight, setWorkspaceHeight] = useState<number>(defaultWorkspaceHeight);
+  const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
+  const workspaceHeightRef = useRef(workspaceHeight);
+  const workspaceStackRef = useRef<HTMLDivElement | null>(null);
+  const workspaceResizeStart = useRef<{ pointerId: number; y: number; height: number } | null>(null);
+
+  useEffect(() => {
+    workspaceHeightRef.current = workspaceHeight;
+  }, [workspaceHeight]);
+
+  useEffect(() => {
+    function clampToViewport() {
+      const viewportMax = workspaceMaxHeight();
+      setWorkspaceHeight((current) => Math.min(current, viewportMax));
+    }
+
+    window.addEventListener("resize", clampToViewport);
+    return () => window.removeEventListener("resize", clampToViewport);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -247,7 +293,7 @@ export function App() {
 
   async function archiveSessionById(id: string) {
     try {
-      if (currentSessionId === id && activeSession) {
+      if (currentSessionId === id) {
         startNewSession();
       }
       await archiveSession(id);
@@ -271,7 +317,7 @@ export function App() {
       return;
     }
     try {
-      if (currentSessionId === id && activeSession) {
+      if (currentSessionId === id) {
         startNewSession();
       }
       await deleteSession(id);
@@ -336,6 +382,91 @@ export function App() {
     setStreamToolInvocations([]);
     setMcpResult(null);
     setActivePanel(null);
+  }
+
+  function applyWorkspaceHeight(height: number) {
+    const element = workspaceStackRef.current;
+    if (element) {
+      element.style.height = `${height}px`;
+    }
+  }
+
+  function setWorkspaceHeightClamped(nextHeight: number) {
+    const clamped = clampWorkspaceHeight(nextHeight);
+    workspaceHeightRef.current = clamped;
+    setWorkspaceHeight(clamped);
+  }
+
+  function handleWorkspaceResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    workspaceResizeStart.current = {
+      pointerId: event.pointerId,
+      y: event.clientY,
+      height: workspaceHeightRef.current
+    };
+    setIsResizingWorkspace(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleWorkspaceResizeMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = workspaceResizeStart.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+    const nextHeight = clampWorkspaceHeight(start.height + start.y - event.clientY);
+    workspaceHeightRef.current = nextHeight;
+    applyWorkspaceHeight(nextHeight);
+  }
+
+  function handleWorkspaceResizeEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = workspaceResizeStart.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+    workspaceResizeStart.current = null;
+    setIsResizingWorkspace(false);
+    setWorkspaceHeight(workspaceHeightRef.current);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function handleWorkspaceResizeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    const step = event.shiftKey ? WORKSPACE_KEYBOARD_FAST_STEP : WORKSPACE_KEYBOARD_STEP;
+    switch (event.key) {
+      case "ArrowUp":
+      case "ArrowRight":
+        event.preventDefault();
+        setWorkspaceHeightClamped(workspaceHeightRef.current + step);
+        break;
+      case "ArrowDown":
+      case "ArrowLeft":
+        event.preventDefault();
+        setWorkspaceHeightClamped(workspaceHeightRef.current - step);
+        break;
+      case "Home":
+        event.preventDefault();
+        setWorkspaceHeightClamped(WORKSPACE_MIN_HEIGHT);
+        break;
+      case "End":
+        event.preventDefault();
+        setWorkspaceHeightClamped(workspaceMaxHeight());
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        resetWorkspaceHeight();
+        break;
+    }
+  }
+
+  function resetWorkspaceHeight() {
+    const reset = defaultWorkspaceHeight();
+    setWorkspaceHeightClamped(reset);
+    applyWorkspaceHeight(reset);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -714,7 +845,33 @@ async function handleGenerateReport() {
           )}
         </div>
 
-        <div className="nav-stack" aria-label="工作区工具">
+        <div
+          aria-controls="workspace-nav-stack"
+          aria-label="调整工作区高度"
+          aria-orientation="horizontal"
+          aria-valuemax={workspaceMaxHeight()}
+          aria-valuemin={WORKSPACE_MIN_HEIGHT}
+          aria-valuenow={workspaceHeight}
+          aria-valuetext={`${workspaceHeight} 像素`}
+          className={isResizingWorkspace ? "sidebar-divider resizing" : "sidebar-divider"}
+          onDoubleClick={resetWorkspaceHeight}
+          onKeyDown={handleWorkspaceResizeKeyDown}
+          onPointerCancel={handleWorkspaceResizeEnd}
+          onPointerDown={handleWorkspaceResizeStart}
+          onPointerMove={handleWorkspaceResizeMove}
+          onPointerUp={handleWorkspaceResizeEnd}
+          role="separator"
+          tabIndex={0}
+          title="拖动调整工作区高度，方向键微调，双击恢复默认"
+        />
+
+        <div
+          aria-label="工作区工具"
+          className={isResizingWorkspace ? "nav-stack resizing" : "nav-stack"}
+          id="workspace-nav-stack"
+          ref={workspaceStackRef}
+          style={{ height: workspaceHeight }}
+        >
           <div className="section-label">
             <Settings2 size={14} aria-hidden="true" />
             <span>工作区</span>
