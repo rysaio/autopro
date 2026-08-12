@@ -1,0 +1,996 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-12T11:50:16.329Z",
+  "mode": "single",
+  "baseUrl": "http://127.0.0.1:4321",
+  "runs": 3,
+  "scenarios": {
+    "simple": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 1206.31,
+          "totalDurationMs": 1169.84,
+          "localOrchestrationDurationMs": 12.63,
+          "localRoutingDurationMs": 0.13,
+          "timeToFirstTextMs": 1073.5,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 1157.19,
+          "inputTokens": 741,
+          "outputTokens": 33,
+          "reasoningTokens": 21,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 962.22,
+          "totalDurationMs": 958.07,
+          "localOrchestrationDurationMs": 3.6,
+          "localRoutingDurationMs": 0,
+          "timeToFirstTextMs": 818.68,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 954.46,
+          "inputTokens": 741,
+          "outputTokens": 26,
+          "reasoningTokens": 14,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 1070.43,
+          "totalDurationMs": 1067.39,
+          "localOrchestrationDurationMs": 3.95,
+          "localRoutingDurationMs": 0.01,
+          "timeToFirstTextMs": 1027.08,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 1063.43,
+          "inputTokens": 741,
+          "outputTokens": 25,
+          "reasoningTokens": 13,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 1070.43,
+          "p95": 1206.31
+        },
+        "totalDurationMs": {
+          "median": 1067.39,
+          "p95": 1169.84
+        },
+        "timeToFirstTextMs": {
+          "median": 1027.08,
+          "p95": 1073.5
+        },
+        "modelRequestCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 741,
+          "p95": 741
+        },
+        "outputTokens": {
+          "median": 26,
+          "p95": 33
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      }
+    },
+    "read-tool": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 4561.88,
+          "totalDurationMs": 4558.45,
+          "localOrchestrationDurationMs": 7.35,
+          "localRoutingDurationMs": 0.11,
+          "timeToFirstTextMs": 2242.85,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4551.07,
+          "inputTokens": 2365,
+          "outputTokens": 426,
+          "reasoningTokens": 76,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 1,
+          "toolTotalDurationMs": 1.49,
+          "cacheHits": 0,
+          "cacheMisses": 1,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 4431.89,
+          "totalDurationMs": 4414.53,
+          "localOrchestrationDurationMs": 4,
+          "localRoutingDurationMs": 0.03,
+          "timeToFirstTextMs": 1700.3,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4410.51,
+          "inputTokens": 2357,
+          "outputTokens": 403,
+          "reasoningTokens": 32,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.39,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.41,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 4493.4,
+          "totalDurationMs": 4479.57,
+          "localOrchestrationDurationMs": 5.16,
+          "localRoutingDurationMs": 0.03,
+          "timeToFirstTextMs": 2457.11,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4474.4,
+          "inputTokens": 2371,
+          "outputTokens": 338,
+          "reasoningTokens": 46,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.28,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.41,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 4493.4,
+          "p95": 4561.88
+        },
+        "totalDurationMs": {
+          "median": 4479.57,
+          "p95": 4558.45
+        },
+        "timeToFirstTextMs": {
+          "median": 2242.85,
+          "p95": 2457.11
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 0.39,
+          "p95": 1.49
+        },
+        "cacheHits": 2,
+        "cacheMisses": 1,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.41,
+          "p95": 0.41
+        },
+        "inputTokens": {
+          "median": 2365,
+          "p95": 2371
+        },
+        "outputTokens": {
+          "median": 403,
+          "p95": 426
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      }
+    },
+    "cached-read": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 4900.47,
+          "totalDurationMs": 4887.95,
+          "localOrchestrationDurationMs": 4.71,
+          "localRoutingDurationMs": 0.04,
+          "timeToFirstTextMs": 2220.55,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4883.24,
+          "inputTokens": 2376,
+          "outputTokens": 447,
+          "reasoningTokens": 90,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.19,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.41,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 4391.57,
+          "totalDurationMs": 4376.01,
+          "localOrchestrationDurationMs": 4.09,
+          "localRoutingDurationMs": 0.05,
+          "timeToFirstTextMs": 1718.74,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4371.91,
+          "inputTokens": 2367,
+          "outputTokens": 427,
+          "reasoningTokens": 60,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.22,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.41,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 4689.37,
+          "totalDurationMs": 4672.34,
+          "localOrchestrationDurationMs": 3.85,
+          "localRoutingDurationMs": 0.03,
+          "timeToFirstTextMs": 3028.1,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4668.48,
+          "inputTokens": 2359,
+          "outputTokens": 429,
+          "reasoningTokens": 77,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.27,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.41,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 4689.37,
+          "p95": 4900.47
+        },
+        "totalDurationMs": {
+          "median": 4672.34,
+          "p95": 4887.95
+        },
+        "timeToFirstTextMs": {
+          "median": 2220.55,
+          "p95": 3028.1
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0.22,
+          "p95": 0.27
+        },
+        "cacheHits": 3,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.41,
+          "p95": 0.41
+        },
+        "inputTokens": {
+          "median": 2367,
+          "p95": 2376
+        },
+        "outputTokens": {
+          "median": 429,
+          "p95": 447
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      }
+    },
+    "long-context": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 1608.04,
+          "totalDurationMs": 1592.34,
+          "localOrchestrationDurationMs": 4.6,
+          "localRoutingDurationMs": 0.02,
+          "timeToFirstTextMs": 1472.86,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 1587.73,
+          "inputTokens": 1017,
+          "outputTokens": 110,
+          "reasoningTokens": 93,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 1583.13,
+          "totalDurationMs": 1578.58,
+          "localOrchestrationDurationMs": 4.07,
+          "localRoutingDurationMs": 0,
+          "timeToFirstTextMs": 1358.9,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 1574.51,
+          "inputTokens": 1017,
+          "outputTokens": 88,
+          "reasoningTokens": 65,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "single",
+          "clientObservedDurationMs": 1923.96,
+          "totalDurationMs": 1919.15,
+          "localOrchestrationDurationMs": 3.82,
+          "localRoutingDurationMs": 0.01,
+          "timeToFirstTextMs": 1827.43,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 1915.33,
+          "inputTokens": 1017,
+          "outputTokens": 193,
+          "reasoningTokens": 175,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "single",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "Legacy single-stage mode performs exactly one final model execution."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 1608.04,
+          "p95": 1923.96
+        },
+        "totalDurationMs": {
+          "median": 1592.34,
+          "p95": 1919.15
+        },
+        "timeToFirstTextMs": {
+          "median": 1472.86,
+          "p95": 1827.43
+        },
+        "modelRequestCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 1017,
+          "p95": 1017
+        },
+        "outputTokens": {
+          "median": 110,
+          "p95": 193
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      }
+    },
+    "plugin-reload": {
+      "status": "completed",
+      "tool": {
+        "id": "shuffle.config.status",
+        "name": "Shuffle Configuration Status"
+      },
+      "routed": true,
+      "run": {
+        "status": "completed",
+        "mode": "single",
+        "clientObservedDurationMs": 5497.91,
+        "totalDurationMs": 5490.71,
+        "localOrchestrationDurationMs": 16.24,
+        "localRoutingDurationMs": 0.31,
+        "timeToFirstTextMs": 2771.68,
+        "modelRequestCount": 2,
+        "modelRetryCount": 0,
+        "modelTotalDurationMs": 5474.45,
+        "inputTokens": 2195,
+        "outputTokens": 463,
+        "reasoningTokens": 50,
+        "toolCallCount": 1,
+        "toolHandlerCallCount": 1,
+        "toolTotalDurationMs": 3.92,
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 1,
+        "cacheEvictions": 0,
+        "cacheExpiredEntries": 0,
+        "cacheInvalidatedEntries": 0,
+        "cacheAvoidedToolDurationMs": 0,
+        "persistenceOperationCount": 0,
+        "persistenceDurationMs": 0,
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "maxInputTokens": 64000,
+          "reservedOutputTokens": 4000,
+          "withinBudget": true,
+          "summarizedMessages": 0,
+          "droppedMessages": 0
+        },
+        "routing": {
+          "mode": "single",
+          "selectedToolIds": [
+            "shuffle.config.status"
+          ],
+          "confidence": {
+            "level": "high",
+            "score": 1
+          },
+          "additionalModelStage": {
+            "used": false,
+            "reason": "Legacy single-stage mode performs exactly one final model execution."
+          }
+        }
+      },
+      "summary": {
+        "sampleCount": 1,
+        "completedRuns": 1,
+        "clientObservedDurationMs": {
+          "median": 5497.91,
+          "p95": 5497.91
+        },
+        "totalDurationMs": {
+          "median": 5490.71,
+          "p95": 5490.71
+        },
+        "timeToFirstTextMs": {
+          "median": 2771.68,
+          "p95": 2771.68
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 3.92,
+          "p95": 3.92
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 1,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 2195,
+          "p95": 2195
+        },
+        "outputTokens": {
+          "median": 463,
+          "p95": 463
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "routed": true,
+        "expectation": {
+          "modelRequestCount": 1,
+          "routed": true
+        }
+      }
+    }
+  }
+}

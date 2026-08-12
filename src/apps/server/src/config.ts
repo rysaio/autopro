@@ -137,7 +137,11 @@ function parseActionLevel(value: string | undefined): AutomationLevel {
 }
 
 function parseAgentRoutingMode(value: string | undefined): AgentRoutingMode {
-  return value?.trim().toLowerCase() === "layered" ? "layered" : "deterministic";
+  const mode = value?.trim().toLowerCase();
+  if (mode === "single" || mode === "layered") {
+    return mode;
+  }
+  return "deterministic";
 }
 
 function parseCsv(value: string | undefined): string[] | undefined {

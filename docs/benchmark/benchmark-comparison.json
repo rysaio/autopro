@@ -1,0 +1,1044 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-12T11:55:06.507Z",
+  "sources": {
+    "single": "benchmark-single.json",
+    "layered": "benchmark-layered.json",
+    "deterministic": "benchmark-deterministic.json"
+  },
+  "scenarios": {
+    "simple": {
+      "single": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 1070.43,
+          "p95": 1206.31
+        },
+        "totalDurationMs": {
+          "median": 1067.39,
+          "p95": 1169.84
+        },
+        "timeToFirstTextMs": {
+          "median": 1027.08,
+          "p95": 1073.5
+        },
+        "modelRequestCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 741,
+          "p95": 741
+        },
+        "outputTokens": {
+          "median": 26,
+          "p95": 33
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      },
+      "layered": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 2286.44,
+          "p95": 2714.4
+        },
+        "totalDurationMs": {
+          "median": 2280.94,
+          "p95": 2676.7
+        },
+        "timeToFirstTextMs": {
+          "median": 2264.24,
+          "p95": 2495.78
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 1573,
+          "p95": 1576
+        },
+        "outputTokens": {
+          "median": 117,
+          "p95": 119
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      },
+      "deterministic": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 918.98,
+          "p95": 1070.58
+        },
+        "totalDurationMs": {
+          "median": 914.76,
+          "p95": 1031.53
+        },
+        "timeToFirstTextMs": {
+          "median": 823.15,
+          "p95": 1017.61
+        },
+        "modelRequestCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 741,
+          "p95": 741
+        },
+        "outputTokens": {
+          "median": 29,
+          "p95": 37
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      }
+    },
+    "read-tool": {
+      "single": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 4493.4,
+          "p95": 4561.88
+        },
+        "totalDurationMs": {
+          "median": 4479.57,
+          "p95": 4558.45
+        },
+        "timeToFirstTextMs": {
+          "median": 2242.85,
+          "p95": 2457.11
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 0.39,
+          "p95": 1.49
+        },
+        "cacheHits": 2,
+        "cacheMisses": 1,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.41,
+          "p95": 0.41
+        },
+        "inputTokens": {
+          "median": 2365,
+          "p95": 2371
+        },
+        "outputTokens": {
+          "median": 403,
+          "p95": 426
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      },
+      "layered": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 6916.19,
+          "p95": 10021.12
+        },
+        "totalDurationMs": {
+          "median": 6912.36,
+          "p95": 10017.5
+        },
+        "timeToFirstTextMs": {
+          "median": 7271.99,
+          "p95": 7271.99
+        },
+        "modelRequestCount": {
+          "median": 3,
+          "p95": 4
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 0.34,
+          "p95": 1.74
+        },
+        "cacheHits": 2,
+        "cacheMisses": 1,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.45,
+          "p95": 0.45
+        },
+        "inputTokens": {
+          "median": 4193,
+          "p95": 5881
+        },
+        "outputTokens": {
+          "median": 563,
+          "p95": 937
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      },
+      "deterministic": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 4275.51,
+          "p95": 4991.38
+        },
+        "totalDurationMs": {
+          "median": 4262.76,
+          "p95": 4987.66
+        },
+        "timeToFirstTextMs": {
+          "median": 1754.83,
+          "p95": 1951.22
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 0.38,
+          "p95": 1.73
+        },
+        "cacheHits": 2,
+        "cacheMisses": 1,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.4,
+          "p95": 0.4
+        },
+        "inputTokens": {
+          "median": 2358,
+          "p95": 2359
+        },
+        "outputTokens": {
+          "median": 393,
+          "p95": 505
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      }
+    },
+    "cached-read": {
+      "single": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 4689.37,
+          "p95": 4900.47
+        },
+        "totalDurationMs": {
+          "median": 4672.34,
+          "p95": 4887.95
+        },
+        "timeToFirstTextMs": {
+          "median": 2220.55,
+          "p95": 3028.1
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0.22,
+          "p95": 0.27
+        },
+        "cacheHits": 3,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.41,
+          "p95": 0.41
+        },
+        "inputTokens": {
+          "median": 2367,
+          "p95": 2376
+        },
+        "outputTokens": {
+          "median": 429,
+          "p95": 447
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      },
+      "layered": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 7295.09,
+          "p95": 7784.19
+        },
+        "totalDurationMs": {
+          "median": 7291.46,
+          "p95": 7767.37
+        },
+        "timeToFirstTextMs": {
+          "median": 5794.56,
+          "p95": 6892.78
+        },
+        "modelRequestCount": {
+          "median": 3,
+          "p95": 3
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0.29,
+          "p95": 0.38
+        },
+        "cacheHits": 3,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.45,
+          "p95": 0.45
+        },
+        "inputTokens": {
+          "median": 4197,
+          "p95": 4248
+        },
+        "outputTokens": {
+          "median": 729,
+          "p95": 756
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      },
+      "deterministic": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 4915.65,
+          "p95": 5399.57
+        },
+        "totalDurationMs": {
+          "median": 4901.36,
+          "p95": 5381.89
+        },
+        "timeToFirstTextMs": {
+          "median": 1833.39,
+          "p95": 2436.68
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0.28,
+          "p95": 0.34
+        },
+        "cacheHits": 3,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.4,
+          "p95": 0.4
+        },
+        "inputTokens": {
+          "median": 2367,
+          "p95": 2373
+        },
+        "outputTokens": {
+          "median": 471,
+          "p95": 493
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      }
+    },
+    "long-context": {
+      "single": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 1608.04,
+          "p95": 1923.96
+        },
+        "totalDurationMs": {
+          "median": 1592.34,
+          "p95": 1919.15
+        },
+        "timeToFirstTextMs": {
+          "median": 1472.86,
+          "p95": 1827.43
+        },
+        "modelRequestCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 1017,
+          "p95": 1017
+        },
+        "outputTokens": {
+          "median": 110,
+          "p95": 193
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      },
+      "layered": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 2650.08,
+          "p95": 3391.14
+        },
+        "totalDurationMs": {
+          "median": 2641.73,
+          "p95": 3387.23
+        },
+        "timeToFirstTextMs": {
+          "median": 2408.1,
+          "p95": 3288
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 2116,
+          "p95": 2118
+        },
+        "outputTokens": {
+          "median": 157,
+          "p95": 287
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      },
+      "deterministic": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 1331.06,
+          "p95": 1586.06
+        },
+        "totalDurationMs": {
+          "median": 1325.58,
+          "p95": 1580.09
+        },
+        "timeToFirstTextMs": {
+          "median": 1139.7,
+          "p95": 1513.34
+        },
+        "modelRequestCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 1017,
+          "p95": 1017
+        },
+        "outputTokens": {
+          "median": 94,
+          "p95": 111
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      }
+    },
+    "plugin-reload": {
+      "single": {
+        "sampleCount": 1,
+        "completedRuns": 1,
+        "clientObservedDurationMs": {
+          "median": 5497.91,
+          "p95": 5497.91
+        },
+        "totalDurationMs": {
+          "median": 5490.71,
+          "p95": 5490.71
+        },
+        "timeToFirstTextMs": {
+          "median": 2771.68,
+          "p95": 2771.68
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 3.92,
+          "p95": 3.92
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 1,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 2195,
+          "p95": 2195
+        },
+        "outputTokens": {
+          "median": 463,
+          "p95": 463
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "routed": true,
+        "expectation": {
+          "modelRequestCount": 1,
+          "routed": true
+        }
+      },
+      "layered": {
+        "sampleCount": 1,
+        "completedRuns": 1,
+        "clientObservedDurationMs": {
+          "median": 10866.02,
+          "p95": 10866.02
+        },
+        "totalDurationMs": {
+          "median": 10857.81,
+          "p95": 10857.81
+        },
+        "timeToFirstTextMs": {
+          "median": 7419.48,
+          "p95": 7419.48
+        },
+        "modelRequestCount": {
+          "median": 3,
+          "p95": 3
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 4.07,
+          "p95": 4.07
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 1,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 3762,
+          "p95": 3762
+        },
+        "outputTokens": {
+          "median": 1049,
+          "p95": 1049
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "routed": true,
+        "expectation": {
+          "modelRequestCount": 1,
+          "routed": true
+        }
+      },
+      "deterministic": {
+        "sampleCount": 1,
+        "completedRuns": 1,
+        "clientObservedDurationMs": {
+          "median": 5046.37,
+          "p95": 5046.37
+        },
+        "totalDurationMs": {
+          "median": 5038.94,
+          "p95": 5038.94
+        },
+        "timeToFirstTextMs": {
+          "median": 2417.32,
+          "p95": 2417.32
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 3.52,
+          "p95": 3.52
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 1,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 2206,
+          "p95": 2206
+        },
+        "outputTokens": {
+          "median": 401,
+          "p95": 401
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "routed": true,
+        "expectation": {
+          "modelRequestCount": 1,
+          "routed": true
+        }
+      }
+    }
+  },
+  "releaseGate": {
+    "timeToFirstTextMs": {
+      "label": "timeToFirstTextMs",
+      "single": 1027.08,
+      "layered": 2264.24,
+      "deterministic": 823.15,
+      "deterministicVsSingle": 0.8,
+      "deterministicVsLayered": 0.36
+    },
+    "totalDurationMs": {
+      "label": "totalDurationMs",
+      "single": 1067.39,
+      "layered": 2280.94,
+      "deterministic": 914.76,
+      "deterministicVsSingle": 0.86,
+      "deterministicVsLayered": 0.4
+    },
+    "simpleDeterministicModelRequestCount": 1,
+    "passed": true,
+    "blockedReasons": []
+  }
+}

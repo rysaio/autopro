@@ -28,13 +28,14 @@
 
 高置信度单域请求直接选择对应分组。跨域请求由本地规则合并分组，不自动增加远程路由调用。未知或低置信度请求使用明确的本地回退，只考虑已启用、非 action 的常驻工具，并在路由结果中记录低置信度；它不会静默恢复双阶段执行。
 
-旧的双阶段路径仅作为临时回滚模式保留：
+旧执行路径仅作为基准/回滚保留：`single` 为旧单阶段基线（不预路由，一次最终模型执行），`layered` 为旧双阶段临时回滚：
 
 ```powershell
+$env:SECOPS_AGENT_ROUTING_MODE = "single"
 $env:SECOPS_AGENT_ROUTING_MODE = "layered"
 ```
 
-未设置或设为其他值时使用 `deterministic`。回滚模式同样严格应用 `enabledTools`、action 策略和原始消息保留规则。
+未设置或设为其他值时使用 `deterministic`。回滚/基线模式同样严格应用 `enabledTools`、action 策略和原始消息保留规则。
 
 每个工具的 `deferLoading` 声明继续用于常驻/按需暴露：`false` 表示常驻，`true` 表示只有命中对应路由分组时才加载。插件通过 MCP `_meta.deferLoading` 透传默认值；插件工具缺失或声明无效时默认 `true`（按需），避免未知插件工具因缺少元数据而永久常驻。用户可通过 API 覆盖任意已注册工具：
 
@@ -171,6 +172,24 @@ npm test
 ```
 
 开发运行时产生的会话、审计日志和 PGlite 数据属于运行时数据，不应复制到源码或提交到版本库。构建前端/后端时只修改各自的 `dist/` 输出目录。
+
+#### 真实模型回归基准（Issue #11）
+
+发布前用仓库真实模型连接跑版本化基准，分别以三种路由模式启动服务后执行（密钥只由 `runtime/config/model.json` 读取，命令与报告不打印、不持久化凭据）：
+
+```powershell
+# 终端 1（src/，分别用 single / layered / deterministic 启动三次）
+$env:SECOPS_AGENT_ROUTING_MODE = "deterministic"
+npm run dev:server
+
+# 终端 2（src/）
+npm run benchmark:agent -- --mode deterministic --scenario all --runs 3 --json > benchmark-deterministic.json
+
+# 三种模式跑完后合并出发布门禁报告
+npm run benchmark:compare -- benchmark-single.json benchmark-layered.json benchmark-deterministic.json
+```
+
+场景覆盖：简单无工具、一次只读工具、TTL 内重复只读、长对话、通用插件 reload 后路由。最近一次真实 DeepSeek 结果与发布门禁见 [docs/done-11-benchmark.md](docs/done-11-benchmark.md)：deterministic 中位首文本约为旧单阶段基线的 0.80x、中位总耗时约为 0.86x，简单请求仅 1 次模型调用。
 
 ### 4. 停止源码服务
 
@@ -316,7 +335,7 @@ DELETE /api/tools/visibility/:id       # 清除覆盖，回退到工具声明值
 | `SECOPS_SKILL_VISIBILITY_PATH` | `runtime/config/skillVisibility.json` | 技能功能开关文件（禁用技能对模型不可见） |
 | `SECOPS_PLUGINS_DIR` | `runtime/plugins` | 插件目录 |
 | `SECOPS_ACTION_LEVEL` | `sandbox` | 默认自动化级别（observe/sandbox/full-access） |
-| `SECOPS_AGENT_ROUTING_MODE` | `deterministic` | Agent 路由模式；临时回滚旧双阶段路径时设为 `layered` |
+| `SECOPS_AGENT_ROUTING_MODE` | `deterministic` | Agent 路由模式；`single`=旧单阶段基准，`layered`=旧双阶段临时回滚，`deterministic`=新默认 |
 | `SECOPS_RUNTIME_CONFIG_PATH` | `runtime/config/settings.json` | 运行时设置文件 |
 | `SECOPS_SANDBOX_ROOT` | `runtime/sandbox` | 沙箱目录 |
 | `SECOPS_AUDIT_LOG_PATH` | `runtime/audit/events.jsonl` | 审计日志 |

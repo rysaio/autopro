@@ -1,0 +1,996 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-12T11:53:05.253Z",
+  "mode": "deterministic",
+  "baseUrl": "http://127.0.0.1:4323",
+  "runs": 3,
+  "scenarios": {
+    "simple": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 1070.58,
+          "totalDurationMs": 1031.53,
+          "localOrchestrationDurationMs": 14.71,
+          "localRoutingDurationMs": 1.38,
+          "timeToFirstTextMs": 1017.61,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 1016.78,
+          "inputTokens": 741,
+          "outputTokens": 37,
+          "reasoningTokens": 25,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 918.98,
+          "totalDurationMs": 914.76,
+          "localOrchestrationDurationMs": 4.17,
+          "localRoutingDurationMs": 0.35,
+          "timeToFirstTextMs": 823.15,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 910.58,
+          "inputTokens": 741,
+          "outputTokens": 28,
+          "reasoningTokens": 16,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 684.77,
+          "totalDurationMs": 681.44,
+          "localOrchestrationDurationMs": 4.29,
+          "localRoutingDurationMs": 0.26,
+          "timeToFirstTextMs": 609.25,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 677.15,
+          "inputTokens": 741,
+          "outputTokens": 29,
+          "reasoningTokens": 17,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 918.98,
+          "p95": 1070.58
+        },
+        "totalDurationMs": {
+          "median": 914.76,
+          "p95": 1031.53
+        },
+        "timeToFirstTextMs": {
+          "median": 823.15,
+          "p95": 1017.61
+        },
+        "modelRequestCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 741,
+          "p95": 741
+        },
+        "outputTokens": {
+          "median": 29,
+          "p95": 37
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      }
+    },
+    "read-tool": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 4991.38,
+          "totalDurationMs": 4987.66,
+          "localOrchestrationDurationMs": 7.84,
+          "localRoutingDurationMs": 2.62,
+          "timeToFirstTextMs": 1754.83,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4979.81,
+          "inputTokens": 2358,
+          "outputTokens": 505,
+          "reasoningTokens": 59,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 1,
+          "toolTotalDurationMs": 1.73,
+          "cacheHits": 0,
+          "cacheMisses": 1,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.9
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 3264.83,
+          "totalDurationMs": 3240.29,
+          "localOrchestrationDurationMs": 7.04,
+          "localRoutingDurationMs": 2.58,
+          "timeToFirstTextMs": 1512.17,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 3233.24,
+          "inputTokens": 2356,
+          "outputTokens": 306,
+          "reasoningTokens": 31,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.38,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.4,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.9
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 4275.51,
+          "totalDurationMs": 4262.76,
+          "localOrchestrationDurationMs": 6.5,
+          "localRoutingDurationMs": 1.83,
+          "timeToFirstTextMs": 1951.22,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4256.25,
+          "inputTokens": 2359,
+          "outputTokens": 393,
+          "reasoningTokens": 51,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.25,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.4,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.9
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 4275.51,
+          "p95": 4991.38
+        },
+        "totalDurationMs": {
+          "median": 4262.76,
+          "p95": 4987.66
+        },
+        "timeToFirstTextMs": {
+          "median": 1754.83,
+          "p95": 1951.22
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 0.38,
+          "p95": 1.73
+        },
+        "cacheHits": 2,
+        "cacheMisses": 1,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.4,
+          "p95": 0.4
+        },
+        "inputTokens": {
+          "median": 2358,
+          "p95": 2359
+        },
+        "outputTokens": {
+          "median": 393,
+          "p95": 505
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      }
+    },
+    "cached-read": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 4585.9,
+          "totalDurationMs": 4573.65,
+          "localOrchestrationDurationMs": 6.26,
+          "localRoutingDurationMs": 1.53,
+          "timeToFirstTextMs": 1778.03,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4567.38,
+          "inputTokens": 2357,
+          "outputTokens": 441,
+          "reasoningTokens": 51,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.34,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.4,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.9
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 4915.65,
+          "totalDurationMs": 4901.36,
+          "localOrchestrationDurationMs": 4.98,
+          "localRoutingDurationMs": 0.54,
+          "timeToFirstTextMs": 1833.39,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 4896.37,
+          "inputTokens": 2373,
+          "outputTokens": 471,
+          "reasoningTokens": 74,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.2,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.4,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.9
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 5399.57,
+          "totalDurationMs": 5381.89,
+          "localOrchestrationDurationMs": 4.87,
+          "localRoutingDurationMs": 0.61,
+          "timeToFirstTextMs": 2436.68,
+          "modelRequestCount": 2,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 5377.01,
+          "inputTokens": 2367,
+          "outputTokens": 493,
+          "reasoningTokens": 85,
+          "toolCallCount": 1,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0.28,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0.4,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [
+              "threat.intel.lookup"
+            ],
+            "confidence": {
+              "level": "high",
+              "score": 0.9
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 4915.65,
+          "p95": 5399.57
+        },
+        "totalDurationMs": {
+          "median": 4901.36,
+          "p95": 5381.89
+        },
+        "timeToFirstTextMs": {
+          "median": 1833.39,
+          "p95": 2436.68
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0.28,
+          "p95": 0.34
+        },
+        "cacheHits": 3,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0.4,
+          "p95": 0.4
+        },
+        "inputTokens": {
+          "median": 2367,
+          "p95": 2373
+        },
+        "outputTokens": {
+          "median": 471,
+          "p95": 493
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1,
+          "toolHandlerCalls": 1
+        }
+      }
+    },
+    "long-context": {
+      "status": "completed",
+      "samples": [
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 1015.97,
+          "totalDurationMs": 998.63,
+          "localOrchestrationDurationMs": 5.71,
+          "localRoutingDurationMs": 0.74,
+          "timeToFirstTextMs": 841,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 992.91,
+          "inputTokens": 1017,
+          "outputTokens": 69,
+          "reasoningTokens": 48,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 1586.06,
+          "totalDurationMs": 1580.09,
+          "localOrchestrationDurationMs": 60.51,
+          "localRoutingDurationMs": 0.59,
+          "timeToFirstTextMs": 1513.34,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 1519.57,
+          "inputTokens": 1017,
+          "outputTokens": 111,
+          "reasoningTokens": 98,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        },
+        {
+          "status": "completed",
+          "mode": "deterministic",
+          "clientObservedDurationMs": 1331.06,
+          "totalDurationMs": 1325.58,
+          "localOrchestrationDurationMs": 4.27,
+          "localRoutingDurationMs": 0.21,
+          "timeToFirstTextMs": 1139.7,
+          "modelRequestCount": 1,
+          "modelRetryCount": 0,
+          "modelTotalDurationMs": 1321.3,
+          "inputTokens": 1017,
+          "outputTokens": 94,
+          "reasoningTokens": 72,
+          "toolCallCount": 0,
+          "toolHandlerCallCount": 0,
+          "toolTotalDurationMs": 0,
+          "cacheHits": 0,
+          "cacheMisses": 0,
+          "cacheBypasses": 0,
+          "cacheEvictions": 0,
+          "cacheExpiredEntries": 0,
+          "cacheInvalidatedEntries": 0,
+          "cacheAvoidedToolDurationMs": 0,
+          "persistenceOperationCount": 0,
+          "persistenceDurationMs": 0,
+          "persistenceFailureCount": 0,
+          "contextBudget": {
+            "maxInputTokens": 64000,
+            "reservedOutputTokens": 4000,
+            "withinBudget": true,
+            "summarizedMessages": 0,
+            "droppedMessages": 0
+          },
+          "routing": {
+            "mode": "deterministic",
+            "selectedToolIds": [],
+            "confidence": {
+              "level": "high",
+              "score": 1
+            },
+            "additionalModelStage": {
+              "used": false,
+              "reason": "The deterministic route is sufficient."
+            }
+          }
+        }
+      ],
+      "summary": {
+        "sampleCount": 3,
+        "completedRuns": 3,
+        "clientObservedDurationMs": {
+          "median": 1331.06,
+          "p95": 1586.06
+        },
+        "totalDurationMs": {
+          "median": 1325.58,
+          "p95": 1580.09
+        },
+        "timeToFirstTextMs": {
+          "median": 1139.7,
+          "p95": 1513.34
+        },
+        "modelRequestCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolHandlerCallCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolTotalDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 0,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 1017,
+          "p95": 1017
+        },
+        "outputTokens": {
+          "median": 94,
+          "p95": 111
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "expectation": {
+          "modelRequestCount": 1
+        }
+      }
+    },
+    "plugin-reload": {
+      "status": "completed",
+      "tool": {
+        "id": "shuffle.config.status",
+        "name": "Shuffle Configuration Status"
+      },
+      "routed": true,
+      "run": {
+        "status": "completed",
+        "mode": "deterministic",
+        "clientObservedDurationMs": 5046.37,
+        "totalDurationMs": 5038.94,
+        "localOrchestrationDurationMs": 17.75,
+        "localRoutingDurationMs": 2.8,
+        "timeToFirstTextMs": 2417.32,
+        "modelRequestCount": 2,
+        "modelRetryCount": 0,
+        "modelTotalDurationMs": 5021.18,
+        "inputTokens": 2206,
+        "outputTokens": 401,
+        "reasoningTokens": 56,
+        "toolCallCount": 1,
+        "toolHandlerCallCount": 1,
+        "toolTotalDurationMs": 3.52,
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 1,
+        "cacheEvictions": 0,
+        "cacheExpiredEntries": 0,
+        "cacheInvalidatedEntries": 0,
+        "cacheAvoidedToolDurationMs": 0,
+        "persistenceOperationCount": 0,
+        "persistenceDurationMs": 0,
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "maxInputTokens": 64000,
+          "reservedOutputTokens": 4000,
+          "withinBudget": true,
+          "summarizedMessages": 0,
+          "droppedMessages": 0
+        },
+        "routing": {
+          "mode": "deterministic",
+          "selectedToolIds": [
+            "shuffle.config.status"
+          ],
+          "confidence": {
+            "level": "medium",
+            "score": 0.68
+          },
+          "additionalModelStage": {
+            "used": false,
+            "reason": "Cross-domain intent was resolved by deterministic rules; no routing model is needed."
+          }
+        }
+      },
+      "summary": {
+        "sampleCount": 1,
+        "completedRuns": 1,
+        "clientObservedDurationMs": {
+          "median": 5046.37,
+          "p95": 5046.37
+        },
+        "totalDurationMs": {
+          "median": 5038.94,
+          "p95": 5038.94
+        },
+        "timeToFirstTextMs": {
+          "median": 2417.32,
+          "p95": 2417.32
+        },
+        "modelRequestCount": {
+          "median": 2,
+          "p95": 2
+        },
+        "modelRetryCount": {
+          "median": 0,
+          "p95": 0
+        },
+        "toolCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolHandlerCallCount": {
+          "median": 1,
+          "p95": 1
+        },
+        "toolTotalDurationMs": {
+          "median": 3.52,
+          "p95": 3.52
+        },
+        "cacheHits": 0,
+        "cacheMisses": 0,
+        "cacheBypasses": 1,
+        "cacheAvoidedToolDurationMs": {
+          "median": 0,
+          "p95": 0
+        },
+        "inputTokens": {
+          "median": 2206,
+          "p95": 2206
+        },
+        "outputTokens": {
+          "median": 401,
+          "p95": 401
+        },
+        "persistenceFailureCount": 0,
+        "contextBudget": {
+          "withinBudget": true,
+          "summarizedMessages": {
+            "median": 0,
+            "p95": 0
+          },
+          "droppedMessages": {
+            "median": 0,
+            "p95": 0
+          }
+        },
+        "routed": true,
+        "expectation": {
+          "modelRequestCount": 1,
+          "routed": true
+        }
+      }
+    }
+  }
+}

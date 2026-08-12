@@ -34,6 +34,7 @@ describe("agent benchmark CLI", () => {
       script,
       "--base-url", `http://127.0.0.1:${address.port}`,
       "--runs", "1",
+      "--scenario", "simple",
       "--json"
     ], {
       env: { ...process.env, SECOPS_API_TOKEN: token }
@@ -41,69 +42,31 @@ describe("agent benchmark CLI", () => {
 
     expect(authorization).toBe(`Bearer ${token}`);
     expect(JSON.parse(stdout)).toMatchObject({
-      schemaVersion: 1,
-      scenario: {
-        id: "simple-no-tools-v1",
-        runs: 1,
-        request: {
-          prompt: "Reply with a concise acknowledgement. Do not call tools.",
-          enabledTools: [],
-          permissionMode: "deny"
-        }
-      },
-      environment: {
-        provider: "fixture-provider",
-        model: "fixture-model"
-      },
-      summary: {
-        completedRuns: 1,
-        clientObservedDurationMs: { median: expect.any(Number), p95: expect.any(Number) },
-        serverTotalDurationMs: { median: 1200, p95: 1200 },
-        totalDurationMs: { median: 1200, p95: 1200 },
-        localOrchestrationDurationMs: { median: 340, p95: 340 },
-        localRoutingDurationMs: { median: 2, p95: 2 },
-        timeToFirstTextMs: { median: 900, p95: 900 },
-        modelRequestCount: { median: 1, p95: 1 },
-        provider: {
-          totalDurationMs: { median: 850, p95: 850 },
-          requestCount: { median: 1, p95: 1 },
-          retryCount: { median: 0, p95: 0 },
-          phases: {
-            final: {
-              durationMs: { median: 850, p95: 850 },
-              exposedToolCount: { median: 0, p95: 0 },
-              finishReasons: { stop: 1 }
-            }
+      schemaVersion: 2,
+      mode: "deterministic",
+      runs: 1,
+      scenarios: {
+        simple: {
+          status: "completed",
+          summary: {
+            sampleCount: 1,
+            completedRuns: 1,
+            clientObservedDurationMs: { median: expect.any(Number), p95: expect.any(Number) },
+            totalDurationMs: { median: 1200, p95: 1200 },
+            timeToFirstTextMs: { median: 900, p95: 900 },
+            modelRequestCount: { median: 1, p95: 1 },
+            modelRetryCount: { median: 0, p95: 0 },
+            toolCallCount: { median: 0, p95: 0 },
+            toolHandlerCallCount: { median: 0, p95: 0 },
+            toolTotalDurationMs: { median: 0, p95: 0 },
+            cacheHits: 0,
+            cacheMisses: 0,
+            cacheBypasses: 0,
+            inputTokens: { median: 140, p95: 140 },
+            outputTokens: { median: 34, p95: 34 },
+            persistenceFailureCount: 0
           }
-        },
-        tools: {
-          callCount: { median: 0, p95: 0 },
-          handlerCallCount: { median: 0, p95: 0 },
-          totalDurationMs: { median: 0, p95: 0 }
-        },
-        cache: {
-          hits: { median: 0, p95: 0 },
-          misses: { median: 0, p95: 0 },
-          bypasses: { median: 0, p95: 0 },
-          evictions: { median: 0, p95: 0 },
-          expiredEntries: { median: 0, p95: 0 },
-          invalidatedEntries: { median: 0, p95: 0 },
-          avoidedToolDurationMs: { median: 0, p95: 0 }
-        },
-        persistence: {
-          operationCount: { median: 5, p95: 5 },
-          totalDurationMs: { median: 4, p95: 4 },
-          failureCount: { median: 0, p95: 0 }
-        },
-        tokens: {
-          input: { median: 140, p95: 140 },
-          output: { median: 34, p95: 34 },
-          cacheRead: { median: 20, p95: 20 },
-          cacheWrite: { median: 3, p95: 3 },
-          reasoning: { median: 6, p95: 6 }
-        },
-        inputTokens: { median: 140, p95: 140 },
-        outputTokens: { median: 34, p95: 34 }
+        }
       }
     });
     expect(`${stdout}${stderr}`).not.toContain(token);

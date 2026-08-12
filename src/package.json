@@ -17,6 +17,7 @@
     "dev:server": "npm run dev -w apps/server",
     "dev:web": "npm run dev -w apps/web",
     "benchmark:agent": "node scripts/benchmark-agent.mjs",
+    "benchmark:compare": "node scripts/compare-benchmarks.mjs",
     "build": "npm run build -w @secops-agent/shared && npm run build -w @secops-agent/wazuh-secops && npm run build -w @secops-agent/shuffle-secops && npm run build -w @secops-agent/server && npm run build -w @secops-agent/web",
     "build:runnable": "node scripts/build-runnable.mjs",
     "typecheck": "npm run build -w @secops-agent/shared && npm run build -w @secops-agent/wazuh-secops && npm run build -w @secops-agent/shuffle-secops && npm run typecheck -w @secops-agent/server && npm run typecheck -w @secops-agent/web",
