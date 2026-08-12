@@ -11,6 +11,24 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: #94a3b8;
+  background-clip: content-box;
 }
 
 body {
@@ -79,7 +97,8 @@ h3 {
   grid-template-columns: minmax(248px, 18vw) minmax(0, 1fr);
   height: 100vh;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #f4f6f8;
 }
 
@@ -145,15 +164,33 @@ h3 {
 
 .session-row {
   display: grid;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
   min-height: 48px;
   padding: 8px;
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 7px;
   color: #cbd5e1;
   background: rgba(255, 255, 255, 0.04);
-  text-align: left;
   overflow: hidden;
+}
+
+.session-open {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-open:disabled {
+  cursor: default;
 }
 
 .session-row strong {
@@ -180,10 +217,53 @@ h3 {
   text-overflow: ellipsis;
 }
 
-.session-row:hover:not(:disabled),
+.session-row:hover,
 .session-row.active {
   border-color: rgba(20, 184, 166, 0.44);
   background: rgba(20, 184, 166, 0.1);
+}
+
+.session-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.session-row:hover .session-actions,
+.session-row.active .session-actions {
+  opacity: 1;
+}
+
+.session-actions button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 5px;
+  color: #94a3b8;
+  background: rgba(15, 23, 42, 0.55);
+  cursor: pointer;
+}
+
+.session-actions button:hover {
+  color: #e2e8f0;
+  border-color: rgba(20, 184, 166, 0.5);
+}
+
+.session-actions button.danger:hover {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.55);
+}
+
+.session-row.archived {
+  opacity: 0.72;
+}
+
+.archived-label {
+  margin-top: 6px;
+  color: #94a3b8;
 }
 
 .sidebar-empty {
@@ -398,7 +478,8 @@ h3 {
   min-width: 0;
   min-height: 0;
   height: 100vh;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 14px 16px;
   background: #f4f6f8;
 }
@@ -413,7 +494,8 @@ h3 {
   flex-direction: column;
   min-height: 0;
   height: 100vh;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #ffffff;
 }
 
@@ -457,8 +539,10 @@ h3 {
 
 .config-grid,
 .config-inspector {
+  flex: 1 1 0;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px 18px;
 }
 
@@ -3234,6 +3318,9 @@ h3 {
 .mcp-server-config {
   display: grid;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   gap: 16px;
 }
 
@@ -3674,6 +3761,9 @@ h3 {
   display: grid;
   grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr);
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   gap: 16px;
 }
 
@@ -3729,6 +3819,9 @@ h3 {
 .plugin-list,
 .skill-list {
   display: grid;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .plugin-row {

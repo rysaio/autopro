@@ -296,9 +296,23 @@ export async function fetchAuditEvents(limit = 50): Promise<AgentRunEvent[]> {
   return result.events;
 }
 
-export async function fetchSessions(limit = 50): Promise<AgentSessionSummary[]> {
-  const result = await getJson<{ sessions: AgentSessionSummary[] }>(`/api/sessions?limit=${limit}`);
+export async function fetchSessions(limit = 50, archived = false): Promise<AgentSessionSummary[]> {
+  const result = await getJson<{ sessions: AgentSessionSummary[] }>(
+    `/api/sessions?limit=${limit}&archived=${archived}`
+  );
   return result.sessions;
+}
+
+export function archiveSession(id: string): Promise<{ archived: boolean }> {
+  return postJson<{ archived: boolean }>(`/api/sessions/${encodeURIComponent(id)}/archive`, {});
+}
+
+export function unarchiveSession(id: string): Promise<{ archived: boolean }> {
+  return postJson<{ archived: boolean }>(`/api/sessions/${encodeURIComponent(id)}/unarchive`, {});
+}
+
+export function deleteSession(id: string): Promise<{ deleted: boolean }> {
+  return deleteJson<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(id)}`);
 }
 
 export function fetchSession(id: string): Promise<AgentSessionDetail> {

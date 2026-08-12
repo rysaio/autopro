@@ -154,6 +154,7 @@ export interface AgentSessionSummary {
   id: string;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string;
   runCount: number;
   messageCount: number;
   toolInvocationCount: number;

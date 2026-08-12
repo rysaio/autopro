@@ -1,6 +1,8 @@
 import {
   Activity,
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   BarChart3,
   Bot,
   CheckCircle2,
@@ -25,6 +27,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Trash2,
   XCircle,
   Wrench
 } from "lucide-react";
@@ -52,7 +55,9 @@ import type {
 } from "@secops-agent/shared";
 import {
   approveToolCall,
+  archiveSession,
   callMcpTool,
+  deleteSession,
   denyToolCall,
   fetchApprovals,
   fetchAuditEvents,
@@ -65,6 +70,7 @@ import {
   fetchSessions,
   fetchTools,
   streamAgent,
+  unarchiveSession,
   updateActionLevel,
   generateReport,
   exportReport,
@@ -117,6 +123,7 @@ export function App() {
   const [tools, setTools] = useState<ToolManifest[]>([]);
   const [mcpTools, setMcpTools] = useState<McpToolSummary[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerConfigState>({ servers: [] });
+  const [archivedSessions, setArchivedSessions] = useState<AgentSessionSummary[]>([]);
   const [enabledTools, setEnabledTools] = useState<Set<string>>(new Set());
   const [messages, setMessages] = useState<ChatMessage[]>(seedMessages);
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => crypto.randomUUID());
@@ -160,11 +167,12 @@ export function App() {
       fetchTools(),
       fetchMcpTools(),
       fetchMcpServers(),
+      fetchSessions(50, true),
       fetchApprovals(),
       fetchAuditEvents(),
       fetchSessions()
     ])
-      .then(([healthResult, pluginsResult, skillsResult, toolsResult, mcpToolsResult, mcpServersResult, approvalsResult, auditResult, sessionsResult]) => {
+      .then(([healthResult, pluginsResult, skillsResult, toolsResult, mcpToolsResult, mcpServersResult, archivedSessionsResult, approvalsResult, auditResult, sessionsResult]) => {
         if (!mounted) {
           return;
         }
@@ -174,6 +182,7 @@ export function App() {
         setTools(toolsResult);
         setMcpTools(mcpToolsResult);
         setMcpServers(mcpServersResult);
+        setArchivedSessions(archivedSessionsResult);
         setPendingApprovals(approvalsResult);
         setPersistedAudit(auditEventsFromRunEvents(auditResult));
         setSessions(sessionsResult);
@@ -228,7 +237,48 @@ export function App() {
   }
 
   async function refreshSessions() {
-    setSessions(await fetchSessions());
+    const [active, archived] = await Promise.all([
+      fetchSessions(),
+      fetchSessions(50, true)
+    ]);
+    setSessions(active);
+    setArchivedSessions(archived);
+  }
+
+  async function archiveSessionById(id: string) {
+    try {
+      if (currentSessionId === id && activeSession) {
+        startNewSession();
+      }
+      await archiveSession(id);
+      await refreshSessions();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function unarchiveSessionById(id: string) {
+    try {
+      await unarchiveSession(id);
+      await refreshSessions();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function deleteSessionById(id: string) {
+    if (!window.confirm("确认永久删除该对话？此操作不可恢复。")) {
+      return;
+    }
+    try {
+      if (currentSessionId === id && activeSession) {
+        startNewSession();
+      }
+      await deleteSession(id);
+      await refreshSessions();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
   }
 
   async function loadSession(id: string) {
@@ -634,22 +684,66 @@ async function handleGenerateReport() {
             </button>
           ) : null}
           {sessions.length ? sessions.map((session) => (
-            <button
+            <div
               className={currentSessionId === session.id && activeSession ? "session-row active" : "session-row"}
-              disabled={isLoadingSession}
               key={session.id}
-              onClick={() => loadSession(session.id)}
-              type="button"
             >
-              <strong>{sessionTitle(session)}</strong>
-              <small>
-                {session.messageCount} 条消息 · {session.toolInvocationCount} 次工具调用
-                {session.guidanceCount ? ` · ${session.guidanceCount} 引导` : ""}
-              </small>
-            </button>
+              <button
+                className="session-open"
+                disabled={isLoadingSession}
+                onClick={() => loadSession(session.id)}
+                type="button"
+              >
+                <strong>{sessionTitle(session)}</strong>
+                <small>
+                  {session.messageCount} 条消息 · {session.toolInvocationCount} 次工具调用
+                  {session.guidanceCount ? ` · ${session.guidanceCount} 引导` : ""}
+                </small>
+              </button>
+              <div className="session-actions">
+                <button onClick={() => void archiveSessionById(session.id)} title="归档" type="button">
+                  <Archive size={13} aria-hidden="true" />
+                </button>
+                <button className="danger" onClick={() => void deleteSessionById(session.id)} title="删除" type="button">
+                  <Trash2 size={13} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
           )) : (
             <p className="sidebar-empty">暂无保存的会话</p>
           )}
+          {archivedSessions.length ? (
+            <>
+              <div className="section-label archived-label">
+                <ArchiveRestore size={13} aria-hidden="true" />
+                <span>已归档</span>
+              </div>
+              {archivedSessions.map((session) => (
+                <div className="session-row archived" key={session.id}>
+                  <button
+                    className="session-open"
+                    disabled={isLoadingSession}
+                    onClick={() => loadSession(session.id)}
+                    type="button"
+                  >
+                    <strong>{sessionTitle(session)}</strong>
+                    <small>
+                      {session.messageCount} 条消息 · {session.toolInvocationCount} 次工具调用
+                      {session.guidanceCount ? ` · ${session.guidanceCount} 引导` : ""}
+                    </small>
+                  </button>
+                  <div className="session-actions">
+                    <button onClick={() => void unarchiveSessionById(session.id)} title="恢复" type="button">
+                      <ArchiveRestore size={13} aria-hidden="true" />
+                    </button>
+                    <button className="danger" onClick={() => void deleteSessionById(session.id)} title="删除" type="button">
+                      <Trash2 size={13} aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </>
+          ) : null}
         </div>
 
         <div className="nav-stack" aria-label="工作区工具">

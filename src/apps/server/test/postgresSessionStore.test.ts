@@ -241,6 +241,26 @@ describe("PostgresSessionStore", () => {
     });
     await expect(secondStore.list()).resolves.toHaveLength(0);
   });
+
+  it("archives, lists archived, restores, and deletes sessions", async () => {
+    const store = new PostgresSessionStore(new PGlite());
+    stores.push(store);
+    await store.migrate();
+    const sessionId = "session-archive-test";
+    const runId = randomUUID();
+    await store.startRun({ sessionId, runId, startedAt: new Date().toISOString() });
+
+    expect(await store.archiveSession(sessionId)).toBe(true);
+    expect(await store.listSessions()).toHaveLength(0);
+    const archived = await store.listSessions(50, true);
+    expect(archived).toMatchObject([{ id: sessionId, archivedAt: expect.any(String) }]);
+
+    expect(await store.unarchiveSession(sessionId)).toBe(true);
+    expect(await store.listSessions()).toMatchObject([{ id: sessionId }]);
+
+    expect(await store.deleteSession(sessionId)).toBe(true);
+    await expect(store.restoreSession(sessionId)).resolves.toBeUndefined();
+  });
 });
 
 function chat(role: ChatMessage["role"], content: string): ChatMessage {

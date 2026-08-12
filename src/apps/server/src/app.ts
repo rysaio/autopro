@@ -363,12 +363,48 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   }));
 
   app.get("/api/sessions", async (request): Promise<{ sessions: AgentSessionSummary[] }> => {
-    const query = request.query as { limit?: string | number } | undefined;
+    const query = request.query as { limit?: string | number; archived?: string | boolean } | undefined;
     return {
       sessions: durableSessionStore
-        ? await durableSessionStore.listSessions(coerceLimit(query?.limit, 50))
+        ? await durableSessionStore.listSessions(coerceLimit(query?.limit, 50), coerceBoolean(query?.archived))
         : []
     };
+  });
+
+  app.post("/api/sessions/:id/archive", async (request, reply) => {
+    if (!durableSessionStore) {
+      return reply.code(503).send({ error: "Durable session store is not configured" });
+    }
+    const params = request.params as { id: string };
+    const archived = await durableSessionStore.archiveSession(params.id);
+    if (!archived) {
+      return reply.code(404).send({ error: `No session found for ${params.id}` });
+    }
+    return { archived: true };
+  });
+
+  app.post("/api/sessions/:id/unarchive", async (request, reply) => {
+    if (!durableSessionStore) {
+      return reply.code(503).send({ error: "Durable session store is not configured" });
+    }
+    const params = request.params as { id: string };
+    const unarchived = await durableSessionStore.unarchiveSession(params.id);
+    if (!unarchived) {
+      return reply.code(404).send({ error: `No session found for ${params.id}` });
+    }
+    return { archived: false };
+  });
+
+  app.delete("/api/sessions/:id", async (request, reply) => {
+    if (!durableSessionStore) {
+      return reply.code(503).send({ error: "Durable session store is not configured" });
+    }
+    const params = request.params as { id: string };
+    const deleted = await durableSessionStore.deleteSession(params.id);
+    if (!deleted) {
+      return reply.code(404).send({ error: `No session found for ${params.id}` });
+    }
+    return { deleted: true };
   });
 
   app.get("/api/sessions/:id", async (request, reply): Promise<AgentSessionDetail | unknown> => {
@@ -709,6 +745,10 @@ function coerceLimit(value: unknown, fallback: number): number {
     return fallback;
   }
   return Math.min(Math.max(Math.trunc(parsed), 1), 200);
+}
+
+function coerceBoolean(value: unknown): boolean {
+  return value === true || value === "true" || value === "1";
 }
 
 function isAllowed(value: string, allowed: string[]): boolean {
