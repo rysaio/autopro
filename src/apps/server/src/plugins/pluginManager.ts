@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import type { PluginSummary, SkillSummary } from "@secops-agent/shared";
+import type { PluginSummary, SkillSummary, ToolRoutingHints } from "@secops-agent/shared";
 import {
   connectMcpClient,
   externalMcpTool,
@@ -32,6 +32,8 @@ interface PluginManifestFile {
   description?: unknown;
   skills?: unknown;
   mcpServers?: unknown;
+  keywords?: unknown;
+  routing?: unknown;
 }
 
 interface McpServerConfigFile {
@@ -175,6 +177,8 @@ export class PluginManager {
     if (manifest.skills !== undefined && !skillsRoot) {
       loadErrors.push("Plugin skills declaration must be a non-empty path string");
     }
+    const pluginKeywords = toValidatedTags(manifest.keywords);
+    const pluginRouting = toRoutingHints(manifest.routing);
     const mcpServers = readMcpServerConfigs(dir, manifest);
     const serverNames = Object.keys(mcpServers);
     if (serverNames.length === 0 && (
@@ -207,7 +211,9 @@ export class PluginManager {
           return externalMcpTool(
             {
               sourceId: `${pluginId}.${serverName}`,
-              tags: ["plugin", pluginId],
+              tags: ["plugin", pluginId, ...pluginKeywords],
+              routing: pluginRouting,
+              deferByDefault: true,
               ...(cachePolicy
                 ? {
                     resultCache: {
@@ -311,6 +317,8 @@ function readPluginManifest(dir: string): {
   description?: string;
   skills?: unknown;
   mcpServers?: unknown;
+  keywords?: string[];
+  routing?: ToolRoutingHints;
 } | undefined {
   for (const relative of MANIFEST_CANDIDATES) {
     const manifestPath = path.join(dir, relative);
@@ -330,12 +338,16 @@ function readPluginManifest(dir: string): {
     if (typeof manifest.name !== "string" || manifest.name.length === 0) {
       continue;
     }
+    const keywords = toValidatedTags(manifest.keywords);
+    const routing = toRoutingHints(manifest.routing);
     return {
       name: manifest.name,
       ...(typeof manifest.version === "string" ? { version: manifest.version } : {}),
       ...(typeof manifest.description === "string" ? { description: manifest.description } : {}),
       ...(manifest.skills !== undefined ? { skills: manifest.skills } : {}),
-      ...(manifest.mcpServers !== undefined ? { mcpServers: manifest.mcpServers } : {})
+      ...(manifest.mcpServers !== undefined ? { mcpServers: manifest.mcpServers } : {}),
+      ...(keywords.length > 0 ? { keywords } : {}),
+      ...(routing ? { routing } : {})
     };
   }
   return undefined;
@@ -523,6 +535,41 @@ function buildSpawnEnv(base: NodeJS.ProcessEnv): Record<string, string> {
   return env;
 }
 
+/**
+ * Validates optional routing metadata. Missing or malformed values return
+ * undefined so the router falls back to hints derived from identity, name,
+ * description, and tags. Invalid entries are ignored rather than trusted.
+ */
+function toRoutingHints(value: unknown): ToolRoutingHints | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const group = typeof raw.group === "string" && raw.group.trim().length > 0
+    ? raw.group.trim()
+    : undefined;
+  const keywords = toValidatedTags(raw.keywords);
+  if (!group && keywords.length === 0) {
+    return undefined;
+  }
+  return {
+    ...(group ? { group } : {}),
+    ...(keywords.length > 0 ? { keywords } : {})
+  };
+}
+
+/** Accepts only non-empty strings; duplicate and malformed entries are dropped. */
+function toValidatedTags(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return uniqueStrings(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim()));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
 /** Host isolation scope for a plugin's cached results. */
 function pluginCacheNamespace(pluginId: string): string {
   return `plugin:${pluginId}`;

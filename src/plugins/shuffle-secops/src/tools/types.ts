@@ -3,6 +3,11 @@ export type ToolRisk = "low" | "medium" | "high";
 export type ToolClass = "perception" | "reasoning" | "evidence" | "action";
 export type AutomationLevel = "observe" | "sandbox" | "full-access";
 
+export interface ToolRoutingHints {
+  group?: string;
+  keywords?: string[];
+}
+
 export interface ToolSchema {
   [key: string]: unknown;
   type: "object";
@@ -22,6 +27,7 @@ export interface ToolManifest {
   inputSchema: ToolSchema;
   tags: string[];
   mcpCompatible: boolean;
+  routing?: ToolRoutingHints;
 }
 
 export interface EvidenceArtifact {

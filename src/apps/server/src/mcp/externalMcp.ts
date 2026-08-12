@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
-import type { ToolClass, ToolRisk, ToolSchema } from "@secops-agent/shared";
+import type { ToolClass, ToolRisk, ToolRoutingHints, ToolSchema } from "@secops-agent/shared";
 import type { ModelTool } from "../providers/types.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../tools/types.js";
 
@@ -77,6 +77,10 @@ export interface ExternalMcpToolOptions {
   apiName?: string;
   tags?: string[];
   useRemoteManifestId?: boolean;
+  /** Host-side default: plugin tools are non-resident unless explicitly marked visible. */
+  deferByDefault?: boolean;
+  /** Plugin-level generic routing hints; per-tool `_meta.routing` takes precedence. */
+  routing?: ToolRoutingHints;
   /** Host-owned opt-in cache identity. Unsafe MCP tools are rejected below. */
   resultCache?: {
     enabled: boolean;
@@ -98,6 +102,15 @@ export function externalMcpTool(
     : `${options.sourceId}.${tool.name}`;
   const schema = toToolSchema(tool.inputSchema);
   const toolClass = toToolClass(meta.toolClass, tool);
+  const routing = toRoutingHints(meta.routing) ?? options.routing;
+  const tags = uniqueStrings([
+    ...(options.tags ?? []),
+    ...toValidatedTags(meta.tags),
+    ...derivedAnnotationTags(tool)
+  ]);
+  const deferLoading = options.deferByDefault
+    ? meta.deferLoading !== false
+    : meta.deferLoading === true;
   const resultCache = options.resultCache?.enabled && isCacheEligible(tool, toolClass)
     ? {
         version: options.resultCache.version,
@@ -114,10 +127,11 @@ export function externalMcpTool(
       description: tool.description ?? "",
       toolClass,
       risk: toToolRisk(meta.risk, tool),
-      deferLoading: meta.deferLoading === true,
+      deferLoading,
       inputSchema: schema,
-      tags: options.tags ?? [options.sourceId],
+      tags,
       mcpCompatible: true,
+      ...(routing ? { routing } : {}),
       ...(resultCache ? { resultCache } : {})
     },
     toModelTool(): ModelTool {
@@ -203,4 +217,61 @@ function isCacheEligible(tool: Tool, toolClass: ToolClass): boolean {
   const readOnly = meta.readOnlyHint ?? annotations.readOnlyHint ?? (tool as { readOnlyHint?: unknown }).readOnlyHint;
   const idempotent = meta.idempotentHint ?? annotations.idempotentHint ?? (tool as { idempotentHint?: unknown }).idempotentHint;
   return readOnly !== false && idempotent !== false;
+}
+
+/**
+ * Validates optional routing metadata. Missing or malformed values return
+ * undefined so the router falls back to hints derived from identity, name,
+ * description, and tags. Invalid entries are ignored rather than trusted.
+ */
+function toRoutingHints(value: unknown): ToolRoutingHints | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const group = typeof raw.group === "string" && raw.group.trim().length > 0
+    ? raw.group.trim()
+    : undefined;
+  const keywords = toValidatedTags(raw.keywords);
+  if (!group && keywords.length === 0) {
+    return undefined;
+  }
+  return {
+    ...(group ? { group } : {}),
+    ...(keywords.length > 0 ? { keywords } : {})
+  };
+}
+
+/** Accepts only non-empty strings; duplicate and malformed entries are dropped. */
+function toValidatedTags(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return uniqueStrings(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim()));
+}
+
+/** Derives safe routing tags from standard MCP tool annotations (compatible metadata). */
+function derivedAnnotationTags(tool: Tool): string[] {
+  const meta = tool._meta ?? {};
+  const annotations = (tool as { annotations?: Record<string, unknown> }).annotations ?? {};
+  const tags: string[] = [];
+  if (booleanHint(meta.readOnlyHint ?? annotations.readOnlyHint)) {
+    tags.push("read-only");
+  }
+  if (booleanHint(meta.destructiveHint ?? annotations.destructiveHint)) {
+    tags.push("destructive");
+  }
+  if (booleanHint(meta.openWorldHint ?? annotations.openWorldHint)) {
+    tags.push("open-world");
+  }
+  return tags;
+}
+
+function booleanHint(value: unknown): boolean {
+  return value === true;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }

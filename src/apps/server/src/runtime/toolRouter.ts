@@ -32,10 +32,22 @@ const CATEGORY_PATTERNS: [string, ToolCategory][] = [
   ["report.", "reporting"],
 ];
 
+interface GenericToolDiscovery {
+  manifestId: string;
+  deferred: boolean;
+  /** Terms derived from validated identity, name, description, tags, and routing hints. */
+  terms: string[];
+  /** Explicit routing keywords (lower-cased). */
+  keywords: string[];
+  /** Explicit routing group label (lower-cased). */
+  group?: string;
+}
+
 export class ToolRouter {
   private categoryMap: Map<ToolCategory, string[]> = new Map();
   private alwaysVisibleIds: string[] = [];
   private deferredIds: string[] = [];
+  private genericDiscovery: GenericToolDiscovery[] = [];
 
   /**
    * 从 ToolRegistry 构建分类映射
@@ -53,6 +65,7 @@ export class ToolRouter {
     ]);
     this.alwaysVisibleIds = [];
     this.deferredIds = [];
+    this.genericDiscovery = [];
 
     const manifests = registry.manifests();
     for (const m of manifests) {
@@ -65,6 +78,9 @@ export class ToolRouter {
       if (m.toolClass === "action") {
         const platformCategory = CATEGORY_PATTERNS.find(([prefix]) => m.id.startsWith(prefix))?.[1];
         this.categoryMap.get(platformCategory ?? "sandbox-actions")!.push(m.id);
+        if (!platformCategory) {
+          this.genericDiscovery.push(genericDiscoveryFor(m));
+        }
         continue;
       }
       // 按前缀匹配
@@ -79,6 +95,7 @@ export class ToolRouter {
       if (!matched) {
         // 未匹配的归入 core-triage
         this.categoryMap.get("core-triage")!.push(m.id);
+        this.genericDiscovery.push(genericDiscoveryFor(m));
       }
     }
   }
@@ -110,19 +127,36 @@ export class ToolRouter {
       reasons.push("The latest user intent explicitly requests a response without tools.");
     } else if (groups.length === 1) {
       candidateIds = this.getIntentToolIds(groups, input.registry, routingText);
+      const discovered = this.discoverGenericTools(routingText);
+      if (discovered.length > 0) {
+        candidateIds = [...new Set([...candidateIds, ...discovered])];
+        reasons.push("Generic plugin routing hints matched deferred tools without relying on first-party prefixes.");
+      }
       confidence = { level: "high", score: 0.9 };
       reasons.push(`The latest user intent maps deterministically to ${groups[0]}.`);
     } else if (groups.length > 1) {
       candidateIds = this.getIntentToolIds(groups, input.registry, routingText);
+      const discovered = this.discoverGenericTools(routingText);
+      if (discovered.length > 0) {
+        candidateIds = [...new Set([...candidateIds, ...discovered])];
+        reasons.push("Generic plugin routing hints matched deferred tools without relying on first-party prefixes.");
+      }
       confidence = { level: "medium", score: 0.68 };
       reasons.push(`The request spans ${groups.join(", ")}; the cross-domain route was resolved locally.`);
     } else if (isClearlyNoToolRequest(latestIntent)) {
       confidence = { level: "high", score: 0.88 };
       reasons.push("The latest user intent is conversational or explanatory and has no operational tool signal.");
     } else {
-      candidateIds = [...this.alwaysVisibleIds];
-      confidence = { level: "low", score: 0.35 };
-      reasons.push("No deterministic domain matched; fallback exposes only eligible non-action resident tools.");
+      const discovered = this.discoverGenericTools(routingText);
+      if (discovered.length > 0) {
+        candidateIds = [...new Set([...this.alwaysVisibleIds, ...discovered])];
+        confidence = { level: "medium", score: 0.68 };
+        reasons.push("No first-party domain matched; generic plugin routing hints selected deferred tools for this request.");
+      } else {
+        candidateIds = [...this.alwaysVisibleIds];
+        confidence = { level: "low", score: 0.35 };
+        reasons.push("No deterministic domain matched; fallback exposes only eligible non-action resident tools.");
+      }
     }
 
     if (usesConversationContext) {
@@ -194,13 +228,59 @@ export class ToolRouter {
       }));
       const highestScore = Math.max(0, ...scored.map((item) => item.score));
       const narrowed = highestScore === 0
-        ? categoryIds
+        ? categoryIds.filter((id) => !this.isDeferredGeneric(id))
         : scored.filter((item) => item.score === highestScore).map((item) => item.id);
       for (const id of narrowed) {
         selected.add(id);
       }
     }
     return [...selected];
+  }
+
+  /** True for unknown (unclassified) deferred plugin tools that must not leak into unrelated category routes. */
+  private isDeferredGeneric(manifestId: string): boolean {
+    return this.genericDiscovery.some((entry) => entry.manifestId === manifestId && entry.deferred);
+  }
+
+  /**
+   * Deterministic generic discovery for unknown (unclassified) plugin tools.
+   * Only deferred tools are considered: resident tools are already visible, so
+   * this keeps unknown tools discoverable without making them permanently
+   * resident or sending them on every unrelated request.
+   */
+  private discoverGenericTools(intentText: string): string[] {
+    const text = intentText.toLowerCase();
+    const scored: Array<{ id: string; score: number; explicit: boolean }> = [];
+    for (const entry of this.genericDiscovery) {
+      if (!entry.deferred) {
+        continue;
+      }
+      let score = 0;
+      let explicit = false;
+      for (const keyword of entry.keywords) {
+        if (text.includes(keyword)) {
+          score += 4;
+          explicit = true;
+        }
+      }
+      if (entry.group && text.includes(entry.group)) {
+        score += 2;
+        explicit = true;
+      }
+      for (const term of entry.terms) {
+        if (intentContainsTerm(text, term)) {
+          score += 1;
+        }
+      }
+      if (score >= 2 || explicit) {
+        scored.push({ id: entry.manifestId, score, explicit });
+      }
+    }
+    scored.sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
+    const highestScore = scored[0]?.score ?? 0;
+    return scored
+      .filter((item) => item.score === highestScore)
+      .map((item) => item.id);
   }
 
   /**
@@ -396,6 +476,66 @@ function toolRelevanceScore(manifest: ToolManifest | undefined, intentText: stri
     (score, signal) => score + (searchable.includes(signal) ? 1 : 0),
     0
   );
+}
+
+function genericDiscoveryFor(manifest: ToolManifest): GenericToolDiscovery {
+  const routing = manifest.routing;
+  const searchable = [
+    manifest.id,
+    manifest.name,
+    manifest.description,
+    ...manifest.tags,
+    ...(routing?.keywords ?? [])
+  ].join(" ");
+  return {
+    manifestId: manifest.id,
+    deferred: manifest.deferLoading,
+    terms: deriveSearchTerms(searchable),
+    keywords: (routing?.keywords ?? []).map((keyword) => keyword.toLowerCase()).filter(Boolean),
+    ...(routing?.group ? { group: routing.group.toLowerCase() } : {})
+  };
+}
+
+/**
+ * Derives stable search terms from a tool's validated routing surface.
+ * English tokens keep word-boundary matching; CJK runs are split into 2-grams
+ * so both the intent and the tool description can overlap on shared phrases.
+ */
+function deriveSearchTerms(value: string): string[] {
+  const text = value.toLowerCase();
+  const ignored = new Set([
+    "agent", "wazuh", "shuffle", "secops", "mcp", "tool", "tools", "plugin",
+    "the", "and", "for", "with", "this", "that", "from", "into", "use", "using",
+    "via", "all", "any", "can", "will", "your", "you"
+  ]);
+  const terms = new Set<string>();
+  for (const token of text.match(/[a-z0-9][a-z0-9_-]{2,}/g) ?? []) {
+    if (!ignored.has(token)) {
+      terms.add(token);
+    }
+  }
+  for (const run of text.match(/[\u4e00-\u9fff]{2,}/g) ?? []) {
+    if (run.length <= 8) {
+      terms.add(run);
+    }
+    if (run.length >= 3) {
+      for (let index = 0; index < run.length - 1; index += 1) {
+        terms.add(run.slice(index, index + 2));
+      }
+    }
+  }
+  return [...terms];
+}
+
+function intentContainsTerm(intentText: string, term: string): boolean {
+  if (/[\u4e00-\u9fff]/.test(term)) {
+    return intentText.includes(term);
+  }
+  return new RegExp(`(?:^|[^a-z0-9_-])${escapeRegExp(term)}(?:$|[^a-z0-9_-])`, "i").test(intentText);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function intentSignals(value: string): string[] {
