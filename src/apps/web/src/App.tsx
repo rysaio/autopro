@@ -18,7 +18,6 @@ import {
   LockKeyhole,
   MessageSquare,
   Network,
-  Play,
   PlugZap,
   Plus,
   Search,
@@ -98,31 +97,27 @@ const seedMessages: ChatMessage[] = [
   }
 ];
 
-const WORKSPACE_MIN_HEIGHT = 200;
+const WORKSPACE_MIN_HEIGHT = 160;
+const WORKSPACE_CONVERSATION_MIN = 64;
+const WORKSPACE_DIVIDER_SPACE = 24; // 分隔条 14px + 上下两处 4px gap
 const WORKSPACE_DEFAULT_RATIO = 0.4;
-const WORKSPACE_DEFAULT_MAX = 520;
-const WORKSPACE_MAX_VIEWPORT_MARGIN = 120;
+const WORKSPACE_FALLBACK_MAX = 520; // 无法实测几何时的兜底
 const WORKSPACE_KEYBOARD_STEP = 24;
 const WORKSPACE_KEYBOARD_FAST_STEP = 96;
 
-function workspaceMaxHeight(): number {
-  if (typeof window === "undefined") {
-    return WORKSPACE_DEFAULT_MAX;
-  }
-  return Math.max(WORKSPACE_MIN_HEIGHT, window.innerHeight - WORKSPACE_MAX_VIEWPORT_MARGIN);
+function clampWorkspaceHeight(height: number, max: number): number {
+  return Math.round(Math.min(Math.max(height, WORKSPACE_MIN_HEIGHT), Math.max(max, WORKSPACE_MIN_HEIGHT)));
 }
 
-function clampWorkspaceHeight(height: number): number {
-  return Math.round(Math.min(Math.max(height, WORKSPACE_MIN_HEIGHT), workspaceMaxHeight()));
-}
-
-function defaultWorkspaceHeight(): number {
-  if (typeof window === "undefined") {
-    return WORKSPACE_DEFAULT_MAX;
+function defaultWorkspaceHeight(zone: number | null, max: number): number {
+  if (zone === null) {
+    // 首帧/SSR 兜底
+    const fallback = typeof window === "undefined"
+      ? 400
+      : Math.min(window.innerHeight * WORKSPACE_DEFAULT_RATIO, WORKSPACE_FALLBACK_MAX);
+    return clampWorkspaceHeight(fallback, max);
   }
-  return clampWorkspaceHeight(
-    Math.min(window.innerHeight * WORKSPACE_DEFAULT_RATIO, Math.min(WORKSPACE_DEFAULT_MAX, workspaceMaxHeight()))
-  );
+  return clampWorkspaceHeight(Math.round(zone * WORKSPACE_DEFAULT_RATIO), max);
 }
 
 type InspectorTab = "plan" | "audit" | "artifacts";
@@ -184,24 +179,65 @@ export function App() {
   const [tab, setTab] = useState<InspectorTab>("plan");
   const [activePanel, setActivePanel] = useState<WorkbenchPanel | null>(null);
   const [toolWorkspaceTab, setToolWorkspaceTab] = useState<"scope" | "mcp">("scope");
-  const [workspaceHeight, setWorkspaceHeight] = useState<number>(defaultWorkspaceHeight);
+  const [workspaceHeight, setWorkspaceHeight] = useState<number>(() =>
+    defaultWorkspaceHeight(null, typeof window === "undefined" ? WORKSPACE_FALLBACK_MAX : Math.max(WORKSPACE_MIN_HEIGHT, window.innerHeight - 280))
+  );
+  const [workspaceMax, setWorkspaceMax] = useState<number>(() =>
+    typeof window === "undefined" ? WORKSPACE_FALLBACK_MAX : Math.max(WORKSPACE_MIN_HEIGHT, window.innerHeight - 280)
+  );
   const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
   const workspaceHeightRef = useRef(workspaceHeight);
   const workspaceStackRef = useRef<HTMLDivElement | null>(null);
-  const workspaceResizeStart = useRef<{ pointerId: number; y: number; height: number } | null>(null);
+  const conversationListRef = useRef<HTMLDivElement | null>(null);
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const workspaceResizeStart = useRef<{ pointerId: number; y: number; height: number; max: number } | null>(null);
 
   useEffect(() => {
     workspaceHeightRef.current = workspaceHeight;
   }, [workspaceHeight]);
 
+  function measureWorkspaceZone(): { zone: number | null; max: number } {
+    const conversation = conversationListRef.current;
+    const sidebar = sidebarRef.current;
+    if (conversation && sidebar && typeof window !== "undefined") {
+      // 会话区顶 → 侧栏底，即工作区面板可占用的全部垂直空间
+      const zone = Math.round(sidebar.getBoundingClientRect().bottom - conversation.getBoundingClientRect().top);
+      if (zone > 0) {
+        const max = Math.max(
+          WORKSPACE_MIN_HEIGHT,
+          zone - WORKSPACE_CONVERSATION_MIN - WORKSPACE_DIVIDER_SPACE
+        );
+        return { zone, max };
+      }
+    }
+    return { zone: null, max: WORKSPACE_FALLBACK_MAX };
+  }
+
+  // 挂载时按实测几何确定默认高度与最大范围（绘制前生效，避免首帧跳动）
+  useLayoutEffect(() => {
+    const { zone, max } = measureWorkspaceZone();
+    setWorkspaceMax(max);
+    const def = defaultWorkspaceHeight(zone, max);
+    workspaceHeightRef.current = def;
+    setWorkspaceHeight(def);
+    applyWorkspaceHeight(def);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
-    function clampToViewport() {
-      const viewportMax = workspaceMaxHeight();
-      setWorkspaceHeight((current) => Math.min(current, viewportMax));
+    function handleViewportResize() {
+      const { max } = measureWorkspaceZone();
+      setWorkspaceMax(max);
+      const current = workspaceHeightRef.current;
+      if (current > max) {
+        workspaceHeightRef.current = max;
+        setWorkspaceHeight(max);
+        applyWorkspaceHeight(max);
+      }
     }
 
-    window.addEventListener("resize", clampToViewport);
-    return () => window.removeEventListener("resize", clampToViewport);
+    window.addEventListener("resize", handleViewportResize);
+    return () => window.removeEventListener("resize", handleViewportResize);
   }, []);
 
   useEffect(() => {
@@ -391,18 +427,22 @@ export function App() {
     }
   }
 
-  function setWorkspaceHeightClamped(nextHeight: number) {
-    const clamped = clampWorkspaceHeight(nextHeight);
+  function setWorkspaceHeightClamped(nextHeight: number, max: number = workspaceMax) {
+    const clamped = clampWorkspaceHeight(nextHeight, max);
     workspaceHeightRef.current = clamped;
     setWorkspaceHeight(clamped);
   }
 
   function handleWorkspaceResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
+    // 按下瞬间实测可用范围：运行时卡片顶 - 会话区顶 - 会话区最小高度 - 分隔条占用
+    const { max } = measureWorkspaceZone();
+    setWorkspaceMax(max);
     workspaceResizeStart.current = {
       pointerId: event.pointerId,
       y: event.clientY,
-      height: workspaceHeightRef.current
+      height: workspaceHeightRef.current,
+      max
     };
     setIsResizingWorkspace(true);
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -413,7 +453,8 @@ export function App() {
     if (!start || start.pointerId !== event.pointerId) {
       return;
     }
-    const nextHeight = clampWorkspaceHeight(start.height + start.y - event.clientY);
+    // 与指针 1:1 跟随：起点高度 + 指针位移，仅按实测范围夹取
+    const nextHeight = clampWorkspaceHeight(start.height + start.y - event.clientY, start.max);
     workspaceHeightRef.current = nextHeight;
     applyWorkspaceHeight(nextHeight);
   }
@@ -453,7 +494,7 @@ export function App() {
         break;
       case "End":
         event.preventDefault();
-        setWorkspaceHeightClamped(workspaceMaxHeight());
+        setWorkspaceHeightClamped(workspaceMax);
         break;
       case "Enter":
       case " ":
@@ -464,8 +505,10 @@ export function App() {
   }
 
   function resetWorkspaceHeight() {
-    const reset = defaultWorkspaceHeight();
-    setWorkspaceHeightClamped(reset);
+    const { zone, max } = measureWorkspaceZone();
+    setWorkspaceMax(max);
+    const reset = defaultWorkspaceHeight(zone, max);
+    setWorkspaceHeightClamped(reset, max);
     applyWorkspaceHeight(reset);
   }
 
@@ -760,6 +803,15 @@ async function handleGenerateReport() {
     setEnabledTools((current) => reconcileEnabledTools(current, tools, nextTools));
   }
 
+  // 打开 MCP 标签时静默刷新：插件 MCP 服务注册晚于页面挂载时，列表会滞后
+  async function refreshMcpServers() {
+    try {
+      setMcpServers(await fetchMcpServers());
+    } catch {
+      // 拉取失败保留现有列表
+    }
+  }
+
   async function reloadPluginState(): Promise<PluginSummary[]> {
     const state = await reloadPlugins();
     setPlugins(state);
@@ -779,7 +831,11 @@ async function handleGenerateReport() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar" aria-label="SecOps workspace">
+      <aside
+        className={isResizingWorkspace ? "sidebar resizing" : "sidebar"}
+        aria-label="SecOps workspace"
+        ref={sidebarRef}
+      >
         <div className="brand-row">
           <div className="brand-mark">
             <Bot size={22} aria-hidden="true" />
@@ -790,7 +846,7 @@ async function handleGenerateReport() {
           </div>
         </div>
 
-        <div className="conversation-list" aria-label="会话列表">
+        <div className="conversation-list" aria-label="会话列表" ref={conversationListRef}>
           <div className="section-label">
             <MessageSquare size={14} aria-hidden="true" />
             <span>会话</span>
@@ -810,7 +866,7 @@ async function handleGenerateReport() {
               title="当前对话（未保存，发生对话后显示）"
               type="button"
             >
-              <strong>{liveSessionTitle(messages)}</strong>
+              <strong>{conversationTitle(messages)}</strong>
               <small>{messages.length} 条消息 · {activeToolInvocations.length} 次工具调用</small>
             </button>
           ) : null}
@@ -849,7 +905,7 @@ async function handleGenerateReport() {
           aria-controls="workspace-nav-stack"
           aria-label="调整工作区高度"
           aria-orientation="horizontal"
-          aria-valuemax={workspaceMaxHeight()}
+          aria-valuemax={workspaceMax}
           aria-valuemin={WORKSPACE_MIN_HEIGHT}
           aria-valuenow={workspaceHeight}
           aria-valuetext={`${workspaceHeight} 像素`}
@@ -884,15 +940,6 @@ async function handleGenerateReport() {
             <LayoutDashboard size={15} aria-hidden="true" />
             <span>仪表盘</span>
             <strong>{sessions.length}</strong>
-          </button>
-          <button
-            className={activePanel === "archived" ? "nav-item active" : "nav-item"}
-            onClick={() => openPanel("archived")}
-            type="button"
-          >
-            <Archive size={15} aria-hidden="true" />
-            <span>归档</span>
-            <strong>{archivedSessions.length}</strong>
           </button>
           <button
             className={activePanel === "model-config" ? "nav-item active" : "nav-item"}
@@ -966,21 +1013,15 @@ async function handleGenerateReport() {
             <span>证据</span>
             <strong>{activeArtifacts.length}</strong>
           </button>
-        </div>
-
-        <div className="provider-card">
-          <div className="section-label">
-            <Settings2 size={14} aria-hidden="true" />
-            <span>运行时</span>
-          </div>
-          <strong>{health?.model ?? "加载中"}</strong>
-          <div className="runtime-grid">
-            <span>{health?.provider ?? "供应商"}</span>
-            <span>{health?.configured ? "已配置" : "需要配置"}</span>
-            <span>{health?.capabilities.tools ? "工具已开启" : "工具已关闭"}</span>
-            <span>{health?.actionLevel ?? "沙箱"}</span>
-            <span>{health?.durableSessionStore.configured ? "数据库会话" : "本地会话"}</span>
-          </div>
+          <button
+            className={activePanel === "archived" ? "nav-item active" : "nav-item"}
+            onClick={() => openPanel("archived")}
+            type="button"
+          >
+            <Archive size={15} aria-hidden="true" />
+            <span>归档</span>
+            <strong>{archivedSessions.length}</strong>
+          </button>
         </div>
       </aside>
 
@@ -1072,7 +1113,7 @@ async function handleGenerateReport() {
                     <Wrench size={15} aria-hidden="true" />
                     <span>工具范围</span>
                   </button>
-                  <button aria-selected={toolWorkspaceTab === "mcp"} className={toolWorkspaceTab === "mcp" ? "active" : ""} onClick={() => setToolWorkspaceTab("mcp")} role="tab" type="button">
+                  <button aria-selected={toolWorkspaceTab === "mcp"} className={toolWorkspaceTab === "mcp" ? "active" : ""} onClick={() => { setToolWorkspaceTab("mcp"); void refreshMcpServers(); }} role="tab" type="button">
                     <PlugZap size={15} aria-hidden="true" />
                     <span>MCP 服务</span>
                     <strong>{mcpServers.servers.length}</strong>
@@ -1286,10 +1327,7 @@ async function handleGenerateReport() {
         ) : (
           <>
         <header className="topbar">
-          <div>
-            <h2>安全运营控制台</h2>
-            <p>{enabledToolCount} 个工具已启用 · {enabledMcpCount} 个 MCP 工具 · {health?.actionLevel ?? "沙箱"} 访问</p>
-          </div>
+          <h2 title={conversationTitleFull(messages)}>{conversationTitle(messages)}</h2>
           <div className="topbar-actions">
             <div className="segmented" aria-label="权限模式">
               {(["auto", "ask", "deny"] as PermissionMode[]).map((mode) => (
@@ -1320,15 +1358,6 @@ async function handleGenerateReport() {
               ))}
             </div>
             <StatusPill health={health} />
-            <button
-              className="icon-button"
-              disabled={isRunning || !prompt.trim()}
-              form="agent-composer"
-              title="运行当前提示"
-              type="submit"
-            >
-              <Play size={18} aria-hidden="true" />
-            </button>
           </div>
         </header>
 
@@ -1768,11 +1797,21 @@ function mergeMessages(current: ChatMessage[], nextMessages: ChatMessage[]): Cha
   ];
 }
 
-function liveSessionTitle(messages: ChatMessage[]): string {
+// 会话标题统一方案：取首个用户输入的开头，超过 10 字截断
+function conversationTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((message) => message.role === "user");
   if (firstUser && typeof firstUser.content === "string" && firstUser.content.trim()) {
     const text = firstUser.content.trim();
-    return text.length > 24 ? `${text.slice(0, 24)}…` : text;
+    return text.length > 10 ? `${text.slice(0, 10)}…` : text;
+  }
+  return "新对话";
+}
+
+// 悬停提示用的完整标题（未截断）
+function conversationTitleFull(messages: ChatMessage[]): string {
+  const firstUser = messages.find((message) => message.role === "user");
+  if (firstUser && typeof firstUser.content === "string" && firstUser.content.trim()) {
+    return firstUser.content.trim();
   }
   return "新对话";
 }
