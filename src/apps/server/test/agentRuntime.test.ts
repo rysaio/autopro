@@ -8,7 +8,14 @@ import type {
   LanguageModelV3StreamResult
 } from "@ai-sdk/provider";
 import type { LanguageModel } from "ai";
-import type { AgentRunEvent, ChatMessage, EvidenceArtifact, SkillManifest, ToolGuidance } from "@secops-agent/shared";
+import type {
+  AgentRunEvent,
+  AuditEvent,
+  ChatMessage,
+  EvidenceArtifact,
+  SkillManifest,
+  ToolGuidance
+} from "@secops-agent/shared";
 import type { ModelTool } from "../src/providers/types.js";
 import { AgentRuntime } from "../src/runtime/agentRuntime.js";
 import { MemorySessionStateStore } from "../src/runtime/sessionStateStore.js";
@@ -39,7 +46,15 @@ describe("AgentRuntime", () => {
     expect(run.metrics.persistence).toEqual({
       operationCount: 0,
       totalDurationMs: 0,
-      failureCount: 0
+      failureCount: 0,
+      queueWaitDurationMs: 0,
+      batchWriteCount: 0,
+      batchWriteDurationMs: 0,
+      maxDepth: 0,
+      saturationCount: 0,
+      drainDurationMs: 0,
+      drainTimedOut: false,
+      remainingOperations: 0
     });
   });
 
@@ -356,6 +371,73 @@ describe("AgentRuntime", () => {
     expect(sessionStateStore.events.find((event) => event.type === "run_completed")?.run?.metrics).toEqual(run.metrics);
   });
 
+  it("persists run events in order through the bounded async queue (Issue #10)", async () => {
+    const config = testConfig();
+    const store = new RecordingSessionStateStore();
+    const runtime = new AgentRuntime({
+      model: createScriptedModel("Reply without calling a tool."),
+      registry: new ToolRegistry(),
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      sessionStateStore: store,
+      enableLayeredRouting: false
+    });
+
+    const run = await runtime.run({
+      messages: [{ role: "user", content: "Reply without calling a tool." }],
+      enabledTools: []
+    });
+
+    expect(run.status).toBe("completed");
+    // 入队顺序与存储写入顺序一致：消息 → run_started → 路由审计 → 审计事件 →
+    // 请求审计 → 审计事件 → 助手消息 → 消息事件 → 响应审计 → 审计事件
+    expect(store.callOrder).toEqual([
+      "message:user",
+      "event:run_started",
+      "audit:routing_decision",
+      "event:audit",
+      "audit:model_request",
+      "event:audit",
+      "message:assistant",
+      "event:message",
+      "audit:model_response",
+      "event:audit"
+    ]);
+  });
+
+  it("reports bounded-queue metrics in the terminal snapshot (Issue #10)", async () => {
+    const config = testConfig();
+    const store = new RecordingSessionStateStore();
+    const runtime = new AgentRuntime({
+      model: createScriptedModel("Reply without calling a tool."),
+      registry: new ToolRegistry(),
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      sessionStateStore: store,
+      enableLayeredRouting: false
+    });
+
+    const run = await runtime.run({
+      messages: [{ role: "user", content: "Reply without calling a tool." }],
+      enabledTools: []
+    });
+
+    const persistence = run.metrics.persistence;
+    expect(persistence.drainTimedOut).toBe(false);
+    expect(persistence.remainingOperations).toBe(0);
+    expect(persistence.batchWriteCount).toBeGreaterThanOrEqual(1);
+    expect(persistence.maxDepth).toBeGreaterThanOrEqual(1);
+    expect(persistence.queueWaitDurationMs).toBeGreaterThanOrEqual(0);
+    expect(persistence.saturationCount).toBe(0);
+    expect(persistence.operationCount).toBe(store.callOrder.length + 1);
+  });
+
   it("emits partial text and a cancelled terminal snapshot when the caller aborts", async () => {
     const config = testConfig();
     const runtime = new AgentRuntime({
@@ -461,6 +543,26 @@ class FailOnceMemorySessionStateStore extends MemorySessionStateStore {
       this.shouldFail = false;
       throw new Error("simulated business-write failure");
     }
+    await super.appendMessage(sessionId, runId, message);
+  }
+}
+
+/** 记录存储写入顺序，用于验证有界队列的 run 内事件顺序（Issue #10）。 */
+class RecordingSessionStateStore extends MemorySessionStateStore {
+  readonly callOrder: string[] = [];
+
+  override async recordRunEvent(event: AgentRunEvent): Promise<void> {
+    this.callOrder.push(`event:${event.type}`);
+    await super.recordRunEvent(event);
+  }
+
+  override async recordAuditEvent(sessionId: string, runId: string, audit: AuditEvent): Promise<void> {
+    this.callOrder.push(`audit:${audit.type}`);
+    await super.recordAuditEvent(sessionId, runId, audit);
+  }
+
+  override async appendMessage(sessionId: string, runId: string, message: ChatMessage): Promise<void> {
+    this.callOrder.push(`message:${message.role}`);
     await super.appendMessage(sessionId, runId, message);
   }
 }
