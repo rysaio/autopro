@@ -97,6 +97,17 @@ const WORKSPACE_FALLBACK_MAX = 520; // 无法实测几何时的兜底
 const WORKSPACE_KEYBOARD_STEP = 24;
 const WORKSPACE_KEYBOARD_FAST_STEP = 96;
 
+// 输入框高度：默认更矮，用户可通过分隔线拖动 / 方向键微调 / 双击恢复
+const COMPOSER_MIN_HEIGHT = 36;
+const COMPOSER_DEFAULT_HEIGHT = 40;
+const COMPOSER_MAX_HEIGHT = 360;
+const COMPOSER_KEYBOARD_STEP = 8;
+const COMPOSER_KEYBOARD_FAST_STEP = 32;
+
+function clampComposerHeight(height: number): number {
+  return Math.round(Math.min(Math.max(height, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT));
+}
+
 function clampWorkspaceHeight(height: number, max: number): number {
   return Math.round(Math.min(Math.max(height, WORKSPACE_MIN_HEIGHT), Math.max(max, WORKSPACE_MIN_HEIGHT)));
 }
@@ -152,6 +163,7 @@ export function App() {
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [prompt, setPrompt] = useState("");
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("ask");
+  const [openComposerMenu, setOpenComposerMenu] = useState<"permission" | "sandbox" | null>(null);
   const [toolClassFilter, setToolClassFilter] = useState<ToolClassFilter>("all");
   const [toolQuery, setToolQuery] = useState("");
   const [isRunning, setIsRunning] = useState(false);
@@ -183,10 +195,18 @@ export function App() {
   const conversationListRef = useRef<HTMLDivElement | null>(null);
   const sidebarRef = useRef<HTMLElement | null>(null);
   const workspaceResizeStart = useRef<{ pointerId: number; y: number; height: number; max: number } | null>(null);
+  const [composerHeight, setComposerHeight] = useState<number>(COMPOSER_DEFAULT_HEIGHT);
+  const composerHeightRef = useRef(composerHeight);
+  const composerResizeStart = useRef<{ pointerId: number; y: number; height: number } | null>(null);
+  const [isResizingComposer, setIsResizingComposer] = useState(false);
 
   useEffect(() => {
     workspaceHeightRef.current = workspaceHeight;
   }, [workspaceHeight]);
+
+  useEffect(() => {
+    composerHeightRef.current = composerHeight;
+  }, [composerHeight]);
 
   function measureWorkspaceZone(): { zone: number | null; max: number } {
     const conversation = conversationListRef.current;
@@ -231,6 +251,35 @@ export function App() {
     window.addEventListener("resize", handleViewportResize);
     return () => window.removeEventListener("resize", handleViewportResize);
   }, []);
+
+  // 输入框底部展开菜单：点击外部或按 Esc 关闭
+  useEffect(() => {
+    if (!openComposerMenu) {
+      return;
+    }
+    function handlePointerDown(event: MouseEvent | TouchEvent) {
+      const target = event.target as Node | null;
+      if (!target || !(target instanceof Node) || !target.parentNode) {
+        return;
+      }
+      if (!(target as Element).closest?.(".composer-tool")) {
+        setOpenComposerMenu(null);
+      }
+    }
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenComposerMenu(null);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openComposerMenu]);
 
   useEffect(() => {
     let mounted = true;
@@ -504,6 +553,79 @@ export function App() {
     const reset = defaultWorkspaceHeight(zone, max);
     setWorkspaceHeightClamped(reset, max);
     applyWorkspaceHeight(reset);
+  }
+
+  function setComposerHeightClamped(nextHeight: number) {
+    const clamped = clampComposerHeight(nextHeight);
+    composerHeightRef.current = clamped;
+    setComposerHeight(clamped);
+  }
+
+  function handleComposerResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    composerResizeStart.current = {
+      pointerId: event.pointerId,
+      y: event.clientY,
+      height: composerHeightRef.current
+    };
+    setIsResizingComposer(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleComposerResizeMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = composerResizeStart.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+    // 分隔线在输入框顶部（对话区与输入框之间）：向上拖变大、向下拖变小，与指针 1:1 跟随
+    const nextHeight = clampComposerHeight(start.height + (start.y - event.clientY));
+    composerHeightRef.current = nextHeight;
+    setComposerHeight(nextHeight);
+  }
+
+  function handleComposerResizeEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = composerResizeStart.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+    composerResizeStart.current = null;
+    setIsResizingComposer(false);
+    setComposerHeight(composerHeightRef.current);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function handleComposerResizeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    const step = event.shiftKey ? COMPOSER_KEYBOARD_FAST_STEP : COMPOSER_KEYBOARD_STEP;
+    switch (event.key) {
+      case "ArrowUp":
+      case "ArrowLeft":
+        event.preventDefault();
+        setComposerHeightClamped(composerHeightRef.current - step);
+        break;
+      case "ArrowDown":
+      case "ArrowRight":
+        event.preventDefault();
+        setComposerHeightClamped(composerHeightRef.current + step);
+        break;
+      case "Home":
+        event.preventDefault();
+        setComposerHeightClamped(COMPOSER_MIN_HEIGHT);
+        break;
+      case "End":
+        event.preventDefault();
+        setComposerHeightClamped(COMPOSER_MAX_HEIGHT);
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        setComposerHeightClamped(COMPOSER_DEFAULT_HEIGHT);
+        break;
+    }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -1357,37 +1479,6 @@ async function handleGenerateReport() {
           <>
         <header className="topbar">
           <h2 title={conversationTitleFull(messages)}>{conversationTitle(messages)}</h2>
-          <div className="topbar-actions">
-            <div className="segmented" aria-label="权限模式">
-              {(["auto", "ask", "deny"] as PermissionMode[]).map((mode) => (
-                <button
-                  aria-pressed={effectivePermissionMode === mode}
-                  className={effectivePermissionMode === mode ? "active" : ""}
-                  disabled={fullAccessActive}
-                  key={mode}
-                  onClick={() => setPermissionMode(mode)}
-                  type="button"
-                >
-                  {mode === "auto" ? "自动" : mode === "ask" ? "询问" : "拒绝"}
-                </button>
-              ))}
-            </div>
-            <div className="segmented access-level" aria-label="自动化访问级别">
-              {actionLevels.map((level) => (
-                <button
-                  aria-pressed={health?.actionLevel === level.id}
-                  className={health?.actionLevel === level.id ? "active" : ""}
-                  disabled={isUpdatingActionLevel}
-                  key={level.id}
-                  onClick={() => changeActionLevel(level.id)}
-                  type="button"
-                >
-                  {level.label}
-                </button>
-              ))}
-            </div>
-            <StatusPill health={health} />
-          </div>
         </header>
 
         {error ? (
@@ -1441,19 +1532,105 @@ async function handleGenerateReport() {
             <Sparkles size={16} aria-hidden="true" />
             <span>{health?.provider ?? "供应商"} · {health?.model ?? "model"}</span>
           </div>
-          <textarea
-            aria-label="智能体提示"
-            aria-keyshortcuts="Enter"
-            onKeyDown={handlePromptKeyDown}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder="输入安全调查指令..."
-            rows={3}
-            value={prompt}
+          <div className="composer-textarea">
+            <textarea
+              aria-label="智能体提示"
+              aria-keyshortcuts="Enter"
+              onKeyDown={handlePromptKeyDown}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="输入安全调查指令..."
+              rows={3}
+              style={{ height: composerHeight }}
+              value={prompt}
+            />
+          </div>
+          <div className="chat-controls" aria-label="对话控制">
+            <div className="composer-tool">
+              <button
+                aria-expanded={openComposerMenu === "permission"}
+                aria-haspopup="menu"
+                className="composer-tool-trigger"
+                disabled={fullAccessActive}
+                onClick={() => setOpenComposerMenu(openComposerMenu === "permission" ? null : "permission")}
+                type="button"
+              >
+                <span>权限：</span>
+                <strong>{permissionModeLabel(effectivePermissionMode)}</strong>
+              </button>
+              {openComposerMenu === "permission" ? (
+                <div aria-label="权限模式" className="composer-tool-menu" role="menu">
+                  {(["auto", "ask", "deny"] as PermissionMode[]).map((mode) => (
+                    <button
+                      aria-pressed={effectivePermissionMode === mode}
+                      className={effectivePermissionMode === mode ? "active" : ""}
+                      key={mode}
+                      onClick={() => {
+                        setPermissionMode(mode);
+                        setOpenComposerMenu(null);
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      {permissionModeLabel(mode)}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className="composer-tool">
+              <button
+                aria-expanded={openComposerMenu === "sandbox"}
+                aria-haspopup="menu"
+                className="composer-tool-trigger"
+                disabled={isUpdatingActionLevel}
+                onClick={() => setOpenComposerMenu(openComposerMenu === "sandbox" ? null : "sandbox")}
+                type="button"
+              >
+                <span>沙箱：</span>
+                <strong>{actionLevelLabel(health?.actionLevel)}</strong>
+              </button>
+              {openComposerMenu === "sandbox" ? (
+                <div aria-label="自动化访问级别" className="composer-tool-menu" role="menu">
+                  {actionLevels.map((level) => (
+                    <button
+                      aria-pressed={health?.actionLevel === level.id}
+                      className={health?.actionLevel === level.id ? "active" : ""}
+                      key={level.id}
+                      onClick={() => {
+                        void changeActionLevel(level.id);
+                        setOpenComposerMenu(null);
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      {level.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <button className="send-button" disabled={isRunning || !prompt.trim()} id="composer-submit" type="submit">
+              {isRunning ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
+              <span>运行</span>
+            </button>
+          </div>
+          <div
+            aria-label="调整输入框高度"
+            aria-orientation="horizontal"
+            aria-valuemax={COMPOSER_MAX_HEIGHT}
+            aria-valuemin={COMPOSER_MIN_HEIGHT}
+            aria-valuenow={composerHeight}
+            aria-valuetext={`${composerHeight} 像素`}
+            className={isResizingComposer ? "composer-divider resizing" : "composer-divider"}
+            onDoubleClick={() => setComposerHeightClamped(COMPOSER_DEFAULT_HEIGHT)}
+            onKeyDown={handleComposerResizeKeyDown}
+            onPointerCancel={handleComposerResizeEnd}
+            onPointerDown={handleComposerResizeStart}
+            onPointerMove={handleComposerResizeMove}
+            onPointerUp={handleComposerResizeEnd}
+            role="separator"
+            tabIndex={0}
           />
-          <button className="send-button" disabled={isRunning || !prompt.trim()} id="composer-submit" type="submit">
-            {isRunning ? <Loader2 className="spin" size={18} aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
-            <span>运行</span>
-          </button>
         </form>
           </>
         )}
@@ -1510,14 +1687,12 @@ async function handleGenerateReport() {
   );
 }
 
-function StatusPill({ health }: { health: ProviderStatus | null }) {
-  const healthy = Boolean(health?.configured);
-  return (
-    <div className={`status-pill ${healthy ? "ok" : "warn"}`}>
-      {healthy ? <CheckCircle2 size={15} aria-hidden="true" /> : <AlertTriangle size={15} aria-hidden="true" />}
-      <span>{healthy ? "已配置" : "需要配置"}</span>
-    </div>
-  );
+function permissionModeLabel(mode: PermissionMode): string {
+  return mode === "auto" ? "自动" : mode === "ask" ? "询问" : "拒绝";
+}
+
+function actionLevelLabel(level: AutomationLevel | undefined): string {
+  return actionLevels.find((entry) => entry.id === level)?.label ?? "观察";
 }
 
 function panelTitle(panel: WorkbenchPanel): string {

@@ -823,6 +823,14 @@ h3 {
   padding: 0 2px 10px;
 }
 
+.topbar h2 {
+  min-width: 0; /* 空间不足时标题收缩省略，避免被挤出/截断 */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .topbar p,
 .inspector-header p {
   color: var(--gray-500);
@@ -830,66 +838,102 @@ h3 {
   line-height: 1.45;
 }
 
-.topbar-actions {
+/* 输入框底部控制条：权限模式 / 访问级别 / 状态，作为 composer 的末行跨两列，窄宽下在面板内换行 */
+.chat-controls {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 
-.segmented {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(45px, 1fr));
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface);
+/* ChatGPT 风格输入框底部文字触发项：无边框，单击展开选择菜单 */
+.composer-tool {
+  position: relative;
 }
 
-.segmented button {
-  min-height: 28px;
+.composer-tool-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0;
   border: 0;
   border-radius: var(--r-sm);
   color: var(--gray-500);
   background: transparent;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.segmented button.active {
-  color: var(--text-on-accent);
-  background: var(--accent-700);
-}
-
-.segmented button:disabled,
-.scope-actions button:disabled {
-  opacity: 0.56;
-}
-
-.status-pill {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  color: var(--gray-600);
-  background: var(--surface);
   font-size: 12px;
-  font-weight: 800;
+  line-height: 1.4;
 }
 
-.status-pill.ok {
+.composer-tool-trigger:hover:not(:disabled) {
   color: var(--accent-700);
 }
 
-.status-pill.warn {
-  color: var(--warn-700);
+.composer-tool-trigger strong {
+  color: var(--gray-700);
+  font-weight: 800;
+}
+
+.composer-tool-trigger:hover:not(:disabled) strong {
+  color: var(--accent-700);
+}
+
+.composer-tool-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composer-tool-trigger svg {
+  transition: transform 120ms ease;
+}
+
+.composer-tool-trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.composer-tool-menu {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+}
+
+.composer-tool-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--gray-700);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.composer-tool-menu button:hover {
+  color: var(--accent-700);
+  background: var(--gray-100);
+}
+
+.composer-tool-menu button.active {
+  color: var(--accent-700);
+}
+
+.composer-tool-menu button.active::after {
+  content: "✓";
+  font-weight: 900;
 }
 
 .icon-button {
@@ -1424,6 +1468,7 @@ h3 {
 }
 
 .composer {
+  position: relative; /* 承载与对话区之间的高度调节分隔线 */
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
@@ -1445,9 +1490,16 @@ h3 {
   font-weight: 800;
 }
 
+.composer-textarea {
+  grid-column: 1 / -1; /* 独占整行，发送按键移到下方控制条右侧 */
+  min-height: 0;
+}
+
 .composer textarea {
-  min-height: clamp(96px, 16vh, 150px);
-  resize: vertical;
+  display: block;
+  width: 100%;
+  height: 100%;
+  resize: none; /* 去掉原生两条斜线手柄，改用右下角自绘手柄 */
   border: 0;
   color: var(--gray-900);
   font-size: 14px;
@@ -1458,14 +1510,60 @@ h3 {
   color: var(--gray-400);
 }
 
+/* 对话区与输入框之间的整条分隔线：任意位置拖动调整输入框高度 */
+.composer-divider {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -7px; /* 一半压住输入框顶边、一半伸入与对话区的间隙，整条均可拖拽 */
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 14px;
+  cursor: ns-resize;
+  touch-action: none; /* 触屏拖拽时不滚动页面 */
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease;
+}
+
+.composer-divider::after {
+  content: "";
+  width: 36px;
+  height: 3px;
+  border-radius: var(--r-full);
+  background: rgba(148, 163, 184, 0.5);
+  transition: background 120ms ease, width 140ms ease;
+}
+
+.composer-divider:hover,
+.composer-divider.resizing {
+  background: rgba(20, 184, 166, 0.08);
+}
+
+.composer-divider:hover::after,
+.composer-divider.resizing::after {
+  background: rgba(20, 184, 166, 0.85);
+}
+
+.composer-divider:active::after {
+  width: 48px;
+}
+
+.composer-divider:focus-visible {
+  outline: 2px solid rgba(20, 184, 166, 0.9);
+  outline-offset: -2px;
+}
+
 .send-button {
-  align-self: end;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   min-width: 96px;
   height: 42px;
+  margin-left: auto; /* 与左侧权限/沙箱文字同一行，靠右对齐 */
   border: 0;
   border-radius: var(--r-md);
   color: var(--text-on-accent);
@@ -1818,10 +1916,6 @@ h3 {
     flex-direction: column;
     gap: 10px;
   }
-
-  .topbar-actions {
-    justify-content: flex-start;
-  }
 }
 
 @media (max-width: 980px) {
@@ -1873,18 +1967,6 @@ h3 {
     grid-row: auto;
   }
 
-  .topbar-actions,
-  .segmented {
-    width: 100%;
-  }
-
-  .topbar-actions {
-    align-items: stretch;
-    flex-direction: column;
-    justify-content: flex-start;
-  }
-
-  .status-pill,
   .icon-button {
     justify-content: center;
     width: 100%;
@@ -1978,10 +2060,6 @@ h3 {
 
   .composer {
     grid-template-columns: 1fr;
-  }
-
-  .send-button {
-    width: 100%;
   }
 
   .inspector-tabs {
