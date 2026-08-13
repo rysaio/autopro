@@ -6,9 +6,10 @@ import { fetchSkillContent } from "./api.js";
 interface SkillViewProps {
   skills: SkillSummary[];
   onReload: () => Promise<SkillSummary[]>;
+  onToggleSkill: (id: string, enabled: boolean) => void;
 }
 
-export function SkillView({ skills, onReload }: SkillViewProps) {
+export function SkillView({ skills, onReload, onToggleSkill }: SkillViewProps) {
   const [selected, setSelected] = useState<SkillContent | null>(null);
   const [busy, setBusy] = useState<"reload" | string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,14 +66,26 @@ export function SkillView({ skills, onReload }: SkillViewProps) {
         <div className="section-label"><FileText size={14} aria-hidden="true" /><span>技能</span></div>
         <div className="skill-list">
           {skills.length ? skills.map((skill) => (
-            <button className={`skill-row status-${skill.status}`} disabled={busy !== null || skill.status !== "loaded"} key={skill.id} onClick={() => void openSkill(skill)} type="button">
-              {busy === skill.id ? <Loader2 className="spin" size={14} aria-hidden="true" /> : skill.status === "loaded" ? <FileText size={14} aria-hidden="true" /> : <AlertTriangle size={14} aria-hidden="true" />}
-              <span>
-                <strong>{skill.name}</strong>
-                <small>{skill.status === "loaded" ? skill.description : skill.error}</small>
-                <em>{skill.source === "plugin" ? `插件 · ${skill.pluginId}` : "独立技能"}</em>
-              </span>
-            </button>
+            <div className={`skill-row status-${skill.status} ${selected?.id === skill.id ? "active" : ""}`} key={skill.id}>
+              <button className="skill-open" disabled={busy !== null || skill.status !== "loaded"} onClick={() => void openSkill(skill)} type="button">
+                {busy === skill.id ? <Loader2 className="spin" size={14} aria-hidden="true" /> : skill.status === "loaded" ? <FileText size={14} aria-hidden="true" /> : <AlertTriangle size={14} aria-hidden="true" />}
+                <span>
+                  <strong>{skill.name}</strong>
+                  <small>{skill.status === "loaded" ? skill.description : skill.error}</small>
+                  <em>{skill.source === "plugin" ? `插件 · ${skill.pluginId}` : "独立技能"}</em>
+                </span>
+              </button>
+              <label className="toggle" title={skill.enabled ? "点击禁用该技能（对模型不可见）" : "点击启用该技能"}>
+                <input
+                  aria-label={`启用技能 ${skill.name}`}
+                  checked={skill.enabled}
+                  disabled={skill.status !== "loaded"}
+                  onChange={() => onToggleSkill(skill.id, !skill.enabled)}
+                  type="checkbox"
+                />
+                <span className="toggle-track" aria-hidden="true" />
+              </label>
+            </div>
           )) : <p className="empty-state">暂无技能</p>}
         </div>
       </section>

@@ -253,10 +253,15 @@ wazuh / shuffle 等集成以 Codex 插件形态提供（`runtime/plugins/<name>/
 
 Agent 的 system prompt 只包含有效 Skill 的 ID、名称和描述；正文通过只读 `secops_skill_read` 工具按需获取，不常驻模型上下文。Skill 清单与正文接口不会返回文件路径。
 
+每个技能有独立功能开关（持久化在 `runtime/config/skillVisibility.json`）：关闭后技能从
+Agent 的提示与 `secops_skill_read` 中排除（对模型不可见），界面仍可预览正文。
+
 ```text
 GET  /api/skills
 GET  /api/skills/:id
 POST /api/skills/reload
+GET  /api/skills/visibility
+PUT  /api/skills/visibility/:id      # body: { "enabled": false }
 ```
 
 ### 独立 MCP 服务（`runtime/config/mcp.json`）
@@ -317,6 +322,7 @@ DELETE /api/tools/visibility/:id       # 清除覆盖，回退到工具声明值
 | `SECOPS_SKILLS_DIR` | `runtime/skills` | 独立 Skill 目录 |
 | `SECOPS_MCP_CONFIG_PATH` | `runtime/config/mcp.json` | 独立 MCP 服务配置文件 |
 | `SECOPS_TOOL_VISIBILITY_PATH` | `runtime/config/toolVisibility.json` | 工具暴露级别用户覆盖文件 |
+| `SECOPS_SKILL_VISIBILITY_PATH` | `runtime/config/skillVisibility.json` | 技能功能开关文件（禁用技能对模型不可见） |
 | `SECOPS_PLUGINS_DIR` | `runtime/plugins` | 插件目录 |
 | `SECOPS_ACTION_LEVEL` | `sandbox` | 默认自动化级别（observe/sandbox/full-access） |
 | `SECOPS_RUNTIME_CONFIG_PATH` | `runtime/config/settings.json` | 运行时设置文件 |

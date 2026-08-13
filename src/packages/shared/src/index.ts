@@ -73,6 +73,8 @@ export interface SkillSummary {
   description: string;
   source: SkillSource;
   status: "loaded" | "error";
+  /** 用户开关：disabled 的技能对模型不可见（从技能提示与 skill_read 中排除），UI 预览不受影响。 */
+  enabled: boolean;
   pluginId?: string;
   error?: string;
 }

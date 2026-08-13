@@ -71,6 +71,7 @@ import {
   streamAgent,
   unarchiveSession,
   updateActionLevel,
+  updateSkillVisibility,
   generateReport,
   exportReport,
   reloadPlugins,
@@ -638,6 +639,33 @@ export function App() {
     });
   }
 
+  // 插件开关：一次启用/禁用该插件贡献的全部工具（插件 MCP 工具 tags 含 pluginId）
+  function togglePlugin(pluginId: string, enabled: boolean) {
+    const pluginToolIds = new Set(tools.filter((tool) => tool.tags.includes(pluginId)).map((tool) => tool.id));
+    setEnabledTools((current) => {
+      const next = new Set(current);
+      for (const id of pluginToolIds) {
+        if (enabled) {
+          next.add(id);
+        } else {
+          next.delete(id);
+        }
+      }
+      return next;
+    });
+  }
+
+  // 技能开关：禁用后对模型不可见（提示与 skill_read 排除），界面仍可预览正文
+  async function toggleSkill(id: string, enabled: boolean) {
+    setError(null);
+    try {
+      await updateSkillVisibility(id, enabled);
+      setSkills((current) => current.map((skill) => skill.id === id ? { ...skill, enabled } : skill));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   function enableVisibleTools() {
     setEnabledTools((current) => new Set([...current, ...visibleTools.map((tool) => tool.id)]));
   }
@@ -957,7 +985,7 @@ async function handleGenerateReport() {
           >
             <Network size={15} aria-hidden="true" />
             <span>知识图谱</span>
-            <strong>{Math.min(tools.length, 10) + Math.min(sessions.length, 5) + 7 + (activeSession?.artifacts?.length ?? streamArtifacts.length)}</strong>
+            <strong>{1 + Math.min(tools.length, 10) + Math.min(sessions.length, 5) + (activeSession?.artifacts?.length ?? streamArtifacts.length)}</strong>
           </button>
           <button
             className={activePanel === "plugins" ? "nav-item active" : "nav-item"}
@@ -1103,9 +1131,17 @@ async function handleGenerateReport() {
             ) : activePanel === "model-config" ? (
               <ModelConfigView onConfigChanged={refreshHealth} />
             ) : activePanel === "plugins" ? (
-              <PluginView onReload={reloadPluginState} plugins={plugins} />
+              <PluginView
+                enabledTools={enabledTools}
+                fullAccessActive={fullAccessActive}
+                onReload={reloadPluginState}
+                onTogglePlugin={togglePlugin}
+                onToggleTool={toggleTool}
+                plugins={plugins}
+                tools={tools}
+              />
             ) : activePanel === "skills" ? (
-              <SkillView onReload={reloadSkillState} skills={skills} />
+              <SkillView onReload={reloadSkillState} onToggleSkill={(id, enabled) => void toggleSkill(id, enabled)} skills={skills} />
             ) : activePanel === "tools" ? (
               <div className="tool-workspace">
                 <div className="tool-workspace-tabs" role="tablist" aria-label="工具工作区视图">

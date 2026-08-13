@@ -109,7 +109,11 @@ for (const expected of ["Remote MCP", "已连接", "Authorization", "添加服�
 
 const pluginHtml = renderToStaticMarkup(
   <PluginView
+    enabledTools={new Set(["wazuh.alerts.search"])}
+    fullAccessActive={false}
     onReload={async () => []}
+    onTogglePlugin={() => undefined}
+    onToggleTool={() => undefined}
     plugins={[{
       id: "wazuh",
       name: "Wazuh",
@@ -120,9 +124,10 @@ const pluginHtml = renderToStaticMarkup(
       skillCount: 3,
       mcpServers: [{ name: "wazuh", status: "loaded", toolCount: 4 }]
     }]}
+    tools={[toolManifest("wazuh.alerts.search", "medium", ["plugin", "wazuh"])]}
   />
 );
-for (const expected of ["插件目录", "重新加载插件", "Wazuh", "3 技能", "4 工具"]) {
+for (const expected of ["插件目录", "重新加载插件", "Wazuh", "3 技能", "4 工具", "启用插件 Wazuh 的全部工具"]) {
   if (!pluginHtml.includes(escapeHtml(expected))) {
     throw new Error(`Expected plugin markup to contain ${expected}.\n${pluginHtml}`);
   }
@@ -131,16 +136,18 @@ for (const expected of ["插件目录", "重新加载插件", "Wazuh", "3 技能
 const skillHtml = renderToStaticMarkup(
   <SkillView
     onReload={async () => []}
+    onToggleSkill={() => undefined}
     skills={[{
       id: "case-review",
       name: "case-review",
       description: "Review a case.",
       source: "standalone",
-      status: "loaded"
+      status: "loaded",
+      enabled: true
     }]}
   />
 );
-for (const expected of ["技能目录", "重新加载技能", "case-review", "独立技能"]) {
+for (const expected of ["技能目录", "重新加载技能", "case-review", "独立技能", "启用技能 case-review"]) {
   if (!skillHtml.includes(escapeHtml(expected))) {
     throw new Error(`Expected skill markup to contain ${expected}.\n${skillHtml}`);
   }
@@ -194,13 +201,15 @@ function invocation(input: Partial<ToolInvocation> & Pick<ToolInvocation, "id" |
   return record;
 }
 
-function toolManifest(id: string, risk: ToolManifest["risk"]): ToolManifest {
+function toolManifest(id: string, risk: ToolManifest["risk"], tags: string[] = []): ToolManifest {
   return {
     id,
     name: id,
     description: `${id} description`,
     toolClass: "perception",
     risk,
+    deferLoading: false,
+    tags,
     mcpCompatible: true,
     inputSchema: { type: "object", properties: {} }
   };

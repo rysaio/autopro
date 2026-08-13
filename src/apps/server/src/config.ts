@@ -21,6 +21,7 @@ export interface AppConfig {
   modelConfigPath: string;
   mcpConfigPath: string;
   toolVisibilityPath: string;
+  skillVisibilityPath: string;
   auditLogPath: string;
   approvalStorePath: string;
   dataDir: string;
@@ -46,6 +47,7 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     modelConfigPath: resolveWorkspacePath(env.SECOPS_MODEL_CONFIG_PATH, workspaceRoot, path.join("runtime", "config", "model.json")),
     mcpConfigPath: resolveWorkspacePath(env.SECOPS_MCP_CONFIG_PATH, workspaceRoot, path.join("runtime", "config", "mcp.json")),
     toolVisibilityPath: resolveWorkspacePath(env.SECOPS_TOOL_VISIBILITY_PATH, workspaceRoot, path.join("runtime", "config", "toolVisibility.json")),
+    skillVisibilityPath: resolveWorkspacePath(env.SECOPS_SKILL_VISIBILITY_PATH, workspaceRoot, path.join("runtime", "config", "skillVisibility.json")),
     auditLogPath: resolveWorkspacePath(env.SECOPS_AUDIT_LOG_PATH, workspaceRoot, path.join("runtime", "audit", "events.jsonl")),
     approvalStorePath: resolveWorkspacePath(env.SECOPS_APPROVAL_STORE_PATH, workspaceRoot, path.join("runtime", "approvals", "pending.json")),
     dataDir: resolveDataDir(env.SECOPS_DATA_DIR, workspaceRoot),

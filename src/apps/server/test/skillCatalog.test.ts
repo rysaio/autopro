@@ -119,4 +119,26 @@ describe("SkillCatalog", () => {
       expect.objectContaining({ id: "large-skill", status: "error", error: expect.stringContaining("128") })
     ]);
   });
+
+  it("hides disabled skills from the agent but keeps preview content readable", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "secops-skills-"));
+    const standaloneRoot = path.join(dir, "skills");
+    const disabled = new Set<string>(["case-review"]);
+    await writeSkill(standaloneRoot, "case-review", "case-review", "# Case Review\n\nSecret body.");
+    const catalog = new SkillCatalog({
+      standaloneRoot,
+      isEnabled: (id) => !disabled.has(id)
+    });
+    catalog.reload();
+
+    // 列表带 enabled 标记，界面可渲染开关
+    expect(catalog.list()).toEqual([
+      expect.objectContaining({ id: "case-review", status: "loaded", enabled: false })
+    ]);
+    // 模型侧：提示不出现、read 视为不存在
+    expect(catalog.promptSummary()).not.toContain("case-review");
+    expect(catalog.read("case-review")).toBeUndefined();
+    // 界面预览：正文仍可读取
+    expect(catalog.content("case-review")?.content).toContain("Secret body");
+  });
 });

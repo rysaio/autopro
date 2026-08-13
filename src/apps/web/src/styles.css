@@ -4051,6 +4051,17 @@ h3 {
   padding-right: 2px;
 }
 
+/* 技能列表内嵌方框：列表自身滚动，高度与右侧技能正文（520px）对齐 */
+.skill-section {
+  align-content: start;
+}
+
+.skill-list {
+  max-height: 520px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 .plugin-row {
   display: grid;
   gap: 10px;
@@ -4064,9 +4075,112 @@ h3 {
 
 .plugin-heading {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 9px;
+}
+
+.plugin-expand {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--gray-500);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.plugin-expand:hover {
+  color: var(--accent-700);
+  border-color: var(--accent-300);
+  background: var(--accent-50);
+}
+
+.plugin-tools {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  background: var(--gray-50);
+}
+
+.plugin-tools .tool-row {
+  background: var(--surface);
+}
+
+/* 独立功能开关（插件 / 技能行内） */
+.toggle {
+  position: relative;
+  display: inline-flex;
+  width: 36px;
+  height: 20px;
+  flex: none;
+  cursor: pointer;
+}
+
+.toggle input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.toggle-track {
+  width: 36px;
+  height: 20px;
+  border-radius: var(--r-full);
+  background: var(--gray-300);
+  transition: background 0.15s ease;
+}
+
+.toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-full);
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.3);
+  transition: transform 0.15s ease;
+}
+
+.toggle input:checked + .toggle-track {
+  background: var(--accent-600);
+}
+
+.toggle input:checked + .toggle-track::after {
+  transform: translateX(16px);
+}
+
+.toggle input:indeterminate + .toggle-track {
+  background: var(--warn-500);
+}
+
+.toggle input:indeterminate + .toggle-track::after {
+  transform: translateX(8px);
+}
+
+.toggle input:disabled + .toggle-track {
+  opacity: 0.45;
+}
+
+.toggle input:disabled {
+  cursor: default;
+}
+
+.toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent-600);
+  outline-offset: 2px;
 }
 
 .plugin-heading > svg {
@@ -4129,60 +4243,72 @@ h3 {
 }
 
 .skill-row {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
-  width: 100%;
-  min-height: 54px;
-  padding: 9px 4px;
-  align-items: start;
-  gap: 8px;
-  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   border-bottom: 1px solid var(--border-subtle);
-  color: var(--gray-600);
-  background: transparent;
-  text-align: left;
 }
 
 .skill-row:last-child {
   border-bottom: 0;
 }
 
-.skill-row:hover:not(:disabled) {
+.skill-row.active {
+  background: var(--accent-50);
+}
+
+.skill-open {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  min-height: 54px;
+  padding: 9px 4px;
+  align-items: start;
+  gap: 8px;
+  border: 0;
+  color: var(--gray-600);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.skill-open:hover:not(:disabled) {
   color: var(--accent-700);
   background: var(--accent-50);
 }
 
-.skill-row:disabled {
+.skill-open:disabled {
   cursor: default;
 }
 
-.skill-row > span {
+.skill-open > span {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.skill-row strong {
+.skill-open strong {
   color: var(--gray-800);
   font-size: 12px;
 }
 
-.skill-row small {
+.skill-open small {
   overflow-wrap: anywhere;
   color: var(--gray-500);
   font-size: 11px;
   line-height: 1.45;
 }
 
-.skill-row em {
+.skill-open em {
   color: var(--accent-700);
   font-size: 10px;
   font-style: normal;
   font-weight: 700;
 }
 
-.skill-row.status-error svg,
-.skill-row.status-error small {
+.skill-row.status-error .skill-open svg,
+.skill-row.status-error .skill-open small {
   color: var(--danger-700);
 }
 

@@ -113,6 +113,13 @@ export function reloadSkills(): Promise<SkillSummary[]> {
   return postJson<{ skills: SkillSummary[] }>("/api/skills/reload", {}).then((result) => result.skills);
 }
 
+export function updateSkillVisibility(id: string, enabled: boolean): Promise<Record<string, boolean>> {
+  return putJson<{ visibility: Record<string, boolean> }>(
+    `/api/skills/visibility/${encodeURIComponent(id)}`,
+    { enabled }
+  ).then((result) => result.visibility);
+}
+
 export function reloadPlugins(): Promise<PluginSummary[]> {
   return postJson<{ plugins: PluginSummary[] }>("/api/plugins/reload", {}).then((result) => result.plugins);
 }

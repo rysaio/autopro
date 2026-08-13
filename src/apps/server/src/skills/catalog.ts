@@ -22,6 +22,8 @@ export interface PluginSkillSource {
 export interface SkillCatalogOptions {
   standaloneRoot: string;
   maxSkillBytes?: number;
+  /** 技能功能开关（缺失/返回 true 视为启用）；禁用技能对模型不可见。 */
+  isEnabled?: (id: string) => boolean;
 }
 
 interface LoadedSkill {
@@ -41,9 +43,11 @@ interface ScanSource {
 export class SkillCatalog {
   private snapshot = new Map<string, LoadedSkill>();
   private readonly maxSkillBytes: number;
+  private readonly isEnabled: (id: string) => boolean;
 
   constructor(private readonly options: SkillCatalogOptions) {
     this.maxSkillBytes = options.maxSkillBytes ?? DEFAULT_MAX_SKILL_BYTES;
+    this.isEnabled = options.isEnabled ?? (() => true);
   }
 
   reload(pluginSources: PluginSkillSource[] = []): SkillSummary[] {
@@ -88,24 +92,34 @@ export class SkillCatalog {
 
   list(): SkillSummary[] {
     return [...this.snapshot.values()]
-      .map((skill) => ({ ...skill.summary }))
+      .map((skill) => ({ ...skill.summary, enabled: this.isEnabled(skill.summary.id) }))
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
+  /** Agent 侧正文读取：禁用技能视为不存在（返回 undefined），配合 skill_read 拒绝。 */
   read(id: string): SkillContent | undefined {
+    if (!this.isEnabled(id)) {
+      return undefined;
+    }
+    return this.content(id);
+  }
+
+  /** 界面预览正文：不区分启用状态，禁用技能仍可查看原文。 */
+  content(id: string): SkillContent | undefined {
     const skill = this.snapshot.get(id);
     if (!skill?.content || skill.summary.status !== "loaded") {
       return undefined;
     }
     return {
       ...skill.summary,
+      enabled: this.isEnabled(id),
       status: "loaded",
       content: skill.content
     };
   }
 
   promptSummary(): string {
-    const loaded = this.list().filter((skill) => skill.status === "loaded");
+    const loaded = this.list().filter((skill) => skill.status === "loaded" && skill.enabled);
     if (!loaded.length) {
       return "";
     }
@@ -173,6 +187,8 @@ function loadSkill(source: ScanSource, root: string, directoryName: string, maxS
         description: parsed.description,
         source: source.source,
         status: "loaded",
+        // 内部快照占位；list()/content() 会按开关实时覆盖
+        enabled: true,
         ...(source.pluginId ? { pluginId: source.pluginId } : {})
       },
       content: parsed.content
@@ -234,6 +250,8 @@ function errorSummary(
     description: "",
     source,
     status: "error",
+    // 内部快照占位；list()/content() 会按开关实时覆盖
+    enabled: true,
     error,
     ...(pluginId ? { pluginId } : {})
   };

@@ -60,6 +60,38 @@ describe("plugin and skill APIs", () => {
     const missing = await app.inject({ method: "GET", url: "/api/skills/missing" });
     expect(missing.statusCode).toBe(404);
 
+    const skillVisibility = await app.inject({ method: "GET", url: "/api/skills/visibility" });
+    expect(skillVisibility.statusCode).toBe(200);
+    expect(skillVisibility.json().visibility).toEqual({});
+
+    // 关闭技能后：列表带 enabled=false，正文预览仍可读，非法输入被拒绝
+    const disabled = await app.inject({
+      method: "PUT",
+      url: "/api/skills/visibility/standalone-review",
+      payload: { enabled: false }
+    });
+    expect(disabled.statusCode).toBe(200);
+    expect(disabled.json().visibility).toEqual({ "standalone-review": false });
+    const afterDisable = await app.inject({ method: "GET", url: "/api/skills" });
+    expect(afterDisable.json().skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "standalone-review", enabled: false })
+    ]));
+    const preview = await app.inject({ method: "GET", url: "/api/skills/standalone-review" });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json().content).toContain("First version");
+    const invalidBody = await app.inject({
+      method: "PUT",
+      url: "/api/skills/visibility/standalone-review",
+      payload: { enabled: "yes" }
+    });
+    expect(invalidBody.statusCode).toBe(400);
+    const unknownSkill = await app.inject({
+      method: "PUT",
+      url: "/api/skills/visibility/not-a-skill",
+      payload: { enabled: true }
+    });
+    expect(unknownSkill.statusCode).toBe(404);
+
     await writeSkill(config.skillsDir, "standalone-review", "# Standalone\n\nSecond version.");
     const beforeReload = await app.inject({ method: "GET", url: "/api/skills/standalone-review" });
     expect(beforeReload.json().content).toContain("First version");

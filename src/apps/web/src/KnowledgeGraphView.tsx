@@ -20,7 +20,8 @@ import {
   Radio,
   BarChart3,
   Workflow,
-  Terminal
+  Terminal,
+  Bot
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type {
@@ -34,7 +35,7 @@ import type {
 import type { McpToolSummary } from "./api.js";
 
 // ── Types ──
-export type KgNodeType = "tool" | "session" | "artifact" | "threat";
+export type KgNodeType = "tool" | "session" | "artifact" | "agent";
 
 export interface KgNode {
   id: string;
@@ -75,14 +76,14 @@ const NODE_STYLE: Record<KgNodeType, { color: string; bg: string; size: number }
   tool: { color: "#d97706", bg: "#fffbeb", size: 28 },
   session: { color: "#2563eb", bg: "#eff6ff", size: 26 },
   artifact: { color: "#059669", bg: "#ecfdf5", size: 24 },
-  threat: { color: "#dc2626", bg: "#fef2f2", size: 34 },
+  agent: { color: "#7c3aed", bg: "#f5f3ff", size: 34 },
 };
 
 const TYPE_LABEL: Record<KgNodeType, string> = {
   tool: "工具",
   session: "会话",
   artifact: "证据产物",
-  threat: "威胁",
+  agent: "Agent 应用",
 };
 
 // ── Dynamic node/edge builder ──
@@ -92,12 +93,11 @@ function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: K
   const toolIds = new Set<string>();
   const sessionIds = new Set<string>();
 
-  // 1. Threat node (project context)
+  // 1. Agent application node (root, project context)
   nodes.push({
-    id: "threat-root",
-    label: "SecOps 安全态势",
-    type: "threat",
-    risk: "high",
+    id: "agent-root",
+    label: "Agent 应用",
+    type: "agent",
     description: `模型: ${props.health?.model ?? "N/A"} | 自动化: ${props.health?.actionLevel ?? "N/A"}`,
     source: "Provider Status",
     details: {
@@ -131,8 +131,8 @@ function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: K
       },
     });
     edges.push({
-      id: `threat2tool-${tool.id}`,
-      source: "threat-root",
+      id: `agent2tool-${tool.id}`,
+      source: "agent-root",
       target: `tool-${tool.id}`,
       label: "提供",
       type: "monitors",
@@ -336,7 +336,7 @@ function NodeIcon({ type, size }: { type: KgNodeType; size: number }) {
     case "tool": return <Wrench size={s} />;
     case "session": return <Activity size={s} />;
     case "artifact": return <FileText size={s} />;
-    case "threat": return <AlertTriangle size={s} />;
+    case "agent": return <Bot size={s} />;
     default: return <Globe size={s} />;
   }
 }

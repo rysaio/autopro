@@ -34,6 +34,7 @@ import { PostgresSessionStore } from "./runtime/postgresSessionStore.js";
 import { isAutomationLevel, RuntimeSettingsStore } from "./runtime/runtimeSettings.js";
 import { NoopSessionStateStore, type SessionStateStore } from "./runtime/sessionStateStore.js";
 import { ToolVisibilityStore } from "./runtime/toolVisibilityStore.js";
+import { SkillVisibilityStore } from "./runtime/skillVisibilityStore.js";
 import { SkillCatalog } from "./skills/catalog.js";
 import { createSkillReadTool } from "./skills/skillReadTool.js";
 import { createSecOpsMcpServer, mcpContext, mcpToolSummaries } from "./mcp/secopsMcpServer.js";
@@ -57,7 +58,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     ? new PostgresSessionStore(config.dataDir)
     : undefined;
   const sessionStateStore: SessionStateStore = durableSessionStore ?? new NoopSessionStateStore();
-  const skillCatalog = new SkillCatalog({ standaloneRoot: config.skillsDir });
+  const skillVisibilityStore = new SkillVisibilityStore(config.skillVisibilityPath);
+  const skillCatalog = new SkillCatalog({
+    standaloneRoot: config.skillsDir,
+    isEnabled: (id) => skillVisibilityStore.isEnabled(id)
+  });
   const registry = new ToolRegistry(undefined, durableSessionStore ?? new ApprovalStore(config.approvalStorePath));
   registry.registerRuntimeTools([createSkillReadTool(skillCatalog)]);
   const auditLog = new AuditLog(config.auditLogPath);
@@ -271,9 +276,26 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
 
   app.get("/api/skills", async () => ({ skills: skillCatalog.list() }));
 
+  // 技能功能开关：禁用后从模型提示与 skill_read 中排除，界面仍可预览正文
+  app.get("/api/skills/visibility", async () => ({ visibility: skillVisibilityStore.get() }));
+
+  app.put("/api/skills/visibility/:id", async (request, reply) => {
+    const params = request.params as { id: string };
+    const body = coerceRecord(request.body);
+    if (typeof body.enabled !== "boolean") {
+      return reply.code(400).send({ error: "enabled must be a boolean" });
+    }
+    if (!skillCatalog.list().some((skill) => skill.id === params.id)) {
+      return reply.code(404).send({ error: `No skill found for ${params.id}` });
+    }
+    skillVisibilityStore.set(params.id, body.enabled);
+    return { visibility: skillVisibilityStore.get() };
+  });
+
   app.get("/api/skills/:id", async (request, reply): Promise<SkillContent | unknown> => {
     const params = request.params as { id: string };
-    const skill = skillCatalog.read(params.id);
+    // 预览接口读取不受启用状态限制，便于关闭前查看原文
+    const skill = skillCatalog.content(params.id);
     return skill ?? reply.code(404).send({ error: `No loaded skill found for ${params.id}` });
   });
 
