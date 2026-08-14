@@ -1,12 +1,34 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ToolGuidance, ToolInvocation, ToolManifest } from "@secops-agent/shared";
-import { reconcileEnabledTools, ToolCallCard } from "../src/App.js";
+import { readFileSync } from "node:fs";
+import type { ChatMessage, ToolGuidance, ToolInvocation, ToolManifest } from "@secops-agent/shared";
+import { clampSidebarWidth, conversationTitle, reconcileEnabledTools, ToolCallCard } from "../src/App.js";
 import { McpServerConfigView } from "../src/McpServerConfigView.js";
 import { PluginView } from "../src/PluginView.js";
 import { SkillView } from "../src/SkillView.js";
 
 const now = new Date("2026-06-19T00:00:00.000Z").toISOString();
+
+const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+if (!/@media \(max-width: 1240px\)\s*{\s*\.app-shell\s*{\s*grid-template-columns:\s*var\(--sidebar-width, 176px\) 10px minmax\(0, 1fr\)/.test(styles)) {
+  throw new Error("Expected the compact desktop layout to keep a resizable sidebar, divider, and chat in three columns.");
+}
+
+for (const [requested, expected] of [[176, 176], [150, 176], [120, 0], [0, 0]] as const) {
+  if (clampSidebarWidth(requested) !== expected) {
+    throw new Error(`Expected sidebar width ${requested} to resolve to ${expected}.`);
+  }
+}
+
+const longTitleMessage: ChatMessage = {
+  id: "message-title",
+  role: "user",
+  content: "12345678901234567890标题后的内容",
+  createdAt: now
+};
+if (conversationTitle([longTitleMessage]) !== "12345678901234567890…") {
+  throw new Error("Expected conversation titles to truncate after 20 characters.");
+}
 
 const guidance: ToolGuidance = {
   kind: "precondition",

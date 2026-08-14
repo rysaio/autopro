@@ -75,8 +75,8 @@ export interface KnowledgeGraphProps {
 const NODE_STYLE: Record<KgNodeType, { color: string; bg: string; size: number }> = {
   tool: { color: "#d97706", bg: "#fffbeb", size: 28 },
   session: { color: "#2563eb", bg: "#eff6ff", size: 26 },
-  artifact: { color: "#059669", bg: "#ecfdf5", size: 24 },
-  agent: { color: "#7c3aed", bg: "#f5f3ff", size: 34 },
+  artifact: { color: "#64748b", bg: "#f1f5f9", size: 24 },
+  agent: { color: "#52525b", bg: "#f9f8f6", size: 34 },
 };
 
 const TYPE_LABEL: Record<KgNodeType, string> = {
@@ -543,12 +543,12 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
                 return (
                   <g key={edge.id}>
                     <line x1={sp.x} y1={sp.y} x2={tp.x} y2={tp.y}
-                      stroke={isHighlighted ? "#0f766e" : "#cbd5e1"}
+                      stroke={isHighlighted ? "#64748b" : "#cbd5e1"}
                       strokeWidth={isHighlighted ? 2.5 : 1.5} strokeOpacity={isHighlighted ? 1 : 0.5} />
                     {isHighlighted && (
                       <>
-                        <polygon points="-5,-4 6,0 -5,4" fill="#0f766e" transform={`translate(${mx},${my}) rotate(${angle})`} />
-                        <text x={mx} y={my - 10} textAnchor="middle" fontSize="11" fill="#0f766e" fontWeight="700">{edge.label}</text>
+                        <polygon points="-5,-4 6,0 -5,4" fill="#64748b" transform={`translate(${mx},${my}) rotate(${angle})`} />
+                        <text x={mx} y={my - 10} textAnchor="middle" fontSize="11" fill="#64748b" fontWeight="700">{edge.label}</text>
                       </>
                     )}
                   </g>
@@ -571,15 +571,19 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
                     {isSelected && (
                       <circle r={r + 8} fill="none" stroke={style.color} strokeWidth={2} opacity={0.3} />
                     )}
-                    <circle r={r} fill={style.color} stroke="white" strokeWidth={2.5}
+                    <circle
+                      r={r}
+                      fill={node.type === "agent" ? style.bg : style.color}
+                      stroke={node.type === "agent" ? "#d6d3d1" : "white"}
+                      strokeWidth={2.5}
                       opacity={isHovered || isSelected ? 1 : 0.92} />
                     <foreignObject x={-r * 0.5} y={-r * 0.5} width={r} height={r}>
-                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white" }}>
+                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: node.type === "agent" ? "#52525b" : "white" }}>
                         <NodeIcon type={node.type} size={r * 1.2} />
                       </div>
                     </foreignObject>
                     <text y={r + 15} textAnchor="middle" fontSize={isSelected ? 12 : 11}
-                      fontWeight={isSelected ? 700 : 500} fill={isSelected ? "#0f172a" : "#475569"}
+                      fontWeight={isSelected ? 700 : 500} fill={isSelected ? "#27272a" : "#52525b"}
                       style={{ pointerEvents: "none", userSelect: "none" }}>
                       {node.label.length > 16 ? node.label.slice(0, 16) + "..." : node.label}
                     </text>

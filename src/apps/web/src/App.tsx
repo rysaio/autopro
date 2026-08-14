@@ -31,7 +31,7 @@ import {
   Wrench
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import type {
   AgentRun,
   AgentRunEvent,
@@ -97,6 +97,16 @@ const WORKSPACE_FALLBACK_MAX = 520; // 无法实测几何时的兜底
 const WORKSPACE_KEYBOARD_STEP = 24;
 const WORKSPACE_KEYBOARD_FAST_STEP = 96;
 
+const SIDEBAR_DEFAULT_WIDTH = 288;
+const SIDEBAR_MIN_WIDTH = 176;
+const SIDEBAR_COLLAPSE_THRESHOLD = 120;
+const SIDEBAR_COLLAPSED_WIDTH = 0;
+const MAIN_PANEL_MIN_WIDTH = 560;
+const COLUMN_DIVIDER_WIDTH = 10;
+const STACKED_LAYOUT_MAX_WIDTH = 980;
+const SIDEBAR_KEYBOARD_STEP = 16;
+const SIDEBAR_KEYBOARD_FAST_STEP = 64;
+
 // 输入框高度：默认更矮，用户可通过分隔线拖动 / 方向键微调 / 双击恢复
 const COMPOSER_MIN_HEIGHT = 36;
 const COMPOSER_DEFAULT_HEIGHT = 40;
@@ -110,6 +120,20 @@ function clampComposerHeight(height: number): number {
 
 function clampWorkspaceHeight(height: number, max: number): number {
   return Math.round(Math.min(Math.max(height, WORKSPACE_MIN_HEIGHT), Math.max(max, WORKSPACE_MIN_HEIGHT)));
+}
+
+function maxSidebarWidth(): number {
+  if (typeof window === "undefined") {
+    return 460;
+  }
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(460, window.innerWidth - MAIN_PANEL_MIN_WIDTH - COLUMN_DIVIDER_WIDTH));
+}
+
+export function clampSidebarWidth(width: number): number {
+  if (width <= SIDEBAR_COLLAPSE_THRESHOLD) {
+    return SIDEBAR_COLLAPSED_WIDTH;
+  }
+  return Math.round(Math.min(Math.max(width, SIDEBAR_MIN_WIDTH), maxSidebarWidth()));
 }
 
 function defaultWorkspaceHeight(zone: number | null, max: number): number {
@@ -199,6 +223,11 @@ export function App() {
   const composerHeightRef = useRef(composerHeight);
   const composerResizeStart = useRef<{ pointerId: number; y: number; height: number } | null>(null);
   const [isResizingComposer, setIsResizingComposer] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebarWidth(SIDEBAR_DEFAULT_WIDTH));
+  const sidebarWidthRef = useRef(sidebarWidth);
+  const columnResizeStart = useRef<{ pointerId: number; x: number; width: number } | null>(null);
+  const [isResizingColumns, setIsResizingColumns] = useState(false);
+  const sidebarCollapsed = sidebarWidth === SIDEBAR_COLLAPSED_WIDTH;
 
   useEffect(() => {
     workspaceHeightRef.current = workspaceHeight;
@@ -207,6 +236,10 @@ export function App() {
   useEffect(() => {
     composerHeightRef.current = composerHeight;
   }, [composerHeight]);
+
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth;
+  }, [sidebarWidth]);
 
   function measureWorkspaceZone(): { zone: number | null; max: number } {
     const conversation = conversationListRef.current;
@@ -245,6 +278,13 @@ export function App() {
         workspaceHeightRef.current = max;
         setWorkspaceHeight(max);
         applyWorkspaceHeight(max);
+      }
+      const nextSidebarWidth = window.innerWidth <= STACKED_LAYOUT_MAX_WIDTH && sidebarWidthRef.current === SIDEBAR_COLLAPSED_WIDTH
+        ? clampSidebarWidth(SIDEBAR_DEFAULT_WIDTH)
+        : clampSidebarWidth(sidebarWidthRef.current);
+      if (nextSidebarWidth !== sidebarWidthRef.current) {
+        sidebarWidthRef.current = nextSidebarWidth;
+        setSidebarWidth(nextSidebarWidth);
       }
     }
 
@@ -553,6 +593,85 @@ export function App() {
     const reset = defaultWorkspaceHeight(zone, max);
     setWorkspaceHeightClamped(reset, max);
     applyWorkspaceHeight(reset);
+  }
+
+  function setSidebarWidthClamped(nextWidth: number) {
+    const clamped = clampSidebarWidth(nextWidth);
+    sidebarWidthRef.current = clamped;
+    setSidebarWidth(clamped);
+  }
+
+  function handleColumnResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    columnResizeStart.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      width: sidebarWidthRef.current
+    };
+    setIsResizingColumns(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleColumnResizeMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = columnResizeStart.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+    setSidebarWidthClamped(start.width + event.clientX - start.x);
+  }
+
+  function handleColumnResizeEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = columnResizeStart.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+    columnResizeStart.current = null;
+    setIsResizingColumns(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function handleColumnResizeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    const step = event.shiftKey ? SIDEBAR_KEYBOARD_FAST_STEP : SIDEBAR_KEYBOARD_STEP;
+    switch (event.key) {
+      case "ArrowLeft":
+        event.preventDefault();
+        setSidebarWidthClamped(
+          sidebarWidthRef.current <= SIDEBAR_MIN_WIDTH
+            ? SIDEBAR_COLLAPSED_WIDTH
+            : sidebarWidthRef.current - step
+        );
+        break;
+      case "ArrowRight":
+        event.preventDefault();
+        setSidebarWidthClamped(
+          sidebarWidthRef.current === SIDEBAR_COLLAPSED_WIDTH
+            ? SIDEBAR_MIN_WIDTH
+            : sidebarWidthRef.current + step
+        );
+        break;
+      case "Home":
+        event.preventDefault();
+        setSidebarWidthClamped(SIDEBAR_COLLAPSED_WIDTH);
+        break;
+      case "End":
+        event.preventDefault();
+        setSidebarWidthClamped(maxSidebarWidth());
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        setSidebarWidthClamped(
+          sidebarWidthRef.current === SIDEBAR_COLLAPSED_WIDTH
+            ? SIDEBAR_DEFAULT_WIDTH
+            : SIDEBAR_COLLAPSED_WIDTH
+        );
+        break;
+    }
   }
 
   function setComposerHeightClamped(nextHeight: number) {
@@ -973,10 +1092,19 @@ async function handleGenerateReport() {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className={[
+        "app-shell",
+        isResizingColumns ? "column-resizing" : "",
+        sidebarCollapsed ? "sidebar-collapsed" : ""
+      ].filter(Boolean).join(" ")}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+    >
       <aside
         className={isResizingWorkspace ? "sidebar resizing" : "sidebar"}
         aria-label="SecOps workspace"
+        aria-hidden={sidebarCollapsed ? true : undefined}
+        inert={sidebarCollapsed ? true : undefined}
         ref={sidebarRef}
       >
         <div className="brand-row">
@@ -1167,6 +1295,30 @@ async function handleGenerateReport() {
           </button>
         </div>
       </aside>
+
+      <div
+        aria-label="调整工作区与对话区宽度"
+        aria-orientation="vertical"
+        aria-expanded={!sidebarCollapsed}
+        aria-valuemax={maxSidebarWidth()}
+        aria-valuemin={SIDEBAR_COLLAPSED_WIDTH}
+        aria-valuenow={sidebarWidth}
+        aria-valuetext={sidebarCollapsed ? "工作区已折叠" : `工作区宽度 ${sidebarWidth} 像素`}
+        className={[
+          "column-divider",
+          isResizingColumns ? "resizing" : "",
+          sidebarCollapsed ? "collapsed" : ""
+        ].filter(Boolean).join(" ")}
+        onDoubleClick={() => setSidebarWidthClamped(SIDEBAR_DEFAULT_WIDTH)}
+        onKeyDown={handleColumnResizeKeyDown}
+        onPointerCancel={handleColumnResizeEnd}
+        onPointerDown={handleColumnResizeStart}
+        onPointerMove={handleColumnResizeMove}
+        onPointerUp={handleColumnResizeEnd}
+        role="separator"
+        tabIndex={0}
+        title={sidebarCollapsed ? "向右拖动展开工作区" : "向左拖动可折叠工作区"}
+      />
 
       <main className={activePanel ? "main-panel config-mode" : "main-panel"}>
         {activePanel ? (
@@ -1936,8 +2088,7 @@ function TranscriptMessage({ message }: { message: ChatMessage }) {
 
   if (isTool) {
     return (
-      <article className="message tool collapsed-message">
-        <div className="avatar">TL</div>
+      <article aria-label="工具消息" className="message tool collapsed-message">
         <div className="message-body">
           <button
             className="tool-message-toggle"
@@ -1959,13 +2110,8 @@ function TranscriptMessage({ message }: { message: ChatMessage }) {
   }
 
   return (
-    <article className={`message ${message.role}`}>
-      <div className="avatar">{message.role === "user" ? "AN" : "AG"}</div>
+    <article aria-label={message.role === "user" ? "用户消息" : "智能体消息"} className={`message ${message.role}`}>
       <div className="message-body">
-        <div className="message-meta">
-          <strong>{message.name ?? labelForRole(message.role)}</strong>
-          <time>{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
-        </div>
         <div className="message-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
       </div>
     </article>
@@ -2023,12 +2169,12 @@ function mergeMessages(current: ChatMessage[], nextMessages: ChatMessage[]): Cha
   ];
 }
 
-// 会话标题统一方案：取首个用户输入的开头，超过 10 字截断
-function conversationTitle(messages: ChatMessage[]): string {
+// 会话标题统一方案：取首个用户输入的开头，超过 20 字截断
+export function conversationTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((message) => message.role === "user");
   if (firstUser && typeof firstUser.content === "string" && firstUser.content.trim()) {
     const text = firstUser.content.trim();
-    return text.length > 10 ? `${text.slice(0, 10)}…` : text;
+    return text.length > 20 ? `${text.slice(0, 20)}…` : text;
   }
   return "新对话";
 }
