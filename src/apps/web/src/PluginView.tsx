@@ -51,7 +51,7 @@ export function PluginView({
           <div className={failed ? "warn" : ""}><strong>{failed}</strong><span>异常</span></div>
         </div>
         <div className="config-actions">
-          <button disabled={busy} onClick={() => void reload()} type="button">
+          <button className="catalog-reload-button" disabled={busy} onClick={() => void reload()} type="button">
             {busy ? <Loader2 className="spin" size={15} aria-hidden="true" /> : <RefreshCw size={15} aria-hidden="true" />}
             <span>重新加载插件</span>
           </button>

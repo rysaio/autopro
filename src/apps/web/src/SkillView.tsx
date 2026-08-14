@@ -55,7 +55,7 @@ export function SkillView({ skills, onReload, onToggleSkill }: SkillViewProps) {
           <div className={failed ? "warn" : ""}><strong>{failed}</strong><span>异常</span></div>
         </div>
         <div className="config-actions">
-          <button disabled={busy !== null} onClick={() => void reload()} type="button">
+          <button className="catalog-reload-button" disabled={busy !== null} onClick={() => void reload()} type="button">
             {busy === "reload" ? <Loader2 className="spin" size={15} aria-hidden="true" /> : <RefreshCw size={15} aria-hidden="true" />}
             <span>重新加载技能</span>
           </button>

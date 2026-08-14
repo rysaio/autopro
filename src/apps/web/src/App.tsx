@@ -1896,7 +1896,7 @@ function panelSubtitle(
     return "";
   }
   if (panel === "model-config") {
-    return "启动前编辑 runtime/config/model.json 读取 · 启动后界面 CRUD 或从文件重载，均无需重启";
+    return "";
   }
   if (panel === "plugins") {
     return "插件安装状态与插件 MCP 连接";

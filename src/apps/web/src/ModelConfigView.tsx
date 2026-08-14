@@ -220,23 +220,6 @@ export function ModelConfigView({ onConfigChanged }: ModelConfigViewProps) {
           </dl>
         </div>
 
-        <div className="model-config-loading-cards">
-          <div className="model-config-load-card">
-            <h4><Zap size={14} aria-hidden="true" /> 启动前加载</h4>
-            <p>
-              直接编辑 <code>{MODEL_CONFIG_PATH_HINT}</code>（唯一事实来源），
-              应用启动时自动读取并生效，无需其他操作。
-            </p>
-          </div>
-          <div className="model-config-load-card">
-            <h4><RefreshCw size={14} aria-hidden="true" /> 启动后加载</h4>
-            <p>
-              运行中直接编辑 <code>{MODEL_CONFIG_PATH_HINT}</code> 后，点击
-              <strong>「从文件重载」</strong>即可生效，无需重启服务。
-            </p>
-          </div>
-        </div>
-
         <div className="config-actions model-config-actions" aria-label="模型配置操作">
           <button className="model-config-reload" disabled={busyId !== null} onClick={handleReload} type="button">
             {busyId === null ? <RefreshCw size={15} aria-hidden="true" /> : <Loader2 className="spin" size={15} aria-hidden="true" />}

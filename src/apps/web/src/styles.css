@@ -13,7 +13,7 @@
   --gray-800: #262626;
   --gray-900: #171717;
 
-  /* ---- 中性强调：选中、焦点、开关和链接式强调 ---- */
+  /* ---- 中性强调：默认选中、焦点和链接式强调 ---- */
   --accent-50: #f5f5f5;
   --accent-100: #e8e8e8;
   --accent-200: #d4d4d4;
@@ -24,6 +24,22 @@
   --accent-700: #262626;
   --accent-800: #171717;
   --accent-900: #0f0f10;
+
+  /* ---- 功能状态：开启为绿色，工具选择为蓝色 ---- */
+  --state-on-50: #ecfdf3;
+  --state-on-100: #d1fadf;
+  --state-on-200: #a6f4c5;
+  --state-on-500: #12b76a;
+  --state-on-600: #039855;
+  --state-on-700: #027a48;
+  --state-on-800: #05603a;
+  --tool-selected-50: #eff6ff;
+  --tool-selected-100: #dbeafe;
+  --tool-selected-200: #bfdbfe;
+  --tool-selected-300: #93c5fd;
+  --tool-selected-600: #2563eb;
+  --tool-selected-700: #1d4ed8;
+  --tool-selected-900: #1e3a8a;
 
   /* ---- 语义色 ---- */
   --warn-50: #fffbeb;
@@ -696,9 +712,9 @@ h3 {
 }
 
 .tool-filters button.active {
-  color: var(--accent-900);
-  border-color: var(--accent-300);
-  background: var(--accent-200);
+  color: var(--tool-selected-900);
+  border-color: var(--tool-selected-300);
+  background: var(--tool-selected-100);
 }
 
 .tool-list {
@@ -721,7 +737,7 @@ h3 {
   width: 16px;
   height: 16px;
   margin: 2px 0 0;
-  accent-color: var(--accent-500);
+  accent-color: var(--state-on-600);
 }
 
 .tool-copy {
@@ -746,8 +762,8 @@ h3 {
 .tool-badges em {
   padding: 2px 6px;
   border-radius: var(--r-sm);
-  color: var(--text-strong);
-  background: rgba(63, 63, 70, 0.1);
+  color: var(--gray-800);
+  background: var(--gray-100);
   font-size: 10px;
   font-style: normal;
   font-weight: 800;
@@ -755,14 +771,22 @@ h3 {
   text-transform: uppercase;
 }
 
+.tool-badges em.risk-low {
+  color: var(--state-on-700);
+  background: var(--state-on-50);
+  box-shadow: inset 0 0 0 1px var(--state-on-200);
+}
+
 .tool-badges em.risk-medium {
-  color: var(--text-strong);
-  background: rgba(245, 158, 11, 0.13);
+  color: var(--warn-700);
+  background: var(--warn-50);
+  box-shadow: inset 0 0 0 1px var(--warn-200);
 }
 
 .tool-badges em.risk-high {
-  color: var(--text-strong);
-  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger-700);
+  background: var(--danger-50);
+  box-shadow: inset 0 0 0 1px var(--danger-200);
 }
 
 .main-panel {
@@ -866,6 +890,44 @@ h3 {
   padding-bottom: 2px;
 }
 
+.catalog-reload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  color: var(--gray-700);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.catalog-reload-button:hover:not(:disabled) {
+  color: var(--gray-900);
+  border-color: var(--gray-400);
+  background: var(--gray-50);
+}
+
+.catalog-reload-button:focus-visible {
+  outline: none;
+  border-color: var(--accent-400);
+  box-shadow: 0 0 0 3px var(--accent-100);
+}
+
+.catalog-reload-button:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.catalog-reload-button svg {
+  flex: 0 0 auto;
+}
+
 .config-workspace .section-label {
   color: var(--gray-500);
 }
@@ -888,9 +950,9 @@ h3 {
 }
 
 .config-workspace .tool-filters button.active {
-  color: var(--accent-900);
-  border-color: var(--accent-300);
-  background: var(--accent-200);
+  color: var(--tool-selected-900);
+  border-color: var(--tool-selected-300);
+  background: var(--tool-selected-100);
 }
 
 .config-workspace .tool-copy strong {
@@ -3276,8 +3338,8 @@ h3 {
 }
 
 .model-config-badge.ok {
-  color: var(--accent-700);
-  background: var(--accent-50);
+  color: var(--state-on-700);
+  background: var(--state-on-50);
 }
 
 .model-config-badge.warn {
@@ -3310,43 +3372,6 @@ h3 {
   font-size: 12px;
   font-weight: 700;
   overflow-wrap: anywhere;
-}
-
-.model-config-loading-cards {
-  display: grid;
-  gap: 8px;
-}
-
-.model-config-load-card {
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--gray-50);
-}
-
-.model-config-load-card h4 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 5px;
-  color: var(--gray-700);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.model-config-load-card p {
-  margin: 0;
-  color: var(--gray-500);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.model-config-load-card code {
-  padding: 1px 5px;
-  border-radius: var(--r-xs);
-  color: var(--accent-700);
-  background: var(--accent-50);
-  font-size: 11px;
 }
 
 .model-config-actions {
@@ -3440,8 +3465,8 @@ h3 {
 .model-config-active-tag {
   padding: 1px 7px;
   border-radius: var(--r-full);
-  color: var(--accent-700);
-  background: var(--accent-100);
+  color: var(--state-on-700);
+  background: var(--state-on-100);
   font-size: 10px;
   font-style: normal;
   font-weight: 800;
@@ -3786,17 +3811,19 @@ h3 {
 }
 
 .tool-workspace-tabs button.active {
-  color: var(--gray-800);
-  background: var(--surface);
-  box-shadow: 0 1px 2px rgb(23 23 23 / 10%);
+  color: var(--tool-selected-700);
+  background: var(--tool-selected-50);
+  box-shadow:
+    inset 0 0 0 1px var(--tool-selected-200),
+    0 1px 2px rgb(23 23 23 / 10%);
 }
 
 .tool-workspace-tabs button strong {
   min-width: 18px;
   padding: 1px 5px;
   border-radius: var(--r-md);
-  color: var(--accent-700);
-  background: var(--accent-100);
+  color: var(--tool-selected-700);
+  background: var(--tool-selected-100);
   font-size: 10px;
   text-align: center;
 }
@@ -3922,7 +3949,7 @@ h3 {
 }
 
 .mcp-server-toggle.active {
-  background: var(--accent-700);
+  background: var(--state-on-600);
 }
 
 .mcp-server-toggle.active span {
@@ -3953,7 +3980,7 @@ h3 {
 }
 
 .status-connected .mcp-server-title svg {
-  color: var(--accent-700);
+  color: var(--state-on-700);
 }
 
 .status-error .mcp-server-title svg {
@@ -4135,7 +4162,7 @@ h3 {
 .mcp-server-enabled input {
   width: 16px;
   height: 16px;
-  accent-color: var(--accent-700);
+  accent-color: var(--state-on-600);
 }
 
 .mcp-server-editor-actions {
@@ -4182,9 +4209,9 @@ h3 {
 }
 
 .mcp-config-message.success {
-  color: var(--accent-800);
-  border-color: var(--accent-200);
-  background: var(--accent-50);
+  color: var(--state-on-800);
+  border-color: var(--state-on-200);
+  background: var(--state-on-50);
 }
 
 .mcp-call-console .inspector-body {
@@ -4241,7 +4268,7 @@ h3 {
 }
 
 .catalog-facts span {
-  color: var(--gray-500);
+  color: var(--gray-600);
   font-size: 11px;
 }
 
@@ -4362,7 +4389,7 @@ h3 {
 }
 
 .toggle input:checked + .toggle-track {
-  background: var(--accent-600);
+  background: var(--state-on-600);
 }
 
 .toggle input:checked + .toggle-track::after {
@@ -4386,12 +4413,12 @@ h3 {
 }
 
 .toggle input:focus-visible + .toggle-track {
-  outline: 2px solid var(--accent-600);
+  outline: 2px solid var(--state-on-600);
   outline-offset: 2px;
 }
 
 .plugin-heading > svg {
-  color: var(--accent-700);
+  color: var(--state-on-700);
 }
 
 .plugin-row.status-degraded .plugin-heading > svg,
@@ -4407,7 +4434,7 @@ h3 {
 
 .plugin-heading strong {
   overflow: hidden;
-  color: var(--gray-800);
+  color: var(--gray-900);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4416,7 +4443,7 @@ h3 {
 .plugin-heading small,
 .plugin-row > p,
 .skill-content small {
-  color: var(--gray-500);
+  color: var(--gray-600);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -4437,10 +4464,10 @@ h3 {
   gap: 5px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  color: var(--gray-600);
+  color: var(--gray-700);
   background: var(--gray-50);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .plugin-mcp-list span.status-error {
@@ -4496,13 +4523,14 @@ h3 {
 }
 
 .skill-open strong {
-  color: var(--gray-800);
+  color: var(--gray-900);
   font-size: 12px;
+  font-weight: 700;
 }
 
 .skill-open small {
   overflow-wrap: anywhere;
-  color: var(--gray-500);
+  color: var(--gray-600);
   font-size: 11px;
   line-height: 1.45;
 }
