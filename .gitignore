@@ -39,3 +39,4 @@ yarn-error.log*
 Thumbs.db
 
 .playwright*/
+docs/notes/
