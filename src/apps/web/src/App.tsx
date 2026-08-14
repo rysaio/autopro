@@ -1352,11 +1352,6 @@ async function handleGenerateReport() {
                   })}</p>
                 ) : null}
               </div>
-              {activePanel !== "tools" ? (
-                <div className={`approval-dot ${pendingApprovals.length ? "active" : ""}`} title="待审批">
-                  {pendingApprovals.length}
-                </div>
-              ) : null}
             </header>
 
 {activePanel === "dashboard" ? (

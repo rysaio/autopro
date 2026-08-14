@@ -73,10 +73,10 @@ export interface KnowledgeGraphProps {
 
 // ── Node type styling ──
 const NODE_STYLE: Record<KgNodeType, { color: string; bg: string; size: number }> = {
-  tool: { color: "#d97706", bg: "#fffbeb", size: 28 },
-  session: { color: "#2563eb", bg: "#eff6ff", size: 26 },
-  artifact: { color: "#64748b", bg: "#f1f5f9", size: 24 },
-  agent: { color: "#52525b", bg: "#f9f8f6", size: 34 },
+  tool: { color: "#404040", bg: "#f5f5f5", size: 28 },
+  session: { color: "#525252", bg: "#fafafa", size: 26 },
+  artifact: { color: "#737373", bg: "#f5f5f5", size: 24 },
+  agent: { color: "#262626", bg: "#fafafa", size: 34 },
 };
 
 const TYPE_LABEL: Record<KgNodeType, string> = {
@@ -543,12 +543,12 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
                 return (
                   <g key={edge.id}>
                     <line x1={sp.x} y1={sp.y} x2={tp.x} y2={tp.y}
-                      stroke={isHighlighted ? "#64748b" : "#cbd5e1"}
+                      stroke={isHighlighted ? "#737373" : "#d4d4d4"}
                       strokeWidth={isHighlighted ? 2.5 : 1.5} strokeOpacity={isHighlighted ? 1 : 0.5} />
                     {isHighlighted && (
                       <>
-                        <polygon points="-5,-4 6,0 -5,4" fill="#64748b" transform={`translate(${mx},${my}) rotate(${angle})`} />
-                        <text x={mx} y={my - 10} textAnchor="middle" fontSize="11" fill="#64748b" fontWeight="700">{edge.label}</text>
+                        <polygon points="-5,-4 6,0 -5,4" fill="#737373" transform={`translate(${mx},${my}) rotate(${angle})`} />
+                        <text x={mx} y={my - 10} textAnchor="middle" fontSize="11" fill="#737373" fontWeight="700">{edge.label}</text>
                       </>
                     )}
                   </g>
