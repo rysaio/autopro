@@ -214,10 +214,14 @@ export class AgentRuntime {
         ...payload
       } as AgentRunEvent;
     };
-    const emit = (payload: AgentRunEventPayload) => {
+    const emit = (payload: AgentRunEventPayload, options?: { streaming?: boolean }) => {
       const runEvent = createRunEvent(payload);
+      if (options?.streaming) {
+        runEvent.streaming = true;
+      }
       onEvent?.(runEvent);
-      if (runEvent.type !== "text_delta") {
+      // 节流流式快照（text_delta/streaming message）不落持久化，最终完整消息再写。
+      if (runEvent.type !== "text_delta" && !runEvent.streaming) {
         persist(() => stateStore.recordRunEvent(runEvent));
       }
     };
@@ -280,6 +284,55 @@ export class AgentRuntime {
       return () => {
         timing.end();
       };
+    };
+    // ── 思考链流式：按模型实际输出顺序，以节流快照（streaming message）实时
+    // 推给前端；最终完整版本以同 id 作为普通 message 落库并结束流。 ──
+    const createThinkingStream = () => {
+      let messageId: string | undefined;
+      let createdAt: string | undefined;
+      let content = "";
+      let lastEmitAt = 0;
+      const delta = (chunk: string) => {
+        if (!messageId) {
+          messageId = crypto.randomUUID();
+          createdAt = new Date().toISOString();
+          content = "";
+          lastEmitAt = 0;
+        }
+        content += chunk;
+        const now = Date.now();
+        if (now - lastEmitAt >= 50) {
+          lastEmitAt = now;
+          emit({
+            type: "message",
+            message: {
+              id: messageId as string,
+              role: "assistant",
+              name: "thinking",
+              content,
+              createdAt: createdAt as string
+            }
+          }, { streaming: true });
+        }
+      };
+      const finalize = (): void => {
+        if (!messageId || content.length === 0) {
+          messageId = undefined;
+          return;
+        }
+        const message: ChatMessage = {
+          id: messageId,
+          role: "assistant",
+          name: "thinking",
+          content,
+          createdAt: createdAt as string
+        };
+        messages.push(message);
+        persist(() => stateStore.appendMessage(sessionId, runId, message));
+        emit({ type: "message", message });
+        messageId = undefined;
+      };
+      return { delta, finalize };
     };
 
     try {
@@ -421,6 +474,7 @@ export class AgentRuntime {
         streamingMessageId = crypto.randomUUID();
         streamingMessageCreatedAt = new Date().toISOString();
         streamedText = "";
+        const deepThinking = createThinkingStream();
         const deepGeneration = streamText({
           model: modelMetrics.wrap(this.options.model, "deep", deepToolIds.length),
           system: deepSystemPrompt,
@@ -438,8 +492,10 @@ export class AgentRuntime {
           (delta) => {
             streamedText += delta;
             emit({ type: "text_delta", messageId: streamingMessageId as string, delta });
-          }
+          },
+          (delta) => deepThinking.delta(delta)
         );
+        deepThinking.finalize();
         abortScope.signal.throwIfAborted();
 
         totalSteps += deepResult.steps.length;
@@ -553,6 +609,7 @@ export class AgentRuntime {
         streamingMessageId = crypto.randomUUID();
         streamingMessageCreatedAt = new Date().toISOString();
         streamedText = "";
+        const finalThinking = createThinkingStream();
         const result = await consumeTextGeneration(
           generation,
           () => {
@@ -561,8 +618,10 @@ export class AgentRuntime {
           (delta) => {
             streamedText += delta;
             emit({ type: "text_delta", messageId: streamingMessageId as string, delta });
-          }
+          },
+          (delta) => finalThinking.delta(delta)
         );
+        finalThinking.finalize();
         abortScope.signal.throwIfAborted();
 
         if (toolRecords.some((record) => record.invocation.status === "pending_approval")) {
@@ -754,7 +813,8 @@ export class AgentRuntime {
 async function consumeTextGeneration(
   generation: ReturnType<typeof streamText>,
   onFirstText?: () => void,
-  onTextDelta?: (delta: string) => void
+  onTextDelta?: (delta: string) => void,
+  onReasoningDelta?: (delta: string) => void
 ) {
   let firstTextSeen = false;
   for await (const part of generation.fullStream) {
@@ -764,6 +824,9 @@ async function consumeTextGeneration(
     }
     if (part.type === "text-delta" && part.text.length > 0) {
       onTextDelta?.(part.text);
+    }
+    if (part.type === "reasoning-delta" && part.text.length > 0) {
+      onReasoningDelta?.(part.text);
     }
   }
   const [text, steps, response, finishReason] = await Promise.all([

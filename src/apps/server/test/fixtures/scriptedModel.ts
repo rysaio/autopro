@@ -10,13 +10,25 @@ export function createScriptedModel(latestUserText: string): LanguageModel {
   return new ScriptedLanguageModel(latestUserText);
 }
 
+/** 思考链流式测试模型：最终文本前输出一段 reasoning，验证 thinking 消息的顺序与完整性。 */
+export function createScriptedReasoningModel(latestUserText: string): LanguageModel {
+  return new ScriptedLanguageModel(latestUserText, {
+    reasoningText: "I will first check the available evidence, then decide whether any side-effecting action is warranted."
+  });
+}
+
 export function streamResultFromGenerateResult(result: LanguageModelV3GenerateResult): LanguageModelV3StreamResult {
   return {
     stream: new ReadableStream({
       start(controller) {
         controller.enqueue({ type: "stream-start", warnings: result.warnings });
         for (const content of result.content) {
-          if (content.type === "text") {
+          if (content.type === "reasoning") {
+            const id = `reasoning_${crypto.randomUUID()}`;
+            controller.enqueue({ type: "reasoning-start", id });
+            controller.enqueue({ type: "reasoning-delta", id, delta: content.text });
+            controller.enqueue({ type: "reasoning-end", id });
+          } else if (content.type === "text") {
             const id = `text_${crypto.randomUUID()}`;
             controller.enqueue({ type: "text-start", id });
             controller.enqueue({ type: "text-delta", id, delta: content.text });
@@ -43,7 +55,10 @@ class ScriptedLanguageModel implements LanguageModelV3 {
   readonly supportedUrls = {};
   private step = 0;
 
-  constructor(private readonly latestUserText: string) {}
+  constructor(
+    private readonly latestUserText: string,
+    private readonly options: { reasoningText?: string } = {}
+  ) {}
 
   async doGenerate(options: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> {
     this.step += 1;
@@ -68,6 +83,9 @@ class ScriptedLanguageModel implements LanguageModelV3 {
 
     return {
       content: [
+        ...(this.options.reasoningText
+          ? [{ type: "reasoning" as const, text: this.options.reasoningText }]
+          : []),
         {
           type: "text",
           text:

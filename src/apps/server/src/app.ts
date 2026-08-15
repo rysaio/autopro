@@ -737,7 +737,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
           activeRunId = event.runId;
           activeRuns.set(event.runId, controller);
         }
-        if (event.type !== "text_delta") {
+        if (event.type !== "text_delta" && !event.streaming) {
           auditLog.append(event);
         }
         if (!reply.raw.destroyed && !reply.raw.writableEnded) {

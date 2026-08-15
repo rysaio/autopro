@@ -21,7 +21,7 @@ import { AgentRuntime } from "../src/runtime/agentRuntime.js";
 import { MemorySessionStateStore } from "../src/runtime/sessionStateStore.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "../src/tools/types.js";
-import { createScriptedModel, streamResultFromGenerateResult } from "./fixtures/scriptedModel.js";
+import { createScriptedModel, createScriptedReasoningModel, streamResultFromGenerateResult } from "./fixtures/scriptedModel.js";
 import { testConfig } from "./fixtures/testConfig.js";
 
 describe("AgentRuntime", () => {
@@ -532,6 +532,51 @@ describe("AgentRuntime", () => {
     expect(run.status).toBe("timed_out");
     expect(receivedSignal).toBe(true);
     expect(observedAbort).toBe(true);
+  });
+
+  it("streams model reasoning as ordered thinking messages before the final text", async () => {
+    const config = testConfig();
+    const events: AgentRunEvent[] = [];
+    const reasoningText = "I will first check the available evidence, then decide whether any side-effecting action is warranted.";
+    const runtime = new AgentRuntime({
+      model: createScriptedReasoningModel("Reply without calling a tool."),
+      registry: new ToolRegistry(),
+      modelName: config.model,
+      providerLabel: config.provider,
+      actionLevel: config.actionLevel,
+      sandboxRoot: config.sandboxRoot,
+      workspaceRoot: config.workspaceRoot,
+      enableLayeredRouting: false
+    });
+
+    const run = await runtime.run({
+      messages: [{ role: "user", content: "Reply without calling a tool." }],
+      enabledTools: []
+    }, (event) => events.push(event));
+
+    // 完整 thinking 消息以 name="thinking" 落入会话消息，内容与模型 reasoning 一致
+    const thinkingMessages = run.messages.filter((message) => message.name === "thinking");
+    expect(thinkingMessages).toHaveLength(1);
+    expect(thinkingMessages[0]?.content).toBe(reasoningText);
+
+    // 顺序：thinking 消息先于最终 assistant 文本消息（与模型实际输出顺序一致）
+    const finalTextMessage = run.messages.find((message) => message.role === "assistant" && message.name !== "thinking");
+    expect(finalTextMessage).toBeDefined();
+    const thinkingIndex = run.messages.findIndex((message) => message.id === thinkingMessages[0]?.id);
+    const textIndex = run.messages.findIndex((message) => message.id === finalTextMessage?.id);
+    expect(thinkingIndex).toBeLessThan(textIndex);
+
+    // 事件流：节流快照（streaming: true）先推送，最终完整 thinking 消息后落库
+    const snapshotEvents = events.filter((event) => event.type === "message" && event.streaming);
+    expect(snapshotEvents.length).toBeGreaterThanOrEqual(1);
+    const finalThinkingEvent = events.find((event) =>
+      event.type === "message" && !event.streaming && event.message?.name === "thinking"
+    );
+    expect(finalThinkingEvent).toBeDefined();
+    expect(events.indexOf(snapshotEvents[0] as AgentRunEvent)).toBeLessThan(
+      events.indexOf(finalThinkingEvent as AgentRunEvent)
+    );
+    expect((finalThinkingEvent as { message: ChatMessage }).message.content).toBe(reasoningText);
   });
 });
 

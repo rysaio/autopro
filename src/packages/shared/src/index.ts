@@ -356,6 +356,8 @@ export interface AgentRunEventBase {
   id: string;
   runId: string;
   createdAt: string;
+  /** true 时表示消息级流式的节流快照（如思考链增量）；最终完整版本会以同 id 再次推送。 */
+  streaming?: boolean;
 }
 
 export type AgentRunEventPayload =
