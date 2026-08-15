@@ -1,4 +1,4 @@
-import { jsonSchema, type ToolSet } from "ai";
+import { jsonSchema, type ToolExecutionOptions, type ToolSet } from "ai";
 import type { ToolManifest, ToolInvocation } from "@secops-agent/shared";
 import type { ModelToolCall } from "../providers/types.js";
 import { approvalResult, ApprovalStore, type PendingApprovalStore } from "../runtime/approvalStore.js";
@@ -9,12 +9,27 @@ import { createReportTools } from "./reportTools.js";
 import { createSecOpsTools } from "./secopsTools.js";
 import type { SecOpsTool, ToolContext, ToolExecutionRecord } from "./types.js";
 
+export interface AiSdkToolApprovalOptions {
+  /** true 时，待审批工具会阻塞模型调用，直到 /api/approvals/:id 批准或拒绝。 */
+  waitForApproval?: boolean;
+  /** 等待审批期间可用于取消阻塞的信号（客户端断开时由 AgentRuntime 传入）。 */
+  abortSignal?: AbortSignal;
+}
+
+interface ApprovalWaiter {
+  resolve: (record: ToolExecutionRecord) => void;
+  reject: (error: Error) => void;
+  cleanup: () => void;
+}
+
 export class ToolRegistry {
   private readonly byApiName = new Map<string, SecOpsTool>();
   private readonly byManifestId = new Map<string, SecOpsTool>();
   /** 外部工具按来源隔离，插件或独立 MCP 重载不会移除对方的工具。 */
   private readonly externalSources = new Map<string, { apiNames: Set<string>; manifestIds: Set<string> }>();
   private readonly deferLoadingOverrides = new Map<string, boolean>();
+  /** 模型工具调用正在等待审批决策时的 Promise 解析器。 */
+  private readonly approvalWaiters = new Map<string, ApprovalWaiter>();
 
   constructor(
     tools: SecOpsTool[] = [
@@ -125,7 +140,8 @@ export class ToolRegistry {
   aiSdkTools(
     context: ToolContext,
     enabledManifestIds?: string[],
-    onRecord?: (record: ToolExecutionRecord) => void
+    onRecord?: (record: ToolExecutionRecord) => void,
+    approvalOptions: AiSdkToolApprovalOptions = {}
   ): ToolSet {
     const tools: ToolSet = {};
     for (const secOpsTool of this.resolveEnabled(enabledManifestIds)) {
@@ -139,18 +155,29 @@ export class ToolRegistry {
           risk: secOpsTool.manifest.risk,
           toolClass: secOpsTool.manifest.toolClass
         },
-        execute: async (input) => {
+        execute: async (input, executionOptions: ToolExecutionOptions) => {
+          // 使用 AI SDK 的原始 toolCallId：审批列表、前端卡片和模型
+          // tool-result 消息对应同一个调用，避免审批后“对不上号”。
+          const callId = executionOptions.toolCallId || crypto.randomUUID();
           const record = await this.executeApiTool(
             secOpsTool.apiName,
-            crypto.randomUUID(),
+            callId,
             coerceRecord(input),
             context
           );
+          if (approvalOptions.waitForApproval && record.invocation.status === "pending_approval") {
+            // 先把 pending 事件发出去，让 UI 显示审批卡片；随后阻塞，
+            // 等批准/拒绝接口真正执行完工具，再把真实结果交还 AI SDK。
+            onRecord?.(record);
+            const resolved = await this.waitForApprovalDecision(
+              callId,
+              executionOptions.abortSignal ?? approvalOptions.abortSignal
+            );
+            onRecord?.(resolved);
+            return toolExecutionOutput(resolved);
+          }
           onRecord?.(record);
-          return record.invocation.result ?? {
-            status: record.invocation.status,
-            error: record.invocation.error
-          };
+          return toolExecutionOutput(record);
         }
       };
     }
@@ -260,25 +287,65 @@ export class ToolRegistry {
     if (!pending) {
       return undefined;
     }
-    return approvalResult(
-      await this.executeApiTool(
-        pending.apiName,
-        pending.invocation.id,
-        pending.args,
-        {
-          ...pending.context,
-          ...currentPolicy,
-          permissionMode: "auto",
-          approvedToolCallIds: [pending.invocation.id]
-        }
-      ),
-      pending.context.runId,
-      pending.context.sessionId
+    const record = await this.executeApiTool(
+      pending.apiName,
+      pending.invocation.id,
+      pending.args,
+      {
+        ...pending.context,
+        ...currentPolicy,
+        permissionMode: "auto",
+        approvedToolCallIds: [pending.invocation.id]
+      }
     );
+    this.settleApprovalDecision(pending.invocation.id, record);
+    return approvalResult(record, pending.context.runId, pending.context.sessionId);
   }
 
   async denyToolCall(id: string) {
-    return this.approvals.deny(id);
+    const result = await this.approvals.deny(id);
+    if (result) {
+      this.settleApprovalDecision(result.invocation.id, {
+        invocation: result.invocation,
+        artifacts: result.artifacts
+      });
+    }
+    return result;
+  }
+
+  private waitForApprovalDecision(id: string, signal?: AbortSignal): Promise<ToolExecutionRecord> {
+    return new Promise<ToolExecutionRecord>((resolve, reject) => {
+      const cleanup = () => {
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        cleanup();
+        this.approvalWaiters.delete(id);
+        reject(new Error("Agent run was aborted while waiting for tool approval."));
+      };
+      if (signal) {
+        if (signal.aborted) {
+          reject(new Error("Agent run was aborted while waiting for tool approval."));
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+      this.approvalWaiters.set(id, {
+        resolve,
+        reject,
+        cleanup
+      });
+    });
+  }
+
+  private settleApprovalDecision(id: string, record: ToolExecutionRecord): void {
+    const waiter = this.approvalWaiters.get(id);
+    if (!waiter) {
+      return;
+    }
+    this.approvalWaiters.delete(id);
+    waiter.cleanup();
+    waiter.resolve(record);
   }
 
   private resolveEnabled(enabledManifestIds?: string[]): SecOpsTool[] {
@@ -328,6 +395,13 @@ function decidePolicy(
     return { status: "pending_approval", reason: "High risk action tool requires approval under auto mode policy" };
   }
   return { status: "executed" };
+}
+
+function toolExecutionOutput(record: ToolExecutionRecord): unknown {
+  return record.invocation.result ?? {
+    status: record.invocation.status,
+    error: record.invocation.error
+  };
 }
 
 function parseArguments(raw: string): Record<string, unknown> {

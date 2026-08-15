@@ -8,7 +8,7 @@ import type {
   ToolInvocation
 } from "@secops-agent/shared";
 import { generateText, stepCountIs, type LanguageModel } from "ai";
-import { ToolRegistry } from "../tools/registry.js";
+import { ToolRegistry, type AiSdkToolApprovalOptions } from "../tools/registry.js";
 import type { ToolExecutionRecord } from "../tools/types.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
 import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP } from "./systemPrompt.js";
@@ -28,6 +28,10 @@ export interface AgentRuntimeOptions {
   workspaceRoot: string;
   maxToolRounds?: number;
   sessionStateStore?: SessionStateStore;
+  /** true 时审批中的工具调用会阻塞 generateText，批准/拒绝后模型自动继续。 */
+  waitForApproval?: boolean;
+  /** 客户端断开时取消正在等待审批的模型运行。 */
+  abortSignal?: AbortSignal;
   /** 分诊阶段最大工具轮数（默认 3） */
   maxTriageRounds?: number;
   /** 深度阶段最大工具轮数（默认 8） */
@@ -106,10 +110,50 @@ export class AgentRuntime {
     };
     emit({ type: "run_started" });
 
+    const waitForApproval = this.options.waitForApproval === true;
+    const approvalOptions: AiSdkToolApprovalOptions = waitForApproval
+      ? this.options.abortSignal
+        ? { waitForApproval: true, abortSignal: this.options.abortSignal }
+        : { waitForApproval: true }
+      : {};
+
+    // ── 缓存写入（创新点） ──
+    const cacheToolResult = (record: ToolExecutionRecord) => {
+      if (record.invocation.status === "executed" && record.invocation.result) {
+        const recordManifest = this.options.registry.manifests().find((m) => m.id === record.invocation.toolName);
+        if (recordManifest) {
+          this.toolCache.set(
+            record.invocation.toolName,
+            record.invocation.arguments,
+            cacheCategory(recordManifest.toolClass),
+            record.invocation.result,
+            record.artifacts
+          );
+          // Action 执行后使缓存失效（状态可能已变更）
+          if (recordManifest.toolClass === "action") {
+            this.toolCache.invalidateAfterAction();
+          }
+        }
+      }
+    };
+
     // ── 创建 onRecord 回调工厂 ──
     const createOnRecord = () => (record: ToolExecutionRecord) => {
-      toolRecords.push(record);
-      toolInvocations.push(record.invocation);
+      const previous = toolRecords.find((existing) => existing.invocation.id === record.invocation.id);
+      const resolvingPendingApproval = waitForApproval
+        && previous?.invocation.status === "pending_approval"
+        && record.invocation.status !== "pending_approval";
+
+      // pending 事件与批准/拒绝后的真实结果使用同一个 toolCallId：
+      // 内存、SSE 与持久化存储均按 id 覆盖，避免一张审批卡变成两条记录。
+      const recordIndex = toolRecords.findIndex((existing) => existing.invocation.id === record.invocation.id);
+      if (recordIndex === -1) {
+        toolRecords.push(record);
+        toolInvocations.push(record.invocation);
+      } else {
+        toolRecords[recordIndex] = record;
+        toolInvocations[recordIndex] = record.invocation;
+      }
       persist(() => stateStore.recordToolInvocation(sessionId, runId, record.invocation, record.artifacts));
       const guidance = record.invocation.guidance;
       if (guidance) {
@@ -125,6 +169,48 @@ export class AgentRuntime {
       for (const artifact of record.artifacts) {
         emit({ type: "artifact", artifact });
       }
+
+      if (resolvingPendingApproval) {
+        const resultAudit = event(
+          "tool_result",
+          "Tool result",
+          record.invocation.guidance
+            ? `${record.invocation.displayName} returned recoverable guidance: ${record.invocation.guidance.message}`
+            : `${record.invocation.displayName} ${record.invocation.status} after analyst decision.`,
+          record.invocation.guidance || record.invocation.status === "denied" || record.invocation.status === "failed" ? "warn" : "info"
+        );
+        audit.push(resultAudit);
+        persist(() => stateStore.recordAuditEvent(sessionId, runId, resultAudit));
+        emit({ type: "audit", audit: resultAudit });
+        const toolMessage = chat(
+          "tool",
+          JSON.stringify(record.invocation.result ?? record.invocation.error),
+          record.invocation.displayName,
+          record.invocation.id
+        );
+        messages.push(toolMessage);
+        persist(() => stateStore.appendMessage(sessionId, runId, toolMessage));
+        emit({ type: "message", message: toolMessage });
+        cacheToolResult(record);
+        return;
+      }
+
+      if (waitForApproval && record.invocation.status === "pending_approval") {
+        const requestedAudit = event("tool_requested", "Tool requested", record.invocation.toolName);
+        const policyAudit = event(
+          "policy_decision",
+          "Approval requested",
+          `${record.invocation.displayName} requires analyst approval under ${effectivePermissionMode} mode.`,
+          "warn"
+        );
+        audit.push(requestedAudit, policyAudit);
+        persist(() => stateStore.recordAuditEvent(sessionId, runId, requestedAudit));
+        persist(() => stateStore.recordAuditEvent(sessionId, runId, policyAudit));
+        emit({ type: "audit", audit: requestedAudit });
+        emit({ type: "audit", audit: policyAudit });
+        return;
+      }
+
       const requestedAudit = event("tool_requested", "Tool requested", record.invocation.toolName);
       const policyAudit = event(
         "policy_decision",
@@ -156,24 +242,7 @@ export class AgentRuntime {
       messages.push(toolMessage);
       persist(() => stateStore.appendMessage(sessionId, runId, toolMessage));
       emit({ type: "message", message: toolMessage });
-
-      // ── 缓存写入（创新点） ──
-      if (record.invocation.status === "executed" && record.invocation.result) {
-        const recordManifest = this.options.registry.manifests().find((m) => m.id === record.invocation.toolName);
-        if (recordManifest) {
-          this.toolCache.set(
-            record.invocation.toolName,
-            record.invocation.arguments,
-            cacheCategory(recordManifest.toolClass),
-            record.invocation.result,
-            record.artifacts
-          );
-          // Action 执行后使缓存失效（状态可能已变更）
-          if (recordManifest.toolClass === "action") {
-            this.toolCache.invalidateAfterAction();
-          }
-        }
-      }
+      cacheToolResult(record);
     };
 
     try {
@@ -210,9 +279,10 @@ export class AgentRuntime {
               role: message.role === "assistant" ? "assistant" as const : "user" as const,
               content: message.content
             })),
-          tools: this.options.registry.aiSdkTools(context, triageToolIds, triageOnRecord),
+          tools: this.options.registry.aiSdkTools(context, triageToolIds, triageOnRecord, approvalOptions),
           stopWhen: stepCountIs(maxTriageRounds),
-          temperature: 0.2
+          temperature: 0.2,
+          ...(this.options.abortSignal ? { abortSignal: this.options.abortSignal } : {})
         });
 
         totalSteps += triageResult.steps.length;
@@ -258,9 +328,10 @@ export class AgentRuntime {
           model: this.options.model,
           system: systemPromptWithSkills(SYSTEM_PROMPT_DEEP, skillSummary),
           messages: phase1Messages,
-          tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord),
+          tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord, approvalOptions),
           stopWhen: stepCountIs(maxDeepRounds),
-          temperature: 0.2
+          temperature: 0.2,
+          ...(this.options.abortSignal ? { abortSignal: this.options.abortSignal } : {})
         });
 
         totalSteps += deepResult.steps.length;
@@ -313,10 +384,12 @@ export class AgentRuntime {
           tools: this.options.registry.aiSdkTools(
             context,
             effectiveEnabledTools,
-            createOnRecord()
+            createOnRecord(),
+            approvalOptions
           ),
           stopWhen: stepCountIs(this.options.maxToolRounds ?? 10),
-          temperature: 0.2
+          temperature: 0.2,
+          ...(this.options.abortSignal ? { abortSignal: this.options.abortSignal } : {})
         });
 
         if (toolRecords.some((record) => record.invocation.status === "pending_approval")) {

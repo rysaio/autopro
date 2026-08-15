@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { AutomationLevel } from "@secops-agent/shared";
+import { normalizePortablePath } from "./runtime/portablePath.js";
 
 const discoveredWorkspaceRoot = findWorkspaceRoot(process.cwd());
 dotenv.config({ path: path.join(discoveredWorkspaceRoot, ".env") });
@@ -33,7 +34,9 @@ export interface AppConfig {
 }
 
 export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const workspaceRoot = path.resolve(env.SECOPS_WORKSPACE_ROOT?.trim() || discoveredWorkspaceRoot);
+  // 兼容从 Windows 迁到 WSL：.env 里残留的 C:\path、C:/path 或 \\wsl$\ 路径
+  // 会自动转成 WSL/Linux 可访问的路径，避免文件写到带反斜杠的相对目录中。
+  const workspaceRoot = path.resolve(normalizePortablePath(env.SECOPS_WORKSPACE_ROOT?.trim() || discoveredWorkspaceRoot));
   const actionLevel = parseActionLevel(env.SECOPS_ACTION_LEVEL);
 
   return {
@@ -83,7 +86,8 @@ function findWorkspaceRoot(start: string): string {
 
 function resolveWorkspacePath(value: string | undefined, workspaceRoot: string, fallback: string): string {
   const raw = value?.trim() || fallback;
-  return path.resolve(path.isAbsolute(raw) ? raw : path.join(workspaceRoot, raw));
+  const portable = normalizePortablePath(raw);
+  return path.resolve(path.isAbsolute(portable) ? portable : path.join(workspaceRoot, portable));
 }
 
 // Embedded PGlite data directory. "memory://" keeps the database in-memory
@@ -94,7 +98,8 @@ function resolveDataDir(value: string | undefined, workspaceRoot: string): strin
   if (raw === "memory://" || raw.startsWith("memory:")) {
     return "memory://";
   }
-  return path.resolve(path.isAbsolute(raw) ? raw : path.join(workspaceRoot, raw));
+  const portable = normalizePortablePath(raw);
+  return path.resolve(path.isAbsolute(portable) ? portable : path.join(workspaceRoot, portable));
 }
 
 function parseActionLevel(value: string | undefined): AutomationLevel {

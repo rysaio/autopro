@@ -577,8 +577,24 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!connection) {
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
-    const runtime = createRuntime(config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection);
+    // SSE 模式下审批会真正“暂停”模型：客户端断开时同步取消等待中的 generateText。
+    const abortController = new AbortController();
+    const abortFromClient = () => abortController.abort();
+    const runtime = createRuntime(
+      config,
+      runtimeSettings.get(),
+      registry,
+      skillCatalog,
+      runRequest,
+      options,
+      sessionStateStore,
+      connection,
+      { waitForApproval: true, abortSignal: abortController.signal }
+    );
     reply.hijack();
+    // 注意：request.raw 的 close 在请求体读取完成时就会触发，不能用作“客户端断开”。
+    // response close 才是 SSE 连接结束/中断信号。
+    reply.raw.once("close", abortFromClient);
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
@@ -587,12 +603,15 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     try {
       await runtime.run(runRequest, (event) => {
         auditLog.append(event);
-        reply.raw.write(`event: ${event.type}\n`);
-        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+        if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+          reply.raw.write(`event: ${event.type}\n`);
+          reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+        }
       });
     } catch (error) {
       request.log.error({ err: error }, "Agent event stream failed");
     } finally {
+      reply.raw.off("close", abortFromClient);
       if (!reply.raw.destroyed && !reply.raw.writableEnded) {
         reply.raw.end();
       }
@@ -647,7 +666,8 @@ function createRuntime(
   runRequest: AgentRunRequest,
   options: BuildServerOptions,
   sessionStateStore: SessionStateStore,
-  connection: ModelConnection
+  connection: ModelConnection,
+  runOptions: { waitForApproval?: boolean; abortSignal?: AbortSignal } = {}
 ) {
   return new AgentRuntime({
     model: options.createModel?.(connection, runRequest) ?? createAiSdkModel(connection),
@@ -659,7 +679,8 @@ function createRuntime(
     sandboxRoot: config.sandboxRoot,
     workspaceRoot: config.workspaceRoot,
     sessionStateStore,
-    ...(options.enableLayeredRouting !== undefined ? { enableLayeredRouting: options.enableLayeredRouting } : {})
+    ...(options.enableLayeredRouting !== undefined ? { enableLayeredRouting: options.enableLayeredRouting } : {}),
+    ...runOptions
   });
 }
 

@@ -9,6 +9,7 @@ import {
 } from "../mcp/externalMcp.js";
 import type { SecOpsTool } from "../tools/types.js";
 import { ToolRegistry } from "../tools/registry.js";
+import { normalizePortablePath } from "../runtime/portablePath.js";
 import type { PluginSkillSource } from "../skills/catalog.js";
 
 // ── 类型定义 ──
@@ -370,7 +371,7 @@ function resolveMcpServer(
     return {
       transport: "stdio",
       name,
-      command: config.command,
+      command: normalizePortablePath(config.command),
       args: Array.isArray(config.args) ? config.args.map(String) : [],
       cwd: pluginRoot,
       env: buildSpawnEnv(env)

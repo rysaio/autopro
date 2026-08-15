@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import type { EvidenceArtifact, ToolManifest, ToolClass, ToolRisk } from "@secops-agent/shared";
 import type { ModelTool } from "../providers/types.js";
 import type { SecOpsTool, ToolContext, ToolExecutionResult } from "./types.js";
+import { normalizePortablePath } from "../runtime/portablePath.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -126,8 +127,10 @@ export function createActionTools(): SecOpsTool[] {
       }),
       async (args, context) => {
         const command = requireString(args, "command");
+        // full_access.exec 允许模型/用户传入 cwd；从 Windows 迁到 WSL 后，
+        // 旧调用里可能出现 C:\path，统一转成 /mnt/c/path 再交给 execFile。
         const cwd = typeof args.cwd === "string" && args.cwd.trim()
-          ? path.resolve(args.cwd.trim())
+          ? path.resolve(normalizePortablePath(args.cwd.trim()))
           : context.workspaceRoot;
         const commandArgs = Array.isArray(args.args)
           ? args.args.filter((arg): arg is string => typeof arg === "string")
@@ -205,7 +208,8 @@ function commandPreset(commandId: string): { command: string; args: string[] } {
     return { command: "node", args: ["--version"] };
   }
   if (commandId === "npm_version") {
-    return { command: "npm", args: ["--version"] };
+    // Windows 下 npm 是 npm.cmd；WSL/Linux 下直接是 npm。
+    return { command: process.platform === "win32" ? "npm.cmd" : "npm", args: ["--version"] };
   }
   if (commandId === "git_status") {
     return { command: "git", args: ["status", "--short"] };

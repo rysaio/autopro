@@ -8,6 +8,7 @@ import {
   type ResolvedMcpConnection
 } from "../mcp/externalMcp.js";
 import { ToolRegistry } from "../tools/registry.js";
+import { normalizePortablePath } from "./portablePath.js";
 
 interface McpServerConfig {
   id: string;
@@ -200,7 +201,7 @@ export class McpServerManager {
     return {
       transport: "stdio",
       name: server.name,
-      command: server.command as string,
+      command: normalizePortablePath(server.command as string),
       args: [...(server.args ?? [])],
       cwd: resolveWorkingDirectory(server.cwd, this.options.workspaceRoot),
       env: mergeEnvironment(this.options.env ?? process.env, server.env)
@@ -339,7 +340,8 @@ function stringRecord(value: unknown, field: string): Record<string, string> {
 }
 
 function resolveWorkingDirectory(value: string | undefined, workspaceRoot: string): string {
-  return path.resolve(value ? (path.isAbsolute(value) ? value : path.join(workspaceRoot, value)) : workspaceRoot);
+  const portable = normalizePortablePath(value ?? workspaceRoot);
+  return path.resolve(path.isAbsolute(portable) ? portable : path.join(workspaceRoot, portable));
 }
 
 function mergeEnvironment(base: NodeJS.ProcessEnv, configured: Record<string, string> | undefined): Record<string, string> {
