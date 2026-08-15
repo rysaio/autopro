@@ -6,6 +6,7 @@ import type {
   AgentSessionDetail,
   AgentSessionSummary,
   AutomationLevel,
+  CacheUsageSummary,
   EvidenceArtifact,
   ModelConfigState,
   McpServerConfigState,
@@ -86,6 +87,10 @@ async function deleteJson<T>(path: string): Promise<T> {
 
 export function fetchHealth(): Promise<ProviderStatus> {
   return getJson<ProviderStatus>("/api/health");
+}
+
+export function fetchCacheUsage(): Promise<CacheUsageSummary> {
+  return getJson<CacheUsageSummary>("/api/cache/usage");
 }
 
 export function updateActionLevel(actionLevel: AutomationLevel): Promise<RuntimeSettings> {

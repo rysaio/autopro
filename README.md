@@ -85,6 +85,8 @@ DELETE /api/tools/visibility/wazuh.alerts.search
 
 观测与模型请求时长完全分开：`GET /api/health` 的 `modelClients` 段报告创建/复用/失效/失败/释放计数（仅连接 id，永不包含 API key 或授权头）；每次 run 的 `metrics.modelClient` 报告该次是否复用。
 
+`GET /api/cache/usage` 提供适合前端轮询的进程级精简摘要：工具结果缓存的 lookup、命中率与容量，以及模型客户端的创建、复用率和活跃 run。尚无样本时命中率/复用率为 `null`，响应禁止 HTTP 缓存，且不包含密钥、配置指纹或缓存键。
+
 ### 创新四：有界异步持久化队列 (Bounded Async Persistence Queue)
 
 逐事件持久化通过有界、有序、异步批处理队列移出 SSE 与工具执行热路径：事件发射与工具执行不再等待单次存储写入。每次 run 一个 FIFO 队列，run 内事件（审批、工具调用、工件、审计、消息、终止事件）严格按序写入；队列容量与批大小有界且可配置（保守默认：容量 512、批大小 32、刷新窗口 20ms）。

@@ -421,6 +421,37 @@ export interface ModelClientLifecycleMetrics {
   totalDisposed: number;
 }
 
+/** 当前服务进程内的缓存使用摘要，供轻量状态展示与轮询。 */
+export interface CacheUsageSummary {
+  schemaVersion: 1;
+  scope: "process";
+  generatedAt: string;
+  toolResults: {
+    lookups: number;
+    hits: number;
+    misses: number;
+    /** 0..1；尚无 lookup 时为 null。 */
+    hitRate: number | null;
+    entries: number;
+    capacity: number;
+    evictions: number;
+    expiredEntries: number;
+    invalidatedEntries: number;
+  };
+  modelClients: {
+    acquisitions: number;
+    created: number;
+    reused: number;
+    /** 0..1；尚无成功 acquisition 时为 null。 */
+    reuseRate: number | null;
+    invalidated: number;
+    creationFailures: number;
+    disposed: number;
+    trackedConnections: number;
+    activeRuns: number;
+  };
+}
+
 /** 对外暴露的模型连接摘要：永不携带明文 apiKey。 */
 export interface ModelConnectionSummary {
   id: string;

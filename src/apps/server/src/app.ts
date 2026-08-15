@@ -10,6 +10,7 @@ import type {
   AgentSessionSummary,
   ApprovalDecisionResult,
   AuditEvent,
+  CacheUsageSummary,
   EnvironmentStatus,
   McpServerConfigState,
   McpServerSummary,
@@ -175,6 +176,41 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     }
     status.modelClients = modelClientCache.snapshot();
     return status;
+  });
+
+  app.get("/api/cache/usage", async (_request, reply): Promise<CacheUsageSummary> => {
+    reply.header("cache-control", "no-store");
+    const toolStats = registry.cacheStats();
+    const modelStats = modelClientCache.snapshot();
+    const toolLookups = toolStats.hits + toolStats.misses;
+    const modelAcquisitions = modelStats.totalCreated + modelStats.totalReused;
+    return {
+      schemaVersion: 1,
+      scope: "process",
+      generatedAt: new Date().toISOString(),
+      toolResults: {
+        lookups: toolLookups,
+        hits: toolStats.hits,
+        misses: toolStats.misses,
+        hitRate: ratioOrNull(toolStats.hits, toolLookups),
+        entries: toolStats.size,
+        capacity: toolStats.maxEntries,
+        evictions: toolStats.evictions,
+        expiredEntries: toolStats.expiredEntries,
+        invalidatedEntries: toolStats.invalidatedEntries
+      },
+      modelClients: {
+        acquisitions: modelAcquisitions,
+        created: modelStats.totalCreated,
+        reused: modelStats.totalReused,
+        reuseRate: ratioOrNull(modelStats.totalReused, modelAcquisitions),
+        invalidated: modelStats.totalInvalidated,
+        creationFailures: modelStats.totalCreationFailures,
+        disposed: modelStats.totalDisposed,
+        trackedConnections: modelStats.connections.length,
+        activeRuns: modelStats.connections.reduce((total, connection) => total + connection.active, 0)
+      }
+    };
   });
 
   app.get("/api/settings", async (): Promise<RuntimeSettings> => runtimeSettings.get());
@@ -943,6 +979,10 @@ function coerceLimit(value: unknown, fallback: number): number {
     return fallback;
   }
   return Math.min(Math.max(Math.trunc(parsed), 1), 200);
+}
+
+function ratioOrNull(numerator: number, denominator: number): number | null {
+  return denominator === 0 ? null : numerator / denominator;
 }
 
 function coerceBoolean(value: unknown): boolean {
