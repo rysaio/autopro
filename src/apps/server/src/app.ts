@@ -94,6 +94,12 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     pluginsDir: config.pluginsDir,
     registry,
     cachePolicyStore: pluginCachePolicies,
+    // 让插件进程知道主服务的工作区/沙箱路径：插件侧 shell 等工具必须落在主服务沙箱内。
+    env: {
+      ...process.env,
+      SECOPS_WORKSPACE_ROOT: config.workspaceRoot,
+      SECOPS_SANDBOX_ROOT: config.sandboxRoot
+    },
     ...(options.createPluginClient ? { createClient: options.createPluginClient } : {})
   });
   // AgentEnvironment 基座：统一管理配置（settings/models）与外围设施（plugins）
@@ -715,6 +721,8 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   reply.raw.once("close", abortForDisconnect);
   const requestOrigin = normalizeOrigin(request.headers.origin);
     reply.hijack();
+    // 注意：request.raw 的 close 在请求体读取完成时就会触发，不能用作“客户端断开”。
+    // response close 才是 SSE 连接结束/中断信号。
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",

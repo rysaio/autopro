@@ -70,3 +70,25 @@ describe("config loading", () => {
     expect(invalid.agentRunTimeoutMs).toBe(5 * 60 * 1000);
   });
 });
+
+describe("WSL path portability", () => {
+  it("rewrites Windows drive-letter paths on Linux/WSL", () => {
+    const config = getConfig({
+      SECOPS_WORKSPACE_ROOT: "C:\\work\\secops-agent",
+      SECOPS_SANDBOX_ROOT: "C:\\data\\sandbox",
+      SECOPS_DATA_DIR: "C:/data/pgdata"
+    });
+
+    expect(config.workspaceRoot).toBe("/mnt/c/work/secops-agent");
+    expect(config.sandboxRoot).toBe("/mnt/c/data/sandbox");
+    expect(config.dataDir).toBe("/mnt/c/data/pgdata");
+  });
+
+  it("rewrites wsl$ UNC paths to Linux paths", () => {
+    const config = getConfig({
+      SECOPS_SANDBOX_ROOT: "\\\\wsl$\\Ubuntu\\home\\me\\runtime\\sandbox"
+    });
+
+    expect(config.sandboxRoot).toBe("/home/me/runtime/sandbox");
+  });
+});

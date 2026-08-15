@@ -25,7 +25,8 @@ import type {
 const viteEnv = import.meta.env ?? {};
 const API_BASE = viteEnv.VITE_API_BASE_URL || "";
 const API_TOKEN = viteEnv.VITE_API_TOKEN || storageApiToken() || "";
-const DEFAULT_AGENT_STREAM_TIMEOUT_MS = 5 * 60 * 1000;
+// 审批会阻塞 SSE 直到用户批准/拒绝；给持续运行的 agent 留出足够决策时间。
+const DEFAULT_AGENT_STREAM_TIMEOUT_MS = 30 * 60 * 1000;
 const AGENT_STREAM_TIMEOUT_MS = parseTimeoutMs(
   viteEnv.VITE_AGENT_STREAM_TIMEOUT_MS,
   DEFAULT_AGENT_STREAM_TIMEOUT_MS
