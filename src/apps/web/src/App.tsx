@@ -165,6 +165,40 @@ const actionLevels: Array<{ id: AutomationLevel; label: string }> = [
   { id: "full-access", label: "完全" }
 ];
 
+// 每个会话独立维护一份状态：消息、运行结果、流式事件、输入草稿与运行标志。
+// 多会话并行时互不覆盖；当前展示的会话状态由 currentSessionId 从 sessionStates 派生。
+interface SessionEntry {
+  id: string;
+  messages: ChatMessage[];
+  activeSession: AgentSessionDetail | null;
+  lastRun: AgentRun | null;
+  streamAudit: AuditEvent[];
+  streamArtifacts: EvidenceArtifact[];
+  streamToolInvocations: ToolInvocation[];
+  prompt: string;
+  isRunning: boolean;
+  mcpResult: McpCallResult | null;
+  error: string | null;
+}
+
+function emptySessionEntry(id: string): SessionEntry {
+  return {
+    id,
+    messages: [],
+    activeSession: null,
+    lastRun: null,
+    streamAudit: [],
+    streamArtifacts: [],
+    streamToolInvocations: [],
+    prompt: "",
+    isRunning: false,
+    mcpResult: null,
+    error: null
+  };
+}
+
+const EMPTY_SESSION_ENTRY = emptySessionEntry("");
+
 export function App() {
   const [health, setHealth] = useState<ProviderStatus | null>(null);
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
@@ -174,25 +208,17 @@ export function App() {
   const [mcpServers, setMcpServers] = useState<McpServerConfigState>({ servers: [] });
   const [archivedSessions, setArchivedSessions] = useState<AgentSessionSummary[]>([]);
   const [enabledTools, setEnabledTools] = useState<Set<string>>(new Set());
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => crypto.randomUUID());
+  // 多会话并行核心：每个会话独立状态，切换/新建互不覆盖
+  const [sessionStates, setSessionStates] = useState<Record<string, SessionEntry>>({});
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
-  const [activeSession, setActiveSession] = useState<AgentSessionDetail | null>(null);
-  const [lastRun, setLastRun] = useState<AgentRun | null>(null);
-  const [streamAudit, setStreamAudit] = useState<AuditEvent[]>([]);
-  const [streamArtifacts, setStreamArtifacts] = useState<EvidenceArtifact[]>([]);
-  const [streamToolInvocations, setStreamToolInvocations] = useState<ToolInvocation[]>([]);
   const [persistedAudit, setPersistedAudit] = useState<AuditEvent[]>([]);
-  const [mcpResult, setMcpResult] = useState<McpCallResult | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
-  const [prompt, setPrompt] = useState("");
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("ask");
   const [openComposerMenu, setOpenComposerMenu] = useState<"permission" | "sandbox" | null>(null);
   const [toolClassFilter, setToolClassFilter] = useState<ToolClassFilter>("all");
   const [toolQuery, setToolQuery] = useState("");
-  const [isRunning, setIsRunning] = useState(false);
   const [isMcpRunning, setIsMcpRunning] = useState(false);
-  const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [isUpdatingActionLevel, setIsUpdatingActionLevel] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
@@ -228,6 +254,20 @@ export function App() {
   const columnResizeStart = useRef<{ pointerId: number; x: number; width: number } | null>(null);
   const [isResizingColumns, setIsResizingColumns] = useState(false);
   const sidebarCollapsed = sidebarWidth === SIDEBAR_COLLAPSED_WIDTH;
+
+  // 当前展示的会话状态：从 sessionStates 按 currentSessionId 派生。
+  // 其余组件/派生值继续使用下方同名变量，因此渲染部分无需大改。
+  const activeEntry = sessionStates[currentSessionId] ?? EMPTY_SESSION_ENTRY;
+  const messages = activeEntry.messages;
+  const activeSession = activeEntry.activeSession;
+  const lastRun = activeEntry.lastRun;
+  const streamAudit = activeEntry.streamAudit;
+  const streamArtifacts = activeEntry.streamArtifacts;
+  const streamToolInvocations = activeEntry.streamToolInvocations;
+  const mcpResult = activeEntry.mcpResult;
+  const prompt = activeEntry.prompt;
+  const isRunning = activeEntry.isRunning;
+  const sessionError = activeEntry.error;
 
   useEffect(() => {
     workspaceHeightRef.current = workspaceHeight;
@@ -366,9 +406,22 @@ export function App() {
     };
   }, []);
 
-  // 当前会话（未保存）在真实对话发生（至少一条用户消息）后，左侧才显示标题
-  const liveConversationActive = !sessions.some((session) => session.id === currentSessionId)
-    && messages.some((message) => message.role === "user");
+  // 未保存但已发生对话的会话：左侧列表常驻显示，可随时切换回去（即使仍在运行）
+  const liveSessions = useMemo(
+    () => Object.entries(sessionStates)
+      .filter(([id, entry]) => (
+        entry.messages.some((message) => message.role === "user")
+        && !sessions.some((session) => session.id === id)
+      ))
+      .map(([id, entry]) => ({ id, entry }))
+      .sort((left, right) => {
+        const leftAt = left.entry.messages.at(-1)?.createdAt ?? "";
+        const rightAt = right.entry.messages.at(-1)?.createdAt ?? "";
+        return rightAt.localeCompare(leftAt);
+      }),
+    [sessionStates, sessions]
+  );
+  const bannerError = sessionError ?? error;
   const chatMessages = messages.filter((message) => message.role !== "tool");
   const fullAccessActive = health?.actionLevel === "full-access";
   const enabledToolList = useMemo(
@@ -410,12 +463,43 @@ export function App() {
     setArchivedSessions(archived);
   }
 
+  // 更新指定会话的独立状态；会话不存在时先创建空条目。
+  function updateSession(
+    id: string,
+    update: Partial<SessionEntry> | ((entry: SessionEntry) => SessionEntry)
+  ) {
+    setSessionStates((current) => {
+      const entry = current[id] ?? emptySessionEntry(id);
+      const next = typeof update === "function" ? update(entry) : Object.assign({}, entry, update);
+      return { ...current, [id]: next };
+    });
+  }
+
+  function removeSessionEntry(id: string) {
+    setSessionStates((current) => {
+      if (!(id in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
+
+  // 切换到另一会话：仅切换展示目标，不动任何会话的数据
+  function switchSession(id: string) {
+    setCurrentSessionId(id);
+    setActivePanel(null);
+    setOpenComposerMenu(null);
+  }
+
   async function archiveSessionById(id: string) {
     try {
       if (currentSessionId === id) {
         startNewSession();
       }
       await archiveSession(id);
+      removeSessionEntry(id);
       await refreshSessions();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -440,6 +524,7 @@ export function App() {
         startNewSession();
       }
       await deleteSession(id);
+      removeSessionEntry(id);
       await refreshSessions();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -447,15 +532,16 @@ export function App() {
   }
 
   async function loadSession(id: string) {
-    if (isLoadingSession) {
+    setError(null);
+    // 立即切换展示目标（内存中已有该会话状态时零延迟），拉取只影响该会话自己的条目
+    switchSession(id);
+    const liveEntry = sessionStates[id];
+    if (liveEntry?.isRunning) {
+      // 该会话的流式运行仍在进行：内存状态比服务器快照更新，直接展示，避免被覆盖
       return;
     }
-    setIsLoadingSession(true);
-    setError(null);
     try {
       const detail = await fetchSession(id);
-      setCurrentSessionId(detail.id);
-      setActiveSession(detail);
       // 防御性去重：历史版本可能把同一消息以不同 id 反复持久化
       // （agentRuntime.normalizeMessages 曾为历史消息重新生成 id）
       const seenIds = new Set<string>();
@@ -466,16 +552,21 @@ export function App() {
         seenIds.add(message.id);
         return true;
       });
-      setMessages(dedupedMessages.length ? dedupedMessages : []);
-      setLastRun(detail.runs.at(-1) ?? null);
-      setStreamAudit(detail.audit);
-      setStreamArtifacts(detail.artifacts);
-      setStreamToolInvocations(detail.toolInvocations);
-      setActivePanel(null);
+      updateSession(detail.id, {
+        id: detail.id,
+        activeSession: detail,
+        messages: dedupedMessages.length ? dedupedMessages : [],
+        lastRun: detail.runs.at(-1) ?? null,
+        streamAudit: detail.audit,
+        streamArtifacts: detail.artifacts,
+        streamToolInvocations: detail.toolInvocations,
+        mcpResult: null,
+        error: null
+      });
+      // 服务器返回的 id 与请求 id 不一致时同步当前指向（用户已切走则不打扰）
+      setCurrentSessionId((current) => (current === id ? detail.id : current));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setIsLoadingSession(false);
     }
   }
 
@@ -492,15 +583,12 @@ export function App() {
   }, [messages, activeToolInvocations, activeSession]);
 
   function startNewSession() {
-    setCurrentSessionId(crypto.randomUUID());
-    setActiveSession(null);
-    setLastRun(null);
-    setMessages([]);
-    setStreamAudit([]);
-    setStreamArtifacts([]);
-    setStreamToolInvocations([]);
-    setMcpResult(null);
+    const id = crypto.randomUUID();
+    // 新建会话只创建自己的空状态，其他会话（含运行中的）保持不变
+    updateSession(id, {});
+    setCurrentSessionId(id);
     setActivePanel(null);
+    setOpenComposerMenu(null);
   }
 
   function applyWorkspaceHeight(height: number) {
@@ -749,27 +837,31 @@ export function App() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!prompt.trim() || isRunning) {
+    // 提交时锁定目标会话：运行期间用户切换/新建会话不影响本次运行的状态归属
+    const sessionId = currentSessionId;
+    const entry = sessionStates[sessionId] ?? emptySessionEntry(sessionId);
+    if (!entry.prompt.trim() || entry.isRunning) {
       return;
     }
-    setIsRunning(true);
-    setError(null);
+    updateSession(sessionId, { error: null, isRunning: true });
     const nextMessages: ChatMessage[] = [
-      ...messages,
+      ...entry.messages,
       {
         id: crypto.randomUUID(),
         role: "user",
-        content: prompt.trim(),
+        content: entry.prompt.trim(),
         createdAt: new Date().toISOString()
       }
     ];
-    setMessages(nextMessages);
-    setLastRun(null);
-    setActiveSession(null);
-    setStreamAudit([]);
-    setStreamArtifacts([]);
-    setStreamToolInvocations([]);
-    setPrompt("");
+    updateSession(sessionId, {
+      messages: nextMessages,
+      lastRun: null,
+      activeSession: null,
+      streamAudit: [],
+      streamArtifacts: [],
+      streamToolInvocations: [],
+      prompt: ""
+    });
     try {
       const run = await streamAgent({
         messages: nextMessages.map((message) => ({
@@ -778,23 +870,43 @@ export function App() {
           ...(message.id ? { id: message.id } : {}),
           ...(message.createdAt ? { createdAt: message.createdAt } : {})
         })),
-        sessionId: currentSessionId,
+        sessionId,
         enabledTools: enabledToolList,
         permissionMode: effectivePermissionMode
-      }, applyRunEvent);
-      setCurrentSessionId(run.sessionId ?? currentSessionId);
-      setLastRun(run);
-      setMessages(run.messages);
-      setStreamAudit(run.audit);
-      setStreamArtifacts(run.artifacts);
-      setStreamToolInvocations(run.toolInvocations);
+      }, (runEvent) => applyRunEvent(runEvent, sessionId));
+      const finalSessionId = run.sessionId ?? sessionId;
+      const settled: Partial<SessionEntry> = {
+        lastRun: run,
+        messages: run.messages,
+        streamAudit: run.audit,
+        streamArtifacts: run.artifacts,
+        streamToolInvocations: run.toolInvocations,
+        isRunning: false
+      };
+      if (finalSessionId !== sessionId) {
+        // 防御：服务器返回不同会话 id 时迁移条目，避免状态丢失
+        setSessionStates((current) => {
+          const previous = current[sessionId];
+          if (!previous) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[sessionId];
+          next[finalSessionId] = Object.assign({}, previous, settled);
+          return next;
+        });
+        setCurrentSessionId((current) => (current === sessionId ? finalSessionId : current));
+      } else {
+        updateSession(sessionId, settled);
+      }
       await refreshApprovals();
       await refreshPersistedAudit();
       await refreshSessions();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setIsRunning(false);
+      updateSession(sessionId, {
+        isRunning: false,
+        error: caught instanceof Error ? caught.message : String(caught)
+      });
     }
   }
 
@@ -809,30 +921,39 @@ export function App() {
     event.currentTarget.form?.requestSubmit();
   }
 
-  function applyRunEvent(event: AgentRunEvent) {
-    if (event.type === "audit" && event.audit) {
-      setStreamAudit((current) => [...current, event.audit as AuditEvent]);
+  function applyRunEvent(event: AgentRunEvent, sessionId: string) {
+    const audit = event.audit;
+    const artifact = event.artifact;
+    const invocation = event.invocation;
+    const message = event.message;
+    if (event.type === "audit" && audit) {
+      updateSession(sessionId, (entry) => ({ ...entry, streamAudit: [...entry.streamAudit, audit] }));
       return;
     }
-    if (event.type === "artifact" && event.artifact) {
-      setStreamArtifacts((current) => [...current, event.artifact as EvidenceArtifact]);
+    if (event.type === "artifact" && artifact) {
+      updateSession(sessionId, (entry) => ({ ...entry, streamArtifacts: [...entry.streamArtifacts, artifact] }));
       return;
     }
-    if (event.type === "tool" && event.invocation) {
-      setStreamToolInvocations((current) => upsertInvocation(current, event.invocation as ToolInvocation));
+    if (event.type === "tool" && invocation) {
+      updateSession(sessionId, (entry) => ({
+        ...entry,
+        streamToolInvocations: upsertInvocation(entry.streamToolInvocations, invocation)
+      }));
       return;
     }
-    if (event.type === "message" && event.message) {
-      setMessages((current) => [...current, event.message as ChatMessage]);
+    if (event.type === "message" && message) {
+      updateSession(sessionId, (entry) => ({ ...entry, messages: [...entry.messages, message] }));
     }
   }
 
   async function callMcp(name: string, args: Record<string, unknown>) {
+    // 结果归属发起调用时所在的会话；运行期间切换会话不影响
+    const sessionId = currentSessionId;
     setIsMcpRunning(true);
     setError(null);
     try {
-      const result = await callMcpTool(name, args, effectivePermissionMode, currentSessionId);
-      setMcpResult(result);
+      const result = await callMcpTool(name, args, effectivePermissionMode, sessionId);
+      updateSession(sessionId, { mcpResult: result });
       await refreshApprovals();
       await refreshSessions();
     } catch (caught) {
@@ -996,34 +1117,44 @@ async function handleGenerateReport() {
   }
 
   function applyApprovalResult(result: ApprovalDecisionResult) {
-    setLastRun((current) => {
-      if (!current) {
-        return current;
+    // 通过调用 id 定位归属会话（可能来自后台运行中的会话或 MCP 调用），未命中时回退到当前会话
+    let targetId: string | null = null;
+    for (const [id, entry] of Object.entries(sessionStates)) {
+      const owns = entry.lastRun?.toolInvocations.some((invocation) => invocation.id === result.invocation.id)
+        || entry.streamToolInvocations.some((invocation) => invocation.id === result.invocation.id)
+        || entry.mcpResult?.invocation.id === result.invocation.id;
+      if (owns) {
+        targetId = id;
+        break;
       }
-      const hadInvocation = current.toolInvocations.some((invocation) => invocation.id === result.invocation.id);
-      const toolInvocations = current.toolInvocations.map((invocation) => (
+    }
+    updateSession(targetId ?? currentSessionId, (entry) => {
+      const lastRun = entry.lastRun;
+      const hadInvocation = lastRun?.toolInvocations.some((invocation) => invocation.id === result.invocation.id) ?? false;
+      const nextInvocations = lastRun?.toolInvocations.map((invocation) => (
         invocation.id === result.invocation.id ? result.invocation : invocation
-      ));
+      )) ?? [];
       return {
-        ...current,
-        status: hadInvocation && !toolInvocations.some((invocation) => invocation.status === "pending_approval")
-          ? "completed"
-          : current.status,
-        toolInvocations,
-        artifacts: [...current.artifacts, ...result.artifacts],
-        audit: [...current.audit, ...result.audit],
-        messages: mergeMessages(current.messages, result.messages)
+        ...entry,
+        lastRun: lastRun ? {
+          ...lastRun,
+          status: hadInvocation && !nextInvocations.some((invocation) => invocation.status === "pending_approval")
+            ? "completed"
+            : lastRun.status,
+          toolInvocations: nextInvocations,
+          artifacts: [...lastRun.artifacts, ...result.artifacts],
+          audit: [...lastRun.audit, ...result.audit],
+          messages: mergeMessages(lastRun.messages, result.messages)
+        } : lastRun,
+        streamToolInvocations: upsertInvocation(entry.streamToolInvocations, result.invocation),
+        streamArtifacts: [...entry.streamArtifacts, ...result.artifacts],
+        streamAudit: [...entry.streamAudit, ...result.audit],
+        messages: mergeMessages(entry.messages, result.messages),
+        mcpResult: entry.mcpResult?.invocation.id === result.invocation.id
+          ? { invocation: result.invocation, artifacts: result.artifacts }
+          : entry.mcpResult
       };
     });
-    setStreamToolInvocations((current) => upsertInvocation(current, result.invocation));
-    setStreamArtifacts((current) => [...current, ...result.artifacts]);
-    setStreamAudit((current) => [...current, ...result.audit]);
-    setMessages((current) => mergeMessages(current, result.messages));
-    setMcpResult((current) => (
-      current?.invocation.id === result.invocation.id
-        ? { invocation: result.invocation, artifacts: result.artifacts }
-        : current
-    ));
     void refreshSessions();
   }
 
@@ -1123,32 +1254,40 @@ async function handleGenerateReport() {
             <span>会话</span>
           </div>
           <button
-            className={!activePanel && !activeSession ? "new-chat-btn active" : "new-chat-btn"}
+            className={!activePanel && !activeSession && !activeEntry.isRunning && messages.length === 0 ? "new-chat-btn active" : "new-chat-btn"}
             onClick={startNewSession}
             type="button"
           >
             <Plus size={15} aria-hidden="true" />
             <span>新建对话</span>
           </button>
-          {liveConversationActive ? (
+          {liveSessions.map(({ id, entry }) => (
             <button
-              className="session-row active"
-              onClick={() => undefined}
-              title="当前对话（未保存，发生对话后显示）"
+              className={currentSessionId === id ? "session-row live-session active" : "session-row live-session"}
+              key={id}
+              onClick={() => switchSession(id)}
+              title={entry.isRunning ? "正在运行，点击查看实时状态" : "点击切换查看"}
               type="button"
             >
-              <strong>{conversationTitle(messages)}</strong>
-              <small>{messages.length} 条消息 · {activeToolInvocations.length} 次工具调用</small>
+              <span className="live-session-copy">
+                <strong>{conversationTitle(entry.messages)}</strong>
+                <small>
+                  {entry.messages.length} 条消息 · {entry.streamToolInvocations.length} 次工具调用
+                  {entry.isRunning ? " · 运行中" : ""}
+                </small>
+              </span>
+              {entry.isRunning
+                ? <Loader2 className="spin live-session-indicator" size={14} aria-hidden="true" />
+                : <MessageSquare className="live-session-indicator" size={14} aria-hidden="true" />}
             </button>
-          ) : null}
+          ))}
           {sessions.length ? sessions.map((session) => (
             <div
-              className={currentSessionId === session.id && activeSession ? "session-row active" : "session-row"}
+              className={currentSessionId === session.id ? "session-row active" : "session-row"}
               key={session.id}
             >
               <button
                 className="session-open"
-                disabled={isLoadingSession}
                 onClick={() => loadSession(session.id)}
                 type="button"
               >
@@ -1629,10 +1768,10 @@ async function handleGenerateReport() {
           <h2 title={conversationTitleFull(messages)}>{conversationTitle(messages)}</h2>
         </header>
 
-        {error ? (
+        {bannerError ? (
           <div className="error-banner" role="alert">
             <AlertTriangle size={18} aria-hidden="true" />
-            <span>{error}</span>
+            <span>{bannerError}</span>
           </div>
         ) : null}
 
@@ -1685,7 +1824,7 @@ async function handleGenerateReport() {
               aria-label="智能体提示"
               aria-keyshortcuts="Enter"
               onKeyDown={handlePromptKeyDown}
-              onChange={(event) => setPrompt(event.target.value)}
+              onChange={(event) => updateSession(currentSessionId, { prompt: event.target.value })}
               placeholder="输入安全调查指令..."
               rows={3}
               style={{ height: composerHeight }}

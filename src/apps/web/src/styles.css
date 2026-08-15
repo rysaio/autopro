@@ -532,6 +532,25 @@ h3 {
   background: var(--surface-selected);
 }
 
+/* 未保存但已发生对话的会话（可并行运行、可点击切换） */
+.session-row.live-session {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-row.live-session .live-session-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.session-row.live-session .live-session-indicator {
+  color: var(--gray-400);
+  flex-shrink: 0;
+}
+
 .session-actions {
   display: inline-flex;
   gap: 2px;
