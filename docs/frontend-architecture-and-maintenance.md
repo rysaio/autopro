@@ -1,6 +1,6 @@
 # 前端架构与后续修改入手指南
 
-日期：2026-08-13
+日期：2026-08-15
 
 状态：当前实现说明
 
@@ -29,7 +29,7 @@
 | 样式 | 原生 CSS，集中在 `styles.css` |
 | 后端通信 | `fetch`、JSON、SSE 流 |
 | 共享类型 | `@secops-agent/shared` |
-| 测试 | `tsx` 执行静态标记和纯函数断言，随后运行 TypeScript 检查 |
+| 测试 | `tsx` 执行静态标记、布局约束、视觉 token 对比度和纯函数断言，随后运行 TypeScript 检查 |
 
 源码开发从 `src/` 目录启动：
 
@@ -244,8 +244,8 @@ grid-template-columns: var(--sidebar-width) 10px minmax(0, 1fr);
 | --- | --- |
 | `> 1240px` | 三列桌面布局，默认侧栏 288px |
 | `981px - 1240px` | 仍为三列，侧栏继续使用宽度变量 |
-| `<= 980px` | 单列堆叠，隐藏纵向分隔条 |
-| `<= 640px` | 隐藏会话列表，工作区导航改为紧凑网格 |
+| `<= 980px` | 单列堆叠，隐藏纵向分隔条；工作区导航改为 5 列两行，主区占用侧栏后的剩余视口高度且最低 560px |
+| `<= 640px` | 隐藏会话列表，工作区导航改为 3 列紧凑网格；按实际侧栏高度重新计算主区最小高度 |
 
 从折叠桌面缩放到 `980px` 以下时，代码会恢复侧栏宽度。原因是移动单列布局隐藏了纵向分隔条，若仍保持 `0px`，用户将没有恢复入口。
 
@@ -271,7 +271,54 @@ grid-template-columns: var(--sidebar-width) 10px minmax(0, 1fr);
 
 ## 7. 当前视觉实现
 
-颜色、圆角和阴影优先修改 `styles.css` 顶部 token。不要在新功能中随意加入第二套高饱和主色或重复定义近似 token。
+当前浅色视觉体系以 Apple HIG 的清晰层级、克制用色和语义化颜色原则为参考，但不复刻 macOS 控件，也不在工作台中大面积使用 Liquid Glass。线上资料与对比度依据见 `docs/frontend-visual-design-research.md`；实际实现仍以 `styles.css` 为准。
+
+### 7.1 中性表面和文字
+
+组件应优先引用角色 token，不直接写新的灰色 hex：
+
+| 角色 | 当前用途 |
+| --- | --- |
+| `--surface-canvas` | 应用和配置工作区的冷灰画布 |
+| `--surface-primary` | 对话、正文和主要内容表面 |
+| `--surface-raised` | 菜单、配置区块和浮起表面 |
+| `--surface-subtle` | 输入辅助区、代码区和次级底色 |
+| `--surface-hover` / `--surface-selected` / `--surface-pressed` | 普通交互的 hover、selected、pressed 层级 |
+| `--text-primary` / `--text-secondary` / `--text-tertiary` | 主、次、弱三级文字 |
+| `--border-passive` | 仅用于内容分组的被动分隔线 |
+| `--border-control` | 输入框静态状态的浅灰边界 |
+| `--focus-ring` | 聚焦输入框的 1px 中灰边界和按钮键盘焦点环 |
+| `--focus-halo` | 输入框聚焦时的柔和灰色外晕 |
+
+画布、侧栏、主表面和卡片之间依靠稳定明度差建立层级。阴影只用于 composer、popover 和 modal 等真正浮起的区域；不要给每个区块加阴影，也不要在卡片内部继续嵌套装饰性卡片。
+
+### 7.2 交互与功能色
+
+- 普通导航、列表选择、按钮 hover 和 pressed 使用灰白色阶，同时通过字重、图标或内侧边标表达状态。
+- 主要提交命令使用 `--interaction-primary` 深石墨背景和浅色文字，不使用全局主蓝。
+- 蓝色只允许出现在 Tool 选择语义：`.tool-filters button.active`、配置区 Tool filter 和 `.tool-workspace-tabs`。新增普通按钮、导航、链接、焦点或信息状态不得复用 `--tool-selected-*`。
+- 知识图谱是数据可视化例外：会话节点沿用 `design/web-ui-tokens` 的蓝色，但该色不进入按钮、链接或全局交互 token。
+- 绿色只表示 enabled、connected 或 success；黄褐色只表示 warning / needs attention；红色只表示 danger、error、denied 或 destructive。颜色之外必须同时存在文字、图标、开关位置或其他形状信息。
+- 卡片和普通控件使用不超过 8px 的统一圆角；composer、toggle 和小型状态标签可按交互语义使用 pill。
+
+### 7.3 对比度和深色模式预留
+
+`App.test.tsx` 会读取关键视觉 token 并按 WCAG 相对亮度公式检查：
+
+- 主文字和次文字相对主表面至少 `7:1`。
+- 三级文字相对主表面至少 `4.5:1`。
+- 聚焦边界相对主表面至少 `3:1`；静态输入框使用更浅的 `--border-control`，聚焦时由 1px `--focus-ring` 和 `--focus-halo` 联合反馈，不使用粗黑 outline。
+- Tool 蓝色引用只能出现在白名单选择器中。
+
+当前仍明确使用 `color-scheme: light`。深色模式后续应替换 `surface-*`、`text-*`、`border-*`、`interaction-*` 和 `status-*` 的角色映射，不能直接反相浅色值，也不能让组件依赖新的硬编码颜色。
+
+### 7.4 模型配置与知识图谱
+
+- 已配置且当前启用的模型行使用 `--surface-raised` 白色表面、浅灰边界和轻微阴影；启用语义由绿色状态标签补充，不使用深灰整行填充。
+- 图谱的 Tool、Session、Artifact 和 Agent 颜色来自 `design/web-ui-tokens`：琥珀、蓝、蓝灰和象牙白。Plugin 使用独立青绿色，避免与已有类型混淆。
+- Agent 节点在布局计算中获得更强的中心引力并使用象牙白填充；其余节点使用各自的功能色，连线沿用历史蓝灰色。
+- Plugin 节点始终可见；它贡献的 Tool 初始不进入节点与边集合。点击或用 Enter/空格激活 Plugin 后，才加入该 Plugin 的全部 Tool 和 `Plugin -> Tool` 关系，再次激活则收起。
+- Plugin 展开只控制图谱可见性，不改变 Tool 的 enabled 状态、执行权限或后端配置。
 
 ## 8. 常见修改的入手点
 
@@ -289,7 +336,7 @@ grid-template-columns: var(--sidebar-width) 10px minmax(0, 1fr);
 | Skill 页面 | `SkillView.tsx` | 正文按需读取、可见性开关、Skill reload |
 | Tool/MCP 页面 | `App.tsx` 中 tool workspace、`McpServerConfigView.tsx` | `api.ts` MCP 配置与 Tool 刷新 |
 | 模型配置 | `ModelConfigView.tsx` | `api.ts` 模型配置函数、健康状态刷新 |
-| 知识图谱 | `KnowledgeGraphView.tsx` | `.kg-*` 样式、节点/边数据构建、缩放和平移 |
+| 知识图谱 | `KnowledgeGraphView.tsx` | `.kg-*` 样式、`plugins`/`tools` 输入、Plugin 展开集合、节点/边数据构建、缩放和平移 |
 | 仪表盘、报告、审计、证据 | `App.tsx` 内对应视图函数 | `active*` 数据优先级、报告 API、复制状态 |
 | 全局主题和控件 | `styles.css` 顶部 token 与基础选择器 | 现有焦点样式、错误/警告语义色、所有断点 |
 
@@ -331,6 +378,9 @@ Tool 是否展示、是否延迟加载、是否允许执行是不同维度。前
 - 860px、820px 和 640px 还有功能级断点。
 - `main-panel.config-mode` 与普通对话模式的 padding 和滚动策略不同。
 - 固定高度区域必须保留 `min-height: 0`，否则内部滚动容器可能被内容撑开。
+- 蓝色只能继续用于 Tool 选择白名单；普通 active / hover / focus 必须使用中性交互 token。
+- `--border-passive` 不能作为输入框、焦点或未选中控件的唯一识别信息；静态输入使用 `--border-control`，聚焦输入使用 `--focus-ring` 与 `--focus-halo`，不要恢复粗黑 outline。
+- 图谱颜色用于区分实体类型，不得顺手提升为页面级交互色；Plugin Tool 的折叠可见性也不得与工具启用权限混用。
 
 ### 9.5 Windows 与仓库约束
 
@@ -409,10 +459,12 @@ npm run build -w @secops-agent/web
 - 桌面宽屏：1440 x 900。
 - 紧凑桌面：1080 x 720。
 - 单列断点：900 x 800。
-- 移动宽度：640px 或更窄。
+- 移动宽度：390 x 844，并补查 640px 边界。
 - 页面控制台无 error/warning。
 - 主要操作前后无横向溢出和内容重叠。
 - 动态内容不会改变固定工具栏、分隔条或输入框的尺寸。
+- 键盘焦点环清晰可见，且不被 hover / selected 状态覆盖。
+- 普通导航保持灰阶交互；Tool 页签和 Tool filter 之外不出现蓝色交互。
 
 涉及本轮侧栏功能时，额外检查：
 
@@ -433,6 +485,7 @@ npm run build -w @secops-agent/web
 4. `src/apps/web/src/api.ts` 中对应的数据接口。
 5. `src/apps/web/src/styles.css` 中该选择器的全部定义和相关断点。
 6. `src/apps/web/test/App.test.tsx` 中现有行为约束。
-7. 修改后执行测试、构建和目标视口浏览器验证。
+7. 视觉需求额外阅读 `docs/frontend-visual-design-research.md`，确认语义色和对比度依据。
+8. 修改后执行测试、构建和目标视口浏览器验证。
 
 对布局问题，第一步不是调消息气泡或局部宽度，而是先检查 DOM 同级项数量、Grid 轨道数量、`min-width: 0`、滚动容器和当前命中的媒体查询。

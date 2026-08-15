@@ -6,12 +6,55 @@ import { clampSidebarWidth, conversationTitle, reconcileEnabledTools, ToolCallCa
 import { McpServerConfigView } from "../src/McpServerConfigView.js";
 import { PluginView } from "../src/PluginView.js";
 import { SkillView } from "../src/SkillView.js";
+import {
+  buildKnowledgeGraphData,
+  KNOWLEDGE_GRAPH_EDGE_STYLE,
+  KNOWLEDGE_GRAPH_NODE_STYLE,
+  type KnowledgeGraphProps
+} from "../src/KnowledgeGraphView.js";
 
 const now = new Date("2026-06-19T00:00:00.000Z").toISOString();
 
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 if (!/@media \(max-width: 1240px\)\s*{\s*\.app-shell\s*{\s*grid-template-columns:\s*var\(--sidebar-width, 176px\) 10px minmax\(0, 1fr\)/.test(styles)) {
   throw new Error("Expected the compact desktop layout to keep a resizable sidebar, divider, and chat in three columns.");
+}
+
+for (const [foreground, background, minimum] of [
+  ["text-primary", "surface-primary", 7],
+  ["text-secondary", "surface-primary", 7],
+  ["text-tertiary", "surface-primary", 4.5],
+  ["focus-ring", "surface-primary", 3]
+] as const) {
+  const ratio = contrastRatio(cssHexToken(styles, foreground), cssHexToken(styles, background));
+  if (ratio < minimum) {
+    throw new Error(`Expected --${foreground} on --${background} to reach ${minimum}:1 contrast, received ${ratio.toFixed(2)}:1.`);
+  }
+}
+
+const passiveControlContrast = contrastRatio(cssHexToken(styles, "border-control"), cssHexToken(styles, "surface-primary"));
+const focusedControlContrast = contrastRatio(cssHexToken(styles, "focus-ring"), cssHexToken(styles, "surface-primary"));
+if (passiveControlContrast >= focusedControlContrast) {
+  throw new Error("Expected resting input borders to be lighter than the focused input border.");
+}
+if (!/textarea:focus-visible,[\s\S]*input:focus-visible,[\s\S]*select:focus-visible\s*{[\s\S]*outline:\s*none;[\s\S]*box-shadow:\s*0 0 0 2px var\(--focus-halo\)/.test(styles)) {
+  throw new Error("Expected inputs to use a soft focus halo instead of a thick dark outline.");
+}
+if (!/\.model-config-row\.active\s*{[^}]*background:\s*var\(--surface-raised\)/.test(styles)) {
+  throw new Error("Expected the active model configuration row to use a raised white surface.");
+}
+
+const toolBlueSelectors = [
+  ".tool-filters button.active",
+  ".config-workspace .tool-filters button.active",
+  ".tool-workspace-tabs button.active",
+  ".tool-workspace-tabs button strong"
+];
+for (const block of styles.split("}")) {
+  if (!block.includes("var(--tool-selected-") || block.includes(":root")) continue;
+  if (!toolBlueSelectors.some((selector) => block.includes(selector))) {
+    throw new Error(`Expected Tool blue to stay inside its interaction whitelist.\n${block.trim()}`);
+  }
 }
 
 for (const [requested, expected] of [[176, 176], [150, 176], [120, 0], [0, 0]] as const) {
@@ -243,4 +286,83 @@ function escapeHtml(value: string): string {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("\"", "&quot;");
+}
+
+const graphProps = {
+  tools: [
+    toolManifest("wazuh.alerts.search", "medium", ["plugin", "wazuh"]),
+    toolManifest("case.note.read", "low")
+  ],
+  mcpTools: [],
+  plugins: [{
+    id: "wazuh",
+    name: "Wazuh",
+    version: "1.0.0",
+    description: "Wazuh plugin.",
+    status: "loaded",
+    toolCount: 1,
+    skillCount: 0
+  }],
+  sessions: [],
+  activeSession: null,
+  streamArtifacts: [],
+  streamToolInvocations: [],
+  health: null
+} satisfies KnowledgeGraphProps;
+const collapsedGraph = buildKnowledgeGraphData(graphProps, new Set());
+for (const expectedId of ["agent-root", "plugin-wazuh", "tool-case.note.read"]) {
+  if (!collapsedGraph.nodes.some((node) => node.id === expectedId)) {
+    throw new Error(`Expected collapsed knowledge graph to contain ${expectedId}.`);
+  }
+}
+if (collapsedGraph.nodes.some((node) => node.id === "tool-wazuh.alerts.search")) {
+  throw new Error("Expected plugin tools to stay hidden before their plugin is expanded.");
+}
+const expandedGraph = buildKnowledgeGraphData(graphProps, new Set(["wazuh"]));
+if (!expandedGraph.nodes.some((node) => node.id === "tool-wazuh.alerts.search")) {
+  throw new Error("Expected a plugin tool to appear after its plugin is expanded.");
+}
+if (!expandedGraph.edges.some((edge) => edge.source === "plugin-wazuh" && edge.target === "tool-wazuh.alerts.search")) {
+  throw new Error("Expected expanded plugin tools to remain attached to their owning plugin.");
+}
+for (const [type, expected] of Object.entries({
+  tool: "#d97706",
+  session: "#2563eb",
+  artifact: "#64748b",
+  agent: "#52525b"
+})) {
+  if (KNOWLEDGE_GRAPH_NODE_STYLE[type as keyof typeof KNOWLEDGE_GRAPH_NODE_STYLE].color !== expected) {
+    throw new Error(`Expected ${type} graph color to match design/web-ui-tokens.`);
+  }
+}
+if (KNOWLEDGE_GRAPH_NODE_STYLE.agent.bg !== "#f9f8f6") {
+  throw new Error("Expected the central Agent node to retain its ivory fill.");
+}
+if (KNOWLEDGE_GRAPH_EDGE_STYLE.default !== "#cbd5e1" || KNOWLEDGE_GRAPH_EDGE_STYLE.highlighted !== "#64748b") {
+  throw new Error("Expected knowledge graph edges to match design/web-ui-tokens.");
+}
+if (new Set(Object.values(KNOWLEDGE_GRAPH_NODE_STYLE).map((style) => style.color)).size !== Object.keys(KNOWLEDGE_GRAPH_NODE_STYLE).length) {
+  throw new Error("Expected each knowledge graph node type to have a distinct functional color.");
+}
+
+function cssHexToken(css: string, name: string): string {
+  const match = css.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`));
+  if (!match?.[1]) {
+    throw new Error(`Expected CSS token --${name} to use an auditable six-digit hex value.`);
+  }
+  return match[1];
+}
+
+function contrastRatio(first: string, second: string): number {
+  const brighter = Math.max(relativeLuminance(first), relativeLuminance(second));
+  const darker = Math.min(relativeLuminance(first), relativeLuminance(second));
+  return (brighter + 0.05) / (darker + 0.05);
+}
+
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  const [red, green, blue] = channels.map((channel) => (
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  ));
+  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
 }

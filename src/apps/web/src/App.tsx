@@ -1384,6 +1384,7 @@ async function handleGenerateReport() {
               <KnowledgeGraphView
                 tools={tools}
                 mcpTools={mcpTools}
+                plugins={plugins}
                 sessions={sessions}
                 activeSession={activeSession}
                 streamArtifacts={streamArtifacts}

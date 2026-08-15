@@ -11,6 +11,7 @@ import {
   ZoomOut,
   Loader2,
   RotateCcw,
+  Puzzle,
   Wrench,
   Activity,
   FileText,
@@ -30,12 +31,13 @@ import type {
   AgentSessionDetail,
   EvidenceArtifact,
   ToolInvocation,
-  ProviderStatus
+  ProviderStatus,
+  PluginSummary
 } from "@secops-agent/shared";
 import type { McpToolSummary } from "./api.js";
 
 // ── Types ──
-export type KgNodeType = "tool" | "session" | "artifact" | "agent";
+export type KgNodeType = "tool" | "plugin" | "session" | "artifact" | "agent";
 
 export interface KgNode {
   id: string;
@@ -64,6 +66,7 @@ interface Vec2 {
 export interface KnowledgeGraphProps {
   tools: ToolManifest[];
   mcpTools: McpToolSummary[];
+  plugins: PluginSummary[];
   sessions: AgentSessionSummary[];
   activeSession: AgentSessionDetail | null;
   streamArtifacts: EvidenceArtifact[];
@@ -72,26 +75,37 @@ export interface KnowledgeGraphProps {
 }
 
 // ── Node type styling ──
-const NODE_STYLE: Record<KgNodeType, { color: string; bg: string; size: number }> = {
-  tool: { color: "#404040", bg: "#f5f5f5", size: 28 },
-  session: { color: "#525252", bg: "#fafafa", size: 26 },
-  artifact: { color: "#737373", bg: "#f5f5f5", size: 24 },
-  agent: { color: "#262626", bg: "#fafafa", size: 34 },
+export const KNOWLEDGE_GRAPH_NODE_STYLE: Record<KgNodeType, { color: string; bg: string; size: number }> = {
+  tool: { color: "#d97706", bg: "#fffbeb", size: 28 },
+  plugin: { color: "#0f766e", bg: "#f0fdfa", size: 30 },
+  session: { color: "#2563eb", bg: "#eff6ff", size: 26 },
+  artifact: { color: "#64748b", bg: "#f1f5f9", size: 24 },
+  agent: { color: "#52525b", bg: "#f9f8f6", size: 34 },
 };
+
+export const KNOWLEDGE_GRAPH_EDGE_STYLE = {
+  default: "#cbd5e1",
+  highlighted: "#64748b",
+} as const;
 
 const TYPE_LABEL: Record<KgNodeType, string> = {
   tool: "工具",
+  plugin: "插件",
   session: "会话",
   artifact: "证据产物",
   agent: "Agent 应用",
 };
 
 // ── Dynamic node/edge builder ──
-function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: KgEdge[] } {
+export function buildKnowledgeGraphData(
+  props: KnowledgeGraphProps,
+  expandedPluginIds: ReadonlySet<string>
+): { nodes: KgNode[]; edges: KgEdge[] } {
   const nodes: KgNode[] = [];
   const edges: KgEdge[] = [];
   const toolIds = new Set<string>();
   const sessionIds = new Set<string>();
+  const pluginByToolId = new Map<string, PluginSummary>();
 
   // 1. Agent application node (root, project context)
   nodes.push({
@@ -108,13 +122,52 @@ function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: K
     },
   });
 
-  // 2. Tool nodes (top 10 by risk: critical/high first, then medium)
-  const sortedTools = [...props.tools].sort((a, b) => {
-    const riskOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-    return (riskOrder[a.risk] ?? 2) - (riskOrder[b.risk] ?? 2);
+  // 2. Plugin nodes stay visible; their contributed tools are revealed on demand.
+  for (const plugin of props.plugins) {
+    nodes.push({
+      id: `plugin-${plugin.id}`,
+      label: plugin.name,
+      type: "plugin",
+      description: plugin.description,
+      source: `Plugin ${plugin.version}`,
+      details: {
+        "插件ID": plugin.id,
+        "状态": plugin.status,
+        "版本": plugin.version,
+        "工具数": String(plugin.toolCount),
+        "技能数": String(plugin.skillCount),
+      },
+    });
+    edges.push({
+      id: `agent2plugin-${plugin.id}`,
+      source: "agent-root",
+      target: `plugin-${plugin.id}`,
+      label: "加载",
+      type: "contains",
+    });
+
+    for (const tool of props.tools) {
+      if (tool.tags.includes(plugin.id)) {
+        pluginByToolId.set(tool.id, plugin);
+      }
+    }
+  }
+
+  // 3. Keep standalone tools concise; expanded plugins reveal all of their own tools.
+  const riskOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  const sortedTools = [...props.tools].sort((a, b) => (
+    (riskOrder[a.risk] ?? 2) - (riskOrder[b.risk] ?? 2)
+  ));
+  const visibleTools = sortedTools.filter((tool) => {
+    const owner = pluginByToolId.get(tool.id);
+    return owner ? expandedPluginIds.has(owner.id) : true;
   });
-  const topTools = sortedTools.slice(0, 10);
-  for (const tool of topTools) {
+  const topStandaloneToolIds = new Set(
+    visibleTools.filter((tool) => !pluginByToolId.has(tool.id)).slice(0, 10).map((tool) => tool.id)
+  );
+  for (const tool of visibleTools) {
+    const owner = pluginByToolId.get(tool.id);
+    if (!owner && !topStandaloneToolIds.has(tool.id)) continue;
     toolIds.add(tool.id);
     nodes.push({
       id: `tool-${tool.id}`,
@@ -131,11 +184,11 @@ function buildGraphData(props: KnowledgeGraphProps): { nodes: KgNode[]; edges: K
       },
     });
     edges.push({
-      id: `agent2tool-${tool.id}`,
-      source: "agent-root",
+      id: owner ? `plugin2tool-${owner.id}-${tool.id}` : `agent2tool-${tool.id}`,
+      source: owner ? `plugin-${owner.id}` : "agent-root",
       target: `tool-${tool.id}`,
-      label: "提供",
-      type: "monitors",
+      label: owner ? "提供" : "内置",
+      type: owner ? "contains" : "monitors",
     });
   }
 
@@ -223,6 +276,11 @@ function computeLayout(nodes: KgNode[], edges: KgEdge[], width: number, height: 
 
   // 初始化位置：圆形分散，间距更大
   nodes.forEach((n, i) => {
+    if (n.type === "agent") {
+      pos.set(n.id, { x: cx, y: cy });
+      vel.set(n.id, { x: 0, y: 0 });
+      return;
+    }
     const angle = (2 * Math.PI * i) / nodes.length;
     const radius = Math.min(width, height) * 0.38;
     pos.set(n.id, { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius });
@@ -230,10 +288,11 @@ function computeLayout(nodes: KgNode[], edges: KgEdge[], width: number, height: 
   });
 
   const nodeIds = nodes.map((n) => n.id);
+  const nodeTypes = new Map(nodes.map((node) => [node.id, node.type]));
   // 为每个节点预计算"半径"用于碰撞检测
   const nodeRadii = new Map<string, number>();
   nodes.forEach((n) => {
-    nodeRadii.set(n.id, (NODE_STYLE[n.type]?.size ?? 28) + 20); // 节点半径 + padding
+    nodeRadii.set(n.id, (KNOWLEDGE_GRAPH_NODE_STYLE[n.type]?.size ?? 28) + 20); // 节点半径 + padding
   });
 
   const nodeCount = nodeIds.length;
@@ -289,8 +348,9 @@ function computeLayout(nodes: KgNode[], edges: KgEdge[], width: number, height: 
     for (const id of nodeIds) {
       const p = pos.get(id)!;
       const v = vel.get(id)!;
-      v.x += (cx - p.x) * centerGravity;
-      v.y += (cy - p.y) * centerGravity;
+      const gravity = nodeTypes.get(id) === "agent" ? 0.05 : centerGravity;
+      v.x += (cx - p.x) * gravity;
+      v.y += (cy - p.y) * gravity;
       v.x *= damping;
       v.y *= damping;
       p.x += v.x;
@@ -334,6 +394,7 @@ function NodeIcon({ type, size }: { type: KgNodeType; size: number }) {
   const s = size * 0.6;
   switch (type) {
     case "tool": return <Wrench size={s} />;
+    case "plugin": return <Puzzle size={s} />;
     case "session": return <Activity size={s} />;
     case "artifact": return <FileText size={s} />;
     case "agent": return <Bot size={s} />;
@@ -346,6 +407,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [selectedNode, setSelectedNode] = useState<KgNode | null>(null);
+  const [expandedPluginIds, setExpandedPluginIds] = useState<Set<string>>(() => new Set());
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<KgNodeType | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -358,9 +420,9 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
 
   // Build dynamic graph data from props
   const { allNodes, allEdges } = useMemo(() => {
-    const result = buildGraphData(props);
+    const result = buildKnowledgeGraphData(props, expandedPluginIds);
     return { allNodes: result.nodes, allEdges: result.edges };
-  }, [props.tools, props.sessions, props.activeSession, props.streamArtifacts, props.streamToolInvocations, props.health]);
+  }, [props.tools, props.plugins, props.sessions, props.activeSession, props.streamArtifacts, props.streamToolInvocations, props.health, expandedPluginIds]);
 
   // Filter nodes
   const filteredNodes = useMemo(() => {
@@ -484,6 +546,21 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
 
   const resetView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
+  const selectNode = useCallback((node: KgNode) => {
+    if (node.type === "plugin") {
+      const pluginId = node.id.slice("plugin-".length);
+      didFitRef.current = false;
+      setGraphReady(false);
+      setExpandedPluginIds((current) => {
+        const next = new Set(current);
+        if (next.has(pluginId)) next.delete(pluginId);
+        else next.add(pluginId);
+        return next;
+      });
+    }
+    setSelectedNode((current) => current?.id === node.id ? null : node);
+  }, []);
+
   return (
     <div className="kg-container">
       {/* Top bar */}
@@ -509,7 +586,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
           {Object.entries(TYPE_LABEL).filter(([k]) => typeCounts[k]).map(([key, label]) => (
             <button key={key} className={`kg-filter-tag ${filterType === key ? "active" : ""}`}
               onClick={() => setFilterType(key as KgNodeType)}
-              style={filterType === key ? { borderColor: NODE_STYLE[key as KgNodeType].color, color: NODE_STYLE[key as KgNodeType].color } : {}}>
+              style={filterType === key ? { borderColor: KNOWLEDGE_GRAPH_NODE_STYLE[key as KgNodeType].color, color: KNOWLEDGE_GRAPH_NODE_STYLE[key as KgNodeType].color } : {}}>
               {label} ({typeCounts[key]})
             </button>
           ))}
@@ -543,12 +620,12 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
                 return (
                   <g key={edge.id}>
                     <line x1={sp.x} y1={sp.y} x2={tp.x} y2={tp.y}
-                      stroke={isHighlighted ? "#737373" : "#d4d4d4"}
+                      stroke={isHighlighted ? KNOWLEDGE_GRAPH_EDGE_STYLE.highlighted : KNOWLEDGE_GRAPH_EDGE_STYLE.default}
                       strokeWidth={isHighlighted ? 2.5 : 1.5} strokeOpacity={isHighlighted ? 1 : 0.5} />
                     {isHighlighted && (
                       <>
-                        <polygon points="-5,-4 6,0 -5,4" fill="#737373" transform={`translate(${mx},${my}) rotate(${angle})`} />
-                        <text x={mx} y={my - 10} textAnchor="middle" fontSize="11" fill="#737373" fontWeight="700">{edge.label}</text>
+                        <polygon points="-5,-4 6,0 -5,4" fill={KNOWLEDGE_GRAPH_EDGE_STYLE.highlighted} transform={`translate(${mx},${my}) rotate(${angle})`} />
+                        <text x={mx} y={my - 10} textAnchor="middle" fontSize="11" fill={KNOWLEDGE_GRAPH_EDGE_STYLE.highlighted} fontWeight="700">{edge.label}</text>
                       </>
                     )}
                   </g>
@@ -559,14 +636,24 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
               {filteredNodes.map((node) => {
                 const pos = nodePositions.get(node.id);
                 if (!pos) return null;
-                const style = NODE_STYLE[node.type];
+                const style = KNOWLEDGE_GRAPH_NODE_STYLE[node.type];
                 const isSelected = selectedNode?.id === node.id;
                 const isHovered = hoveredNode === node.id;
                 const r = style.size;
                 return (
                   <g key={node.id} data-node-id={node.id} transform={`translate(${pos.x},${pos.y})`}
                     onMouseEnter={() => setHoveredNode(node.id)} onMouseLeave={() => setHoveredNode(null)}
-                    onClick={() => setSelectedNode(selectedNode?.id === node.id ? null : node)}
+                    onClick={() => selectNode(node)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectNode(node);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={node.type === "plugin" ? expandedPluginIds.has(node.id.slice("plugin-".length)) : undefined}
+                    aria-label={node.type === "plugin" ? `${node.label}，${expandedPluginIds.has(node.id.slice("plugin-".length)) ? "收起工具" : "展开工具"}` : node.label}
                     style={{ cursor: "pointer" }}>
                     {isSelected && (
                       <circle r={r + 8} fill="none" stroke={style.color} strokeWidth={2} opacity={0.3} />
@@ -613,7 +700,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
               <button className="kg-detail-close" onClick={() => setSelectedNode(null)}><X size={16} /></button>
             </div>
             <div className="kg-detail-meta">
-              <span className="kg-detail-type" style={{ color: NODE_STYLE[selectedNode.type].color, background: NODE_STYLE[selectedNode.type].bg }}>
+              <span className="kg-detail-type" style={{ color: KNOWLEDGE_GRAPH_NODE_STYLE[selectedNode.type].color, background: KNOWLEDGE_GRAPH_NODE_STYLE[selectedNode.type].bg }}>
                 {TYPE_LABEL[selectedNode.type]}
               </span>
               {selectedNode.risk && (
@@ -642,7 +729,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
                   const relatedNode = allNodes.find((n) => n.id === relatedId);
                   if (!relatedNode) return null;
                   const isSource = e.source === selectedNode.id;
-                  const style = NODE_STYLE[relatedNode.type];
+                  const style = KNOWLEDGE_GRAPH_NODE_STYLE[relatedNode.type];
                   return (
                     <button key={e.id} className="kg-related-item" onClick={() => setSelectedNode(relatedNode)}>
                       <span className="kg-related-badge" style={{ background: style.color }} />
@@ -661,7 +748,7 @@ export function KnowledgeGraphView(props: KnowledgeGraphProps) {
 
       {/* Legend */}
       <div className="kg-legend">
-        {Object.entries(NODE_STYLE).filter(([k]) => typeCounts[k]).map(([key, style]) => (
+        {Object.entries(KNOWLEDGE_GRAPH_NODE_STYLE).filter(([k]) => typeCounts[k]).map(([key, style]) => (
           <div key={key} className="kg-legend-item">
             <span className="kg-legend-dot" style={{ background: style.color }} />
             <span>{TYPE_LABEL[key as KgNodeType]}</span>
