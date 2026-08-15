@@ -43,7 +43,14 @@ function startNpmScript(script) {
         cwd: root,
         stdio: "inherit"
       })
-    : spawn("npm", ["run", script], { cwd: root, stdio: "inherit" });
+    : spawn("npm", ["run", script], {
+        cwd: root,
+        stdio: "inherit",
+        // 让 npm 成为新进程组组长，停止时可通过 kill(-pid) 把
+        // npm -> sh -> tsx watch/vite 这一整棵进程树一起停掉，避免 WSL
+        // 下残留 watcher 继续占用 4317/5317。
+        detached: true
+      });
   children.add(child);
   child.once("exit", () => children.delete(child));
   return child;
@@ -140,7 +147,11 @@ function stopProcessTree(pid) {
     if (process.platform === "win32") {
       execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
     } else {
-      process.kill(pid, "SIGTERM");
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {
+        process.kill(pid, "SIGTERM");
+      }
     }
   } catch {
     // The child may already have exited.
