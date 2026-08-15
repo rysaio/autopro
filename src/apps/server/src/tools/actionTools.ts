@@ -369,8 +369,11 @@ function commandPreset(commandId: string): { command: string; args: string[] } {
     return { command: "node", args: ["--version"] };
   }
   if (commandId === "npm_version") {
-    // Windows 下 npm 是 npm.cmd；WSL/Linux 下直接是 npm。
-    return { command: process.platform === "win32" ? "npm.cmd" : "npm", args: ["--version"] };
+    // Windows 下 npm 是 npm.cmd（execFile 无法直接 spawn .cmd，需经 cmd.exe /c 包装）；
+    // WSL/Linux 下直接是 npm。
+    return process.platform === "win32"
+      ? { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", "npm --version"] }
+      : { command: "npm", args: ["--version"] };
   }
   if (commandId === "git_status") {
     return { command: "git", args: ["status", "--short"] };

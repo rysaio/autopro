@@ -31,7 +31,7 @@ describe("built-in tools on WSL/Linux", () => {
     );
 
     expect(record.invocation.status).toBe("executed");
-    expect(record.invocation.result.command).toBe(process.platform === "win32" ? "npm.cmd" : "npm");
+    expect(record.invocation.result.command).toBe(process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "npm");
     expect(String(record.invocation.result.stdout).trim().length).toBeGreaterThan(0);
   });
 

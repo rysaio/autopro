@@ -213,7 +213,7 @@ export class PluginManager {
             {
               sourceId: `${pluginId}.${serverName}`,
               tags: ["plugin", pluginId, ...pluginKeywords],
-              routing: pluginRouting,
+              ...(pluginRouting ? { routing: pluginRouting } : {}),
               deferByDefault: true,
               ...(cachePolicy
                 ? {

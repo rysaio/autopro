@@ -74,7 +74,10 @@ describe("config loading", () => {
   });
 });
 
-describe("WSL path portability", () => {
+// normalizePortablePath 仅在非 win32（WSL/Linux）上做转换；Windows 本机不适用。
+const wslOnlyDescribe = process.platform === "win32" ? describe.skip : describe;
+
+wslOnlyDescribe("WSL path portability", () => {
   it("rewrites Windows drive-letter paths on Linux/WSL", () => {
     const config = getConfig({
       SECOPS_WORKSPACE_ROOT: "C:\\work\\secops-agent",
