@@ -5,8 +5,7 @@
       "name": "deepseek",
       "provider": "deepseek",
       "model": "deepseek-v4-flash",
-      "baseUrl": "https://api.deepseek.com",
-      "apiKey": ""
+      "baseUrl": "https://api.deepseek.com"
     }
   ],
   "activeConnectionId": "deepseek-main"

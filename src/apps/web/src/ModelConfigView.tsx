@@ -85,6 +85,7 @@ export function ModelConfigView({ onConfigChanged }: ModelConfigViewProps) {
   }, []);
 
   const active = state?.connections.find((connection) => connection.id === state.activeConnectionId) ?? null;
+  const editingConnection = state?.connections.find((connection) => connection.id === form.id) ?? null;
   const configured = Boolean(active && active.model.trim() && active.baseUrl.trim());
 
   function applyResult(result: ModelConfigState, message: string) {
@@ -182,7 +183,7 @@ export function ModelConfigView({ onConfigChanged }: ModelConfigViewProps) {
   }
 
   function handleReload() {
-    runAction(null, () => reloadModelConfig(), "已从文件重新加载 model.json");
+    runAction(null, () => reloadModelConfig(), "已从文件重新加载模型配置与凭据");
   }
 
   return (
@@ -265,7 +266,7 @@ export function ModelConfigView({ onConfigChanged }: ModelConfigViewProps) {
                       {isActive ? <em className="model-config-active-tag">活动</em> : null}
                     </div>
                     <p>{connection.provider} / {connection.model}</p>
-                    <small>{connection.baseUrl} · API Key {connection.apiKeySet ? "已设置" : "未设置"}</small>
+                    <small>{connection.baseUrl} · API Key {connection.apiKeyMasked ?? (connection.apiKeySet ? "已设置" : "未设置")}</small>
                   </div>
                   <div className="model-config-row-actions">
                     {!isActive ? (
@@ -346,10 +347,10 @@ export function ModelConfigView({ onConfigChanged }: ModelConfigViewProps) {
                 />
               </label>
               <label className="model-config-form-api-key">
-                <span>API Key {form.id ? "（留空 = 保留原值）" : ""}</span>
+                <span>API Key {editingConnection?.apiKeyMasked ? `（当前：${editingConnection.apiKeyMasked}；留空 = 保留原值）` : form.id ? "（留空 = 保留原值）" : ""}</span>
                 <input
                   onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
-                  placeholder={form.id ? "输入以替换，留空保留" : "sk-..."}
+                  placeholder={editingConnection?.apiKeyMasked ? `留空保留 ${editingConnection.apiKeyMasked}` : form.id ? "输入以替换，留空保留" : "sk-..."}
                   type="password"
                   value={form.apiKey}
                 />

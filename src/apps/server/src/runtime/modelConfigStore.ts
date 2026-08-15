@@ -1,15 +1,22 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { ModelConfigState, ModelConnectionSummary } from "@secops-agent/shared";
+import { CredentialStore, maskSecret } from "./credentialStore.js";
 
-/** 完整模型连接（含明文 apiKey）。仅存在于服务端内存与持久化文件中，永不通过 API 下发。 */
+/**
+ * 完整模型连接（含运行时解析出的明文 apiKey）。仅存在于服务端内存中，永不通过 API 下发。
+ * settings/model.json 只持久化 apiKeyCredentialId 凭据引用；明文只写入 .credentials.yaml。
+ */
 export interface ModelConnection {
   id: string;
   name: string;
   provider: string;
   model: string;
   baseUrl: string;
+  /** 运行时解析出的明文密钥；仅服务端内存使用。 */
   apiKey?: string;
+  /** 凭据引用 id，指向 .credentials.yaml 中的条目。 */
+  apiKeyCredentialId?: string;
 }
 
 export interface NewModelConnectionInput {
@@ -30,33 +37,50 @@ export interface UpdateModelConnectionInput {
   apiKey?: string;
 }
 
+interface PersistedModelConnection {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  /** 新格式：凭据引用。 */
+  apiKeyCredentialId?: string;
+  /** 旧格式兼容：明文 apiKey，load 时自动迁移到凭据文件。 */
+  apiKey?: string;
+}
+
 interface PersistedModelConfig {
-  connections: ModelConnection[];
+  connections: PersistedModelConnection[];
   activeConnectionId: string | null;
 }
 
 const REQUIRED_FIELDS = ["name", "provider", "model", "baseUrl"] as const;
 
 /**
- * 模型配置热存储：明文读写 runtime/config/model.json。
- * 启动前后入口一致——唯一事实来源就是该文件：
- * - 启动前：直接编辑文件，启动时读取
- * - 启动后：直接编辑文件，再调用 reload()（后端 POST /api/model-config/reload，
- *   或后续前端配置界面的“重载”按钮）从文件重新加载，无需重启服务
- * API 修改（add/update/remove/setActive）写文件并即时更新内存，不依赖 reload
+ * 模型配置热存储：model.json 是连接与活动连接的唯一事实来源，凭据文件是密钥的唯一事实来源。
+ * - 启动前：直接编辑 model.json（引用凭据 id）与 .credentials.yaml，启动时读取
+ * - 启动后：直接编辑文件，再调用 reload()（后端 POST /api/model-config/reload）从磁盘重新加载
+ * - API 修改（add/update/remove/setActive）写 model.json 并即时更新内存；写 apiKey 时
+ *   只把明文写入凭据文件，model.json 仅保存凭据引用，API 响应只回传脱敏描述符
  */
 export class ModelConfigStore {
   private connections: ModelConnection[];
   private activeConnectionId: string | null;
+  private readonly credentialStore: CredentialStore;
 
-  constructor(private readonly filePath: string) {
+  constructor(
+    private readonly filePath: string,
+    credentialsPath = path.join(path.dirname(filePath), ".credentials.yaml")
+  ) {
+    this.credentialStore = new CredentialStore(credentialsPath);
     const loaded = this.load();
     this.connections = loaded.connections;
     this.activeConnectionId = loaded.activeConnectionId;
   }
 
-  /** 从磁盘重新加载 model.json（覆盖内存）；文件不存在/被删除视为空态。 */
+  /** 从磁盘重新加载 model.json 与 .credentials.yaml（覆盖内存）；文件不存在/被删除视为空态。 */
   reload(): ModelConfigState {
+    this.credentialStore.reload();
     const loaded = this.load();
     this.connections = loaded.connections;
     this.activeConnectionId = loaded.activeConnectionId;
@@ -96,6 +120,10 @@ export class ModelConfigStore {
     };
     const apiKey = input.apiKey?.trim();
     if (apiKey) {
+      connection.apiKeyCredentialId = this.credentialStore.create(
+        apiKey,
+        `Model API key for ${connection.name}`
+      );
       connection.apiKey = apiKey;
     }
     if (this.connections.some((existing) => existing.id === connection.id)) {
@@ -126,9 +154,16 @@ export class ModelConfigStore {
     if (input.apiKey !== undefined) {
       const apiKey = input.apiKey.trim();
       if (apiKey) {
+        next.apiKeyCredentialId = this.credentialStore.update(
+          current.apiKeyCredentialId,
+          apiKey,
+          `Model API key for ${next.name}`
+        );
         next.apiKey = apiKey;
       } else {
+        this.credentialStore.delete(current.apiKeyCredentialId);
         delete next.apiKey;
+        delete next.apiKeyCredentialId;
       }
     }
     const missing = REQUIRED_FIELDS.filter((field) => !next[field]?.trim());
@@ -145,7 +180,11 @@ export class ModelConfigStore {
     if (index === -1) {
       return false;
     }
+    const removed = this.connections[index] as ModelConnection;
     this.connections.splice(index, 1);
+    if (removed.apiKeyCredentialId && !this.connections.some((connection) => connection.apiKeyCredentialId === removed.apiKeyCredentialId)) {
+      this.credentialStore.delete(removed.apiKeyCredentialId);
+    }
     if (this.activeConnectionId === id) {
       // 删除活动连接后自动转移到剩余的第一个连接
       this.activeConnectionId = this.connections[0]?.id ?? null;
@@ -205,21 +244,53 @@ export class ModelConfigStore {
       throw new Error(`Invalid model config: ${this.filePath}`);
     }
     const raw = parsed as Partial<PersistedModelConfig>;
-    const connections = Array.isArray(raw.connections) ? raw.connections : [];
-    const activeConnectionId = typeof raw.activeConnectionId === "string" ? raw.activeConnectionId : null;
-    return {
-      connections,
-      activeConnectionId: activeConnectionId && connections.some((c) => c.id === activeConnectionId)
-        ? activeConnectionId
-        : null
-    };
+    const rawConnections = Array.isArray(raw.connections) ? raw.connections : [];
+    const connections: ModelConnection[] = [];
+    let migrated = false;
+    for (const entry of rawConnections) {
+      const connection = toModelConnection(entry);
+      if (!connection) {
+        continue;
+      }
+      const apiKeyCredentialId = typeof entry.apiKeyCredentialId === "string" && entry.apiKeyCredentialId.trim()
+        ? entry.apiKeyCredentialId.trim()
+        : undefined;
+      const legacyApiKey = typeof entry.apiKey === "string" ? entry.apiKey.trim() : "";
+      if (apiKeyCredentialId) {
+        connection.apiKeyCredentialId = apiKeyCredentialId;
+        const secret = this.credentialStore.getSecret(apiKeyCredentialId);
+        if (secret !== undefined) {
+          connection.apiKey = secret;
+        }
+      } else if (legacyApiKey) {
+        // 旧格式兼容：明文 apiKey 自动迁移到凭据文件，model.json 改写为凭据引用。
+        const credentialId = this.credentialStore.create(
+          legacyApiKey,
+          `Imported from model.json for ${connection.name}`
+        );
+        connection.apiKeyCredentialId = credentialId;
+        connection.apiKey = legacyApiKey;
+        migrated = true;
+      }
+      connections.push(connection);
+    }
+    const activeConnectionId = typeof raw.activeConnectionId === "string" && connections.some((connection) => connection.id === raw.activeConnectionId)
+      ? raw.activeConnectionId
+      : null;
+    if (migrated) {
+      this.persist(connections, activeConnectionId);
+    }
+    return { connections, activeConnectionId };
   }
 
-  private persist(): void {
+  private persist(
+    connections = this.connections,
+    activeConnectionId = this.activeConnectionId
+  ): void {
     mkdirSync(path.dirname(this.filePath), { recursive: true });
     const payload: PersistedModelConfig = {
-      connections: this.connections,
-      activeConnectionId: this.activeConnectionId
+      connections: connections.map(toPersistedConnection),
+      activeConnectionId
     };
     writeFileSync(this.filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   }
@@ -243,7 +314,39 @@ function toSummary(connection: ModelConnection): ModelConnectionSummary {
     provider: connection.provider,
     model: connection.model,
     baseUrl: connection.baseUrl,
-    apiKeySet: Boolean(connection.apiKey)
+    apiKeySet: Boolean(connection.apiKey),
+    ...(connection.apiKey ? { apiKeyMasked: maskSecret(connection.apiKey) } : {})
+  };
+}
+
+function toPersistedConnection(connection: ModelConnection): PersistedModelConnection {
+  const { apiKey: _apiKey, apiKeyCredentialId, ...rest } = connection;
+  return {
+    ...rest,
+    ...(apiKeyCredentialId ? { apiKeyCredentialId } : {})
+  };
+}
+
+function toModelConnection(entry: unknown): ModelConnection | undefined {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return undefined;
+  }
+  const raw = entry as Record<string, unknown>;
+  if (
+    typeof raw.id !== "string" ||
+    typeof raw.name !== "string" ||
+    typeof raw.provider !== "string" ||
+    typeof raw.model !== "string" ||
+    typeof raw.baseUrl !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    id: raw.id,
+    name: raw.name,
+    provider: raw.provider,
+    model: raw.model,
+    baseUrl: raw.baseUrl
   };
 }
 

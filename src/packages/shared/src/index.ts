@@ -226,7 +226,7 @@ export interface ProviderStatus {
   baseUrl?: string;
 }
 
-/** 对外暴露的模型连接摘要：永不携带明文 apiKey。 */
+/** 对外暴露的模型连接摘要：永不携带明文 apiKey 或凭据引用。 */
 export interface ModelConnectionSummary {
   id: string;
   name: string;
@@ -234,6 +234,8 @@ export interface ModelConnectionSummary {
   model: string;
   baseUrl: string;
   apiKeySet: boolean;
+  /** 脱敏描述符（例如 sk-***abc）；未设置密钥时为 undefined。 */
+  apiKeyMasked?: string;
 }
 
 export interface ModelConfigState {
