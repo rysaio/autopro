@@ -620,6 +620,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     if (!connection) {
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
+<<<<<<< HEAD
     const { runtime, release } = createRuntime(
       config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection,
       modelClientCache, persistQueueRegistry
@@ -629,6 +630,14 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     } finally {
       release?.();
     }
+=======
+    const runtime = createRuntime(config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection);
+    return runtime.run(runRequest, (event) => {
+      if (!(event as AgentRunEvent & { streaming?: boolean }).streaming) {
+        auditLog.append(event);
+      }
+    });
+>>>>>>> 53bd1e1 (Stream agent LLM output and add real shell/HTTP tools)
   });
 
   
@@ -733,11 +742,15 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     });
     try {
       await runtime.run(runRequest, (event) => {
+<<<<<<< HEAD
         if (event.type === "run_started") {
           activeRunId = event.runId;
           activeRuns.set(event.runId, controller);
         }
         if (event.type !== "text_delta") {
+=======
+        if (!(event as AgentRunEvent & { streaming?: boolean }).streaming) {
+>>>>>>> 53bd1e1 (Stream agent LLM output and add real shell/HTTP tools)
           auditLog.append(event);
         }
         if (!reply.raw.destroyed && !reply.raw.writableEnded) {

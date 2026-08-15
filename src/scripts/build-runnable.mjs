@@ -173,16 +173,18 @@ const sharedPackageDir = path.join("packages", "shared");
 }
 
 const pluginPackages = [
-  path.join("plugins", "wazuh-secops"),
-  path.join("plugins", "shuffle-secops")
+  { relative: path.join("plugins", "wazuh-secops"), items: ["dist", "package.json", ".mcp.json", ".codex-plugin", "skills", "README.md"] },
+  { relative: path.join("plugins", "shuffle-secops"), items: ["dist", "package.json", ".mcp.json", ".codex-plugin", "skills", "README.md"] },
+  { relative: path.join("plugins", "shell-secops"), items: ["server.mjs", "package.json", ".mcp.json", ".codex-plugin", "README.md"] },
+  { relative: path.join("plugins", "network-secops"), items: ["server.mjs", "package.json", ".mcp.json", ".codex-plugin", "README.md"] }
 ];
-for (const relativePackageDir of pluginPackages) {
-  const sourceDir = path.join(root, relativePackageDir);
+for (const plugin of pluginPackages) {
+  const sourceDir = path.join(root, plugin.relative);
   const packageJson = JSON.parse(readFileSync(path.join(sourceDir, "package.json"), "utf8"));
   const pluginName = packageJson.name.split("/").pop();
   const targetDir = path.join(appDir, "runtime", "plugins", pluginName);
   mkdirSync(targetDir, { recursive: true });
-  for (const item of ["dist", "package.json", ".mcp.json", ".codex-plugin", "skills", "README.md"]) {
+  for (const item of plugin.items) {
     const sourceItem = path.join(sourceDir, item);
     if (existsSync(sourceItem)) {
       cpSync(sourceItem, path.join(targetDir, item), { recursive: true });

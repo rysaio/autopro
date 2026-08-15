@@ -367,7 +367,7 @@ describe("PluginManager", () => {
       status: "error",
       error: expect.stringContaining("Duplicate tool apiName")
     });
-    expect(setup.registry.manifests()).toHaveLength(12);
+    expect(setup.registry.manifests()).toHaveLength(14);
 
     await manager.disconnectAll();
   });

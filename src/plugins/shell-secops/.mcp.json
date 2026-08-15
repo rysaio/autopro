@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "shell-secops": {
+      "command": "node",
+      "args": ["./server.mjs"]
+    }
+  }
+}

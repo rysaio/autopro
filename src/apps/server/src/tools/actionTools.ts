@@ -101,6 +101,67 @@ export function createActionTools(): SecOpsTool[] {
       async (args, context) => runPresetCommand(requireString(args, "commandId"), context)
     ),
     new ActionTool(
+      "secops_command_run_shell",
+      manifest({
+        id: "command.run.shell",
+        name: "Run Shell Command",
+        description:
+          "Execute a real bash shell command inside the configured sandbox directory. The command runs with cwd=sandboxRoot and a 15 second timeout. Use this for CTF quizzes, local network requests with curl, file inspection, script execution, and other real command-line work. Output is truncated to 20k characters.",
+        toolClass: "action",
+        risk: "medium",
+        tags: ["action", "shell", "sandbox", "ctf", "bash", "command"],
+        inputSchema: {
+          type: "object",
+          properties: {
+            command: {
+              type: "string",
+              description: "Bash shell command to execute inside the sandbox directory."
+            }
+          },
+          required: ["command"],
+          additionalProperties: false
+        }
+      }),
+      async (args, context) => runShellCommand(requireString(args, "command"), context)
+    ),
+    new ActionTool(
+      "secops_http_request",
+      manifest({
+        id: "http.request",
+        name: "HTTP Request",
+        description:
+          "Make a real HTTP(S) request to a URL. Supports GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS with optional JSON headers and body. Returns the response status, headers, and body truncated to 20k characters. Use for CTF quizzes, web API lookups, and real network reconnaissance.",
+        toolClass: "action",
+        risk: "medium",
+        tags: ["action", "http", "network", "ctf", "requests", "web"],
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: {
+              type: "string",
+              description: "Full HTTP(S) URL to request."
+            },
+            method: {
+              type: "string",
+              description: "HTTP method to use. Defaults to GET."
+            },
+            headers: {
+              type: "object",
+              additionalProperties: { type: "string" },
+              description: "Optional request headers as string key-value pairs."
+            },
+            body: {
+              type: "string",
+              description: "Optional request body as a string. Pass JSON objects as a JSON string."
+            }
+          },
+          required: ["url"],
+          additionalProperties: false
+        }
+      }),
+      async (args) => runHttpRequest(args)
+    ),
+    new ActionTool(
       "secops_full_access_exec",
       manifest({
         id: "full_access.exec",
@@ -168,6 +229,106 @@ function manifest(input: {
     deferLoading: true,
     mcpCompatible: true
   };
+}
+
+async function runShellCommand(command: string, context: ToolContext): Promise<ToolExecutionResult> {
+  await mkdir(context.sandboxRoot, { recursive: true });
+  const shell = process.platform === "win32"
+    ? process.env.ComSpec || "cmd.exe"
+    : "bash";
+  const shellArgs = process.platform === "win32"
+    ? ["/d", "/s", "/c", command]
+    : ["-lc", command];
+  const { stdout, stderr } = await execFileAsync(shell, shellArgs, {
+    cwd: context.sandboxRoot,
+    timeout: 15_000,
+    maxBuffer: 1_000_000,
+    env: process.env as Record<string, string>
+  });
+  return {
+    output: {
+      command,
+      shell,
+      cwd: context.sandboxRoot,
+      stdout: stdout.slice(0, 20_000),
+      stderr: stderr.slice(0, 20_000)
+    }
+  };
+}
+
+async function runHttpRequest(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const url = requireHttpUrl(requireString(args, "url"));
+  const rawMethod = typeof args.method === "string" && args.method.trim()
+    ? args.method.trim().toUpperCase()
+    : "GET";
+  const allowedMethods = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+  if (!allowedMethods.has(rawMethod)) {
+    throw new Error(`Unsupported HTTP method: ${rawMethod}`);
+  }
+  const headers = stringRecord(args.headers);
+  const body = rawMethod === "GET" || rawMethod === "HEAD"
+    ? undefined
+    : args.body !== undefined
+      ? typeof args.body === "string" ? args.body : JSON.stringify(args.body)
+      : undefined;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const requestInit: RequestInit = {
+      method: rawMethod,
+      headers,
+      signal: controller.signal,
+      redirect: "follow"
+    };
+    if (body !== undefined) {
+      requestInit.body = body;
+    }
+    const response = await fetch(url, requestInit);
+    const text = await response.text();
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+    return {
+      output: {
+        url,
+        method: rawMethod,
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders,
+        body: text.slice(0, 20_000),
+        size: text.length
+      }
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function requireHttpUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`URL must use http or https: ${rawUrl}`);
+  }
+  return parsed.toString();
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "string") {
+      result[key] = entry;
+    }
+  }
+  return result;
 }
 
 async function runPresetCommand(commandId: string, context: ToolContext): Promise<ToolExecutionResult> {

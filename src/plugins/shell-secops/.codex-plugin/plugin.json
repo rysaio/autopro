@@ -1,0 +1,22 @@
+{
+  "name": "shell-secops",
+  "version": "0.1.0",
+  "description": "Real sandboxed bash shell for the agent. The host service enforces sandbox/approval policy before the tool is invoked.",
+  "author": { "name": "SecOps Agent" },
+  "license": "MIT",
+  "keywords": ["shell", "bash", "ctf", "mcp", "sandbox"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Shell SecOps",
+    "shortDescription": "Sandboxed bash shell for CTF and command-line work.",
+    "longDescription": "Codex-style MCP plugin exposing a real bash shell. Command execution is gated by the host service permission and sandbox policy.",
+    "developerName": "SecOps Agent",
+    "category": "Utility",
+    "capabilities": ["MCP"],
+    "defaultPrompt": [
+      "Use the sandbox shell to inspect files for the CTF quiz.",
+      "Run a command to make a real local network request."
+    ],
+    "brandColor": "#16A34A"
+  }
+}

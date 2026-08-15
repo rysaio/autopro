@@ -1,0 +1,10 @@
+{
+  "name": "@secops-agent/shell-secops",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Codex-style MCP plugin that provides a real sandboxed bash shell for CTF and command-line tasks.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node -e \"console.log('shell-secops: no compile step')\""
+  }
+}

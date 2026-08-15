@@ -320,6 +320,8 @@ export class ToolRouter {
       if (
         call === "secops_case_note_write" ||
         call === "secops_command_run_sandbox" ||
+        call === "secops_command_run_shell" ||
+        call === "secops_http_request" ||
         call === "secops_full_access_exec"
       ) {
         categories.add("sandbox-actions");
@@ -351,7 +353,8 @@ export class ToolRouter {
     }
     if (msg.includes("执行") || msg.includes("命令") || msg.includes("exec") ||
       msg.includes("运行") || msg.includes("run") || msg.includes("笔记") ||
-      msg.includes("案例") || msg.includes("沙箱") || msg.includes("note")
+      msg.includes("案例") || msg.includes("沙箱") || msg.includes("note") ||
+      msg.includes("ctf") || msg.includes("shell") || msg.includes("bash")
     ) {
       categories.add("sandbox-actions");
     }

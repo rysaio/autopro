@@ -66,8 +66,10 @@ function prepareRuntimeCapabilities() {
   mkdirSync(path.join(runtimeRoot, "skills"), { recursive: true });
   mkdirSync(pluginsRoot, { recursive: true });
   const plugins = [
-    { workspace: "@secops-agent/wazuh-secops", directory: "wazuh-secops" },
-    { workspace: "@secops-agent/shuffle-secops", directory: "shuffle-secops" }
+    { workspace: "@secops-agent/wazuh-secops", directory: "wazuh-secops", items: ["dist", "package.json", ".mcp.json", ".codex-plugin", "skills", "README.md"] },
+    { workspace: "@secops-agent/shuffle-secops", directory: "shuffle-secops", items: ["dist", "package.json", ".mcp.json", ".codex-plugin", "skills", "README.md"] },
+    { workspace: "@secops-agent/shell-secops", directory: "shell-secops", items: ["server.mjs", "package.json", ".mcp.json", ".codex-plugin", "README.md"] },
+    { workspace: "@secops-agent/network-secops", directory: "network-secops", items: ["server.mjs", "package.json", ".mcp.json", ".codex-plugin", "README.md"] }
   ];
   for (const plugin of plugins) {
     if (process.platform === "win32") {
@@ -84,7 +86,7 @@ function prepareRuntimeCapabilities() {
     const sourceDir = path.join(root, "plugins", plugin.directory);
     const targetDir = path.join(pluginsRoot, plugin.directory);
     mkdirSync(targetDir, { recursive: true });
-    for (const item of ["dist", "package.json", ".mcp.json", ".codex-plugin", "skills", "README.md"]) {
+    for (const item of plugin.items) {
       const sourceItem = path.join(sourceDir, item);
       if (existsSync(sourceItem)) {
         cpSync(sourceItem, path.join(targetDir, item), { recursive: true, force: true });

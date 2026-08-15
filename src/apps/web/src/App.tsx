@@ -218,7 +218,7 @@ export function App() {
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [persistedAudit, setPersistedAudit] = useState<AuditEvent[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>("ask");
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("auto");
   const [openComposerMenu, setOpenComposerMenu] = useState<"permission" | "sandbox" | null>(null);
   const [toolClassFilter, setToolClassFilter] = useState<ToolClassFilter>("all");
   const [toolQuery, setToolQuery] = useState("");
@@ -429,7 +429,6 @@ export function App() {
     [sessionStates, sessions]
   );
   const bannerError = sessionError ?? error;
-  const chatMessages = messages.filter((message) => message.role !== "tool");
   const fullAccessActive = health?.actionLevel === "full-access";
   const enabledToolList = useMemo(
     () => fullAccessActive ? tools.map((tool) => tool.id) : [...enabledTools],
@@ -442,6 +441,30 @@ export function App() {
   const activeToolInvocations = lastRun?.toolInvocations ?? (
     streamToolInvocations.length ? streamToolInvocations : activeSession?.toolInvocations ?? []
   );
+  const transcriptItems = useMemo(() => {
+    const messageItems = messages
+      .filter((message) => message.role !== "tool")
+      .map((message) => ({
+        id: message.id,
+        kind: "message" as const,
+        at: message.createdAt,
+        message
+      }));
+    const toolItems = activeToolInvocations.map((invocation) => ({
+      id: invocation.id,
+      kind: "tool" as const,
+      at: invocation.startedAt,
+      invocation
+    }));
+    return [...messageItems, ...toolItems].sort((left, right) => {
+      const byTime = left.at.localeCompare(right.at);
+      if (byTime !== 0) {
+        return byTime;
+      }
+      // 同一时刻先展示工具调用再展示 assistant 文本，避免模型“先说话后动手”时语序被时间戳精度打乱。
+      return left.kind === "tool" && right.kind === "message" ? -1 : 1;
+    });
+  }, [messages, activeToolInvocations]);
   const enabledToolCount = enabledToolList.length;
   const enabledMcpCount = mcpTools.filter((tool) => enabledToolList.includes(tool.manifest.id)).length;
   const visibleTools = useMemo(() => {
@@ -1825,23 +1848,24 @@ async function handleGenerateReport() {
 
         <section className="chat-stage" aria-label="智能体对话">
           <div
-            className={chatMessages.length || activeToolInvocations.length ? "transcript" : "transcript empty"}
+            className={transcriptItems.length ? "transcript" : "transcript empty"}
             aria-label="对话记录"
             ref={transcriptRef}
           >
-            {chatMessages.length || activeToolInvocations.length ? (
+            {transcriptItems.length ? (
               <>
-              {chatMessages.map((message) => (
-                <TranscriptMessage key={message.id} message={message} />
-              ))}
-              {activeToolInvocations.map((invocation) => (
-                <ToolCallCard
-                  invocation={invocation}
-                  isResolving={resolvingApprovalId === invocation.id}
-                  key={invocation.id}
-                  onApprove={() => resolveApproval(invocation.id, "approve")}
-                  onDeny={() => resolveApproval(invocation.id, "deny")}
-                />
+              {transcriptItems.map((item) => (
+                item.kind === "tool" ? (
+                  <ToolCallCard
+                    invocation={item.invocation}
+                    isResolving={resolvingApprovalId === item.invocation.id}
+                    key={`tool-${item.invocation.id}`}
+                    onApprove={() => resolveApproval(item.invocation.id, "approve")}
+                    onDeny={() => resolveApproval(item.invocation.id, "deny")}
+                  />
+                ) : (
+                  <TranscriptMessage key={`message-${item.message.id}`} message={item.message} />
+                )
               ))}
               </>
             ) : (
@@ -2302,6 +2326,17 @@ function TranscriptMessage({ message }: { message: ChatMessage }) {
     );
   }
 
+  if (message.name === "thinking") {
+    return (
+      <article aria-label="模型思考过程" className="message assistant thinking">
+        <div className="message-body">
+          <div className="thinking-label">模型思考</div>
+          <div className="message-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+        </div>
+      </article>
+    );
+  }
+
   return (
     <article aria-label={message.role === "user" ? "用户消息" : "智能体消息"} className={`message ${message.role}`}>
       <div className="message-body">
@@ -2352,6 +2387,13 @@ function upsertInvocation(current: ToolInvocation[], invocation: ToolInvocation)
     return current.map((item) => (item.id === invocation.id ? invocation : item));
   }
   return [...current, invocation];
+}
+
+function upsertMessage(current: ChatMessage[], message: ChatMessage): ChatMessage[] {
+  if (current.some((item) => item.id === message.id)) {
+    return current.map((item) => (item.id === message.id ? message : item));
+  }
+  return [...current, message];
 }
 
 function mergeMessages(current: ChatMessage[], nextMessages: ChatMessage[]): ChatMessage[] {
@@ -2456,6 +2498,8 @@ export function ToolCallCard({
   const pending = invocation.status === "pending_approval";
   const guidance = invocation.guidance;
   const executed = !guidance && !pending;
+  // 成功执行的调用默认折叠；失败/拒绝的错误信息默认展开，便于即时处置。
+  const resultOpen = invocation.status === "failed" || invocation.status === "denied";
   return (
     <div className={`tool-call ${guidance ? "guidance" : pending ? "pending" : invocation.status}`} key={invocation.id}>
       {executed ? null : (
@@ -2486,7 +2530,7 @@ export function ToolCallCard({
           <div className="guidance-panel">
             <div className="tool-call-section">
               <span className="tool-call-section-label">调用参数</span>
-              <CollapsibleJson data={invocation.arguments} defaultOpen={true} />
+              <CollapsibleJson data={invocation.arguments} />
             </div>
             <div className="tool-call-section">
               <span className="tool-call-section-label">返回结果</span>
@@ -2515,11 +2559,11 @@ export function ToolCallCard({
           <div className="tool-call-result">
             <div className="tool-call-section">
               <span className="tool-call-section-label">调用参数</span>
-              <CollapsibleJson data={invocation.arguments} defaultOpen={true} />
+              <CollapsibleJson data={invocation.arguments} />
             </div>
             <div className="tool-call-section">
               <span className="tool-call-section-label">返回结果</span>
-              <CollapsibleJson data={invocation.result ?? invocation.error} defaultOpen={true} />
+              <CollapsibleJson data={invocation.result ?? invocation.error} defaultOpen={resultOpen} />
             </div>
           </div>
         )}
