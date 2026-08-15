@@ -74,9 +74,9 @@
   --border-control: #c7c7cc;
   --focus-ring: #8c8c91;
   --focus-halo: rgba(81, 81, 84, 0.14);
-  --interaction-primary: #29292b;
-  --interaction-primary-hover: #1d1d1f;
-  --interaction-on-primary: #fbfbfd;
+  --interaction-primary: #e8e8ed;
+  --interaction-primary-hover: #dedee3;
+  --interaction-on-primary: #333336;
   --state-enabled: var(--state-on-600);
   --status-success: var(--state-on-700);
   --status-warning: var(--warn-700);
@@ -97,7 +97,7 @@
   --text-faint: var(--text-tertiary);
   --sidebar-text: var(--text-secondary);
   --sidebar-muted: var(--text-tertiary);
-  --text-on-accent: var(--interaction-on-primary);
+  --text-on-accent: #ffffff;
 
   /* ---- 圆角（4 档 + pill）---- */
   --r-xs: 4px;
@@ -1252,7 +1252,8 @@ h3 {
   margin: 0 0 10px;
   color: var(--text-primary);
   font-size: 22px;
-  font-weight: 650;
+  font-weight: 300;
+  letter-spacing: 0.02em;
 }
 
 .chat-empty-state p {
@@ -2286,7 +2287,7 @@ h3 {
 
 .stat-value {
   font-size: 28px;
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1;
 }
 
@@ -2296,6 +2297,21 @@ h3 {
   font-weight: 650;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+/* 仪表盘统计图标彩色区分（对话/报告用 Tool 蓝，工具/活动用绿，技能/风险用琥珀） */
+.dashboard-stat .stat-icon-chat { color: var(--tool-selected-600); }
+.dashboard-stat .stat-icon-tools { color: var(--state-on-600); }
+.dashboard-stat .stat-icon-skills { color: var(--warn-600); }
+.section-label svg.stat-icon-risk { color: var(--warn-600); }
+.section-label svg.stat-icon-activity { color: var(--state-on-600); }
+.section-label svg.stat-icon-report { color: var(--tool-selected-600); }
+
+/* 仪表盘内小节标题减轻字重 */
+.risk-distribution .section-label,
+.recent-activity .section-label,
+.report-section .section-label {
+  font-weight: 600;
 }
 
 /* Risk Distribution */
@@ -2318,7 +2334,7 @@ h3 {
   justify-content: center;
   color: var(--text-on-accent);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
   min-width: 0;
   transition: width 0.3s ease;
 }
@@ -2378,7 +2394,7 @@ h3 {
 .feed-item time {
   color: var(--gray-500);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .feed-item span {
@@ -2588,7 +2604,7 @@ h3 {
   color: var(--gray-700);
   background: var(--surface);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .report-export-actions button:hover:not(:disabled) {
@@ -2879,7 +2895,7 @@ h3 {
   border: 1px solid var(--gray-200);
   border-radius: var(--r-sm);
   color: var(--gray-500);
-  background: var(--gray-50);
+  background: var(--surface);
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -3128,7 +3144,7 @@ h3 {
   border: 1px solid var(--gray-200);
   border-radius: var(--r-md);
   overflow: hidden;
-  background: var(--surface-subtle);
+  background: var(--surface);
 }
 
 .kg-detail {

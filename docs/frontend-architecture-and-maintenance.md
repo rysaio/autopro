@@ -295,8 +295,8 @@ grid-template-columns: var(--sidebar-width) 10px minmax(0, 1fr);
 ### 7.2 交互与功能色
 
 - 普通导航、列表选择、按钮 hover 和 pressed 使用灰白色阶，同时通过字重、图标或内侧边标表达状态。
-- 主要提交命令使用 `--interaction-primary` 深石墨背景和浅色文字，不使用全局主蓝。
-- 蓝色只允许出现在 Tool 选择语义：`.tool-filters button.active`、配置区 Tool filter 和 `.tool-workspace-tabs`。新增普通按钮、导航、链接、焦点或信息状态不得复用 `--tool-selected-*`。
+- 主要提交命令使用 `--interaction-primary` 浅灰背景和深色文字（用户约束：不使用黑色/深石墨按键），不使用全局主蓝。
+- 蓝色只允许出现在 Tool 选择语义：`.tool-filters button.active`、配置区 Tool filter 和 `.tool-workspace-tabs`；仪表盘统计图标（对话窗口、事件报告）是用户指定的例外，与 Tool 选择共用同一蓝色 token。新增普通按钮、导航、链接、焦点或信息状态不得复用 `--tool-selected-*`。
 - 知识图谱是数据可视化例外：会话节点沿用 `design/web-ui-tokens` 的蓝色，但该色不进入按钮、链接或全局交互 token。
 - 绿色只表示 enabled、connected 或 success；黄褐色只表示 warning / needs attention；红色只表示 danger、error、denied 或 destructive。颜色之外必须同时存在文字、图标、开关位置或其他形状信息。
 - 卡片和普通控件使用不超过 8px 的统一圆角；composer、toggle 和小型状态标签可按交互语义使用 pill。

@@ -48,7 +48,9 @@ const toolBlueSelectors = [
   ".tool-filters button.active",
   ".config-workspace .tool-filters button.active",
   ".tool-workspace-tabs button.active",
-  ".tool-workspace-tabs button strong"
+  ".tool-workspace-tabs button strong",
+  ".dashboard-stat .stat-icon-chat",
+  ".section-label svg.stat-icon-report"
 ];
 for (const block of styles.split("}")) {
   if (!block.includes("var(--tool-selected-") || block.includes(":root")) continue;

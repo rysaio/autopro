@@ -2649,21 +2649,21 @@ function DashboardView({
       <div className="dashboard-grid">
         <div className="dashboard-card">
           <div className="dashboard-stat">
-            <MessageSquare size={18} aria-hidden="true" />
+            <MessageSquare className="stat-icon stat-icon-chat" size={18} aria-hidden="true" />
             <span className="stat-value">{sessions.length}</span>
           </div>
           <span className="stat-label">对话窗口</span>
         </div>
         <div className="dashboard-card">
           <div className="dashboard-stat">
-            <Wrench size={18} aria-hidden="true" />
+            <Wrench className="stat-icon stat-icon-tools" size={18} aria-hidden="true" />
             <span className="stat-value">{tools.length}</span>
           </div>
           <span className="stat-label">工具</span>
         </div>
         <div className="dashboard-card">
           <div className="dashboard-stat">
-            <Sparkles size={18} aria-hidden="true" />
+            <Sparkles className="stat-icon stat-icon-skills" size={18} aria-hidden="true" />
             <span className="stat-value">{skills.length}</span>
           </div>
           <span className="stat-label">技能</span>
@@ -2673,7 +2673,7 @@ function DashboardView({
       {totalToolCalls > 0 ? (
         <div className="risk-distribution">
           <div className="section-label">
-            <BarChart3 size={14} aria-hidden="true" />
+            <BarChart3 className="stat-icon stat-icon-risk" size={14} aria-hidden="true" />
             <span>风险分布</span>
           </div>
           <div className="risk-bar">
@@ -2698,7 +2698,7 @@ function DashboardView({
       {recentActivity.length > 0 ? (
         <div className="recent-activity">
           <div className="section-label">
-            <Activity size={14} aria-hidden="true" />
+            <Activity className="stat-icon stat-icon-activity" size={14} aria-hidden="true" />
             <span>最近活动</span>
           </div>
           <div className="activity-feed">
@@ -2714,7 +2714,7 @@ function DashboardView({
 
       <div className="report-section">
         <div className="section-label">
-          <FileText size={14} aria-hidden="true" />
+          <FileText className="stat-icon stat-icon-report" size={14} aria-hidden="true" />
           <span>事件报告</span>
         </div>
         {report ? (
