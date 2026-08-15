@@ -42,9 +42,11 @@ describe("model config hot-plug API", () => {
     const state = created.json();
     expect(state.connections).toHaveLength(1);
     expect(state.activeConnectionId).toBe(state.connections[0].id);
-    // apiKey 永不回传明文，仅暴露 apiKeySet
+    // apiKey 永不回传明文，仅暴露 apiKeySet 与脱敏描述符
     expect(state.connections[0].apiKeySet).toBe(true);
     expect(state.connections[0].apiKey).toBeUndefined();
+    expect(state.connections[0].apiKeyCredentialId).toBeUndefined();
+    expect(state.connections[0].apiKeyMasked).toBe("tes***key");
 
     const health = await app.inject({ method: "GET", url: "/api/health" });
     expect(health.json().configured).toBe(true);
@@ -142,6 +144,11 @@ describe("model config hot-plug API", () => {
     const { mkdirSync, writeFileSync } = await import("node:fs");
     const path = await import("node:path");
     mkdirSync(path.dirname(config.modelConfigPath), { recursive: true });
+    writeFileSync(config.credentialsPath, [
+      "credentials:",
+      "  cred-file:",
+      "    secret: sk-file"
+    ].join("\n") + "\n", "utf8");
     writeFileSync(config.modelConfigPath, JSON.stringify({
       connections: [{
         id: "file-conn",
@@ -149,7 +156,7 @@ describe("model config hot-plug API", () => {
         provider: "deepseek",
         model: "deepseek-v4-flash",
         baseUrl: "https://api.deepseek.com",
-        apiKey: ""
+        apiKeyCredentialId: "cred-file"
       }],
       activeConnectionId: "file-conn"
     }), "utf8");

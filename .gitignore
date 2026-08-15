@@ -28,6 +28,9 @@ yarn-error.log*
 .env.local
 .env.*.local
 
+# Write-only credentials store
+.credentials.yaml
+
 # Reasonix tooling
 .reasonix/
 

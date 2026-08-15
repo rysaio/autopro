@@ -14,8 +14,14 @@ export interface TestConfigOptions {
 export function testConfig(env: NodeJS.ProcessEnv = {}, options: TestConfigOptions = {}): AppConfig {
   const testRunId = crypto.randomUUID();
   const modelConfigPath = path.resolve("runtime", "tests", testRunId, "model.json");
+  const credentialsPath = path.resolve("runtime", "tests", testRunId, ".credentials.yaml");
   if (options.withModel !== false) {
     mkdirSync(path.dirname(modelConfigPath), { recursive: true });
+    writeFileSync(credentialsPath, [
+      "credentials:",
+      "  cred-test:",
+      "    secret: test-key"
+    ].join("\n") + "\n", "utf8");
     writeFileSync(modelConfigPath, JSON.stringify({
       connections: [{
         id: "test-conn",
@@ -23,7 +29,7 @@ export function testConfig(env: NodeJS.ProcessEnv = {}, options: TestConfigOptio
         provider: "test-provider",
         model: "test-model",
         baseUrl: "https://provider.test/v1",
-        apiKey: "test-key"
+        apiKeyCredentialId: "cred-test"
       }],
       activeConnectionId: "test-conn"
     }), "utf8");
@@ -31,6 +37,7 @@ export function testConfig(env: NodeJS.ProcessEnv = {}, options: TestConfigOptio
   return getConfig({
     SECOPS_RUNTIME_CONFIG_PATH: path.resolve("runtime", "tests", testRunId, "settings.json"),
     SECOPS_MODEL_CONFIG_PATH: modelConfigPath,
+    SECOPS_CREDENTIALS_PATH: credentialsPath,
     SECOPS_MCP_CONFIG_PATH: path.resolve("runtime", "tests", testRunId, "mcp.json"),
     SECOPS_SKILLS_DIR: path.resolve("runtime", "tests", testRunId, "skills"),
     SECOPS_TOOL_VISIBILITY_PATH: path.resolve("runtime", "tests", testRunId, "toolVisibility.json"),

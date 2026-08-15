@@ -21,6 +21,7 @@ export interface AppConfig {
   skillsDir: string;
   runtimeConfigPath: string;
   modelConfigPath: string;
+  credentialsPath: string;
   mcpConfigPath: string;
   toolVisibilityPath: string;
   skillVisibilityPath: string;
@@ -67,6 +68,7 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     workspaceRoot,
     runtimeConfigPath: resolveWorkspacePath(env.SECOPS_RUNTIME_CONFIG_PATH, workspaceRoot, path.join("runtime", "config", "settings.json")),
     modelConfigPath: resolveWorkspacePath(env.SECOPS_MODEL_CONFIG_PATH, workspaceRoot, path.join("runtime", "config", "model.json")),
+    credentialsPath: resolveWorkspacePath(env.SECOPS_CREDENTIALS_PATH, workspaceRoot, ".credentials.yaml"),
     mcpConfigPath: resolveWorkspacePath(env.SECOPS_MCP_CONFIG_PATH, workspaceRoot, path.join("runtime", "config", "mcp.json")),
     toolVisibilityPath: resolveWorkspacePath(env.SECOPS_TOOL_VISIBILITY_PATH, workspaceRoot, path.join("runtime", "config", "toolVisibility.json")),
     skillVisibilityPath: resolveWorkspacePath(env.SECOPS_SKILL_VISIBILITY_PATH, workspaceRoot, path.join("runtime", "config", "skillVisibility.json")),

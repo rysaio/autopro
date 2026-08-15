@@ -80,7 +80,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   });
   // 运行时开关同步到 ToolRegistry（auto 模式下高危 action 是否仍审批）
   registry.setAutoApproveHighRisk(runtimeSettings.get().autoApproveHighRisk ?? true);
-  const modelConfigStore = new ModelConfigStore(config.modelConfigPath);
+  const modelConfigStore = new ModelConfigStore(config.modelConfigPath, config.credentialsPath);
   // Issue #9：复用模型客户端。默认工厂 createAiSdkModel 请求无关，可安全缓存；
   // 请求相关工厂（options.createModel）按现状每次新建。
   const modelClientCache = options.modelClientCache ?? new ModelClientCache({
@@ -305,7 +305,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     return modelConfigStore.list();
   });
 
-  // 从文件重新加载 model.json（启动后直接编辑文件时的显式重载入口；
+  // 从文件重新加载 model.json 与 .credentials.yaml（启动后直接编辑文件时的显式重载入口；
   // 后续前端配置界面的"重载"按钮调用同一端点）
   app.post("/api/model-config/reload", async (): Promise<ModelConfigState> => {
     const state = modelConfigStore.reload();

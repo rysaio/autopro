@@ -205,17 +205,18 @@ npm run stop:dev
 
 ## 配置
 
-### 模型配置（唯一事实来源：运行目录下的 `runtime/config/model.json`）
+### 模型配置（连接注册表：`runtime/config/model.json` + 只写凭据文件 `.credentials.yaml`）
 
-模型配置不依赖环境变量——唯一事实来源是运行目录下的明文文件 `runtime/config/model.json`，**启动前后入口一致**（改动同一个文件，启动时读取 / 启动后 reload 生效）。路径相对于服务工作目录：源码开发时为 `src/runtime/config/model.json`，发布包运行时为 `runnable/app/runtime/config/model.json`；仓库根目录不需要单独创建 `runtime/`。
+模型连接不依赖环境变量——连接与活动连接的唯一事实来源是 `runtime/config/model.json`，**启动前后入口一致**（改动同一个文件，启动时读取 / 启动后 reload 生效）。路径相对于服务工作目录：源码开发时为 `src/runtime/config/model.json`，发布包运行时为 `runnable/app/runtime/config/model.json`；仓库根目录不需要单独创建 `runtime/`。
 
-- **默认模板**：发布包预置 `runtime/config/model.json`，默认 `provider=deepseek` / `model=deepseek-v4-flash` / `baseUrl=https://api.deepseek.com`，`apiKey` 为空——填入 key 即可使用。源码开发执行 `npm run dev` 时，如果文件不存在会自动创建同一份空 key 模板；已有文件不会被覆盖
+- **密钥只写**：API Key 明文只写入工作区根目录的 `.credentials.yaml`（文件权限 0600）；`model.json` 只保存 `apiKeyCredentialId` 凭据引用，API 响应只回传脱敏描述符（如 `sk-***abc`）
+- **默认模板**：发布包预置 `runtime/config/model.json`，默认 `provider=deepseek` / `model=deepseek-v4-flash` / `baseUrl=https://api.deepseek.com`，无 API Key。源码开发执行 `npm run dev` 时，如果文件不存在会自动创建同一份空模板；已有文件不会被覆盖
 - **先配置再启动**：直接编辑该文件，启动时读取
 - **启动后配置**（均无需重启）：
   - 直接编辑该文件 → 调用 `POST /api/model-config/reload` 从文件重新加载
   - 通过 API 增删改/切换（写文件并即时生效）
 
-`runtime/config/model.json` 结构（多连接注册表 + 活动连接）：
+`runtime/config/model.json` 结构（多连接注册表 + 活动连接；只存凭据引用）：
 
 ```json
 {
@@ -226,17 +227,27 @@ npm run stop:dev
       "provider": "qwen",
       "model": "qwen3.6-max-preview",
       "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "apiKey": "your-key"
+      "apiKeyCredentialId": "cred_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
     }
   ],
   "activeConnectionId": "conn-1"
 }
 ```
 
+`.credentials.yaml` 结构（密钥只写文件，mode 0600）：
+
+```yaml
+credentials:
+  cred_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:
+    secret: your-key
+    description: Model API key for qwen
+    createdAt: "2026-06-19T00:00:00.000Z"
+```
+
 模型配置 API：
 
 ```bash
-GET    /api/model-config                        # 查看连接列表（apiKey 永不回传，仅 apiKeySet）
+GET    /api/model-config                        # 查看连接列表（apiKey 永不回传，仅 apiKeySet + apiKeyMasked 脱敏描述符）
 POST   /api/model-config                        # 新建连接（首个自动设为活动）
 PUT    /api/model-config/:id                    # 更新连接（省略字段保留旧值；apiKey 空串=清除）
 DELETE /api/model-config/:id                    # 删除连接（删除活动连接自动转移）
@@ -248,6 +259,7 @@ POST   /api/model-config/reload                 # 从文件重新加载（编辑
 curl -X POST http://127.0.0.1:4317/api/model-config \
   -H "Content-Type: application/json" \
   -d '{"name":"qwen","provider":"qwen","model":"qwen3.6-max-preview","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"your-key"}'
+# 响应中的 apiKeyMasked 为脱敏描述符；明文只写入 .credentials.yaml，model.json 仅保存凭据引用
 ```
 
 ### 插件配置（`runtime/plugins/`）
@@ -330,7 +342,8 @@ DELETE /api/tools/visibility/:id       # 清除覆盖，回退到工具声明值
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `SECOPS_MODEL_CONFIG_PATH` | `runtime/config/model.json` | 模型配置文件路径 |
+| `SECOPS_MODEL_CONFIG_PATH` | `runtime/config/model.json` | 模型配置文件路径（只存凭据引用） |
+| `SECOPS_CREDENTIALS_PATH` | `.credentials.yaml` | 只写凭据文件（API Key 明文，mode 0600） |
 | `SECOPS_SKILLS_DIR` | `runtime/skills` | 独立 Skill 目录 |
 | `SECOPS_MCP_CONFIG_PATH` | `runtime/config/mcp.json` | 独立 MCP 服务配置文件 |
 | `SECOPS_TOOL_VISIBILITY_PATH` | `runtime/config/toolVisibility.json` | 工具暴露级别用户覆盖文件 |
