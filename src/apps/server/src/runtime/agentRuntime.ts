@@ -7,7 +7,7 @@ import type {
   EvidenceArtifact,
   ToolInvocation
 } from "@secops-agent/shared";
-import { generateText, stepCountIs, type LanguageModel } from "ai";
+import { stepCountIs, streamText, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 import { ToolRegistry, type AiSdkToolApprovalOptions } from "../tools/registry.js";
 import type { ToolExecutionRecord } from "../tools/types.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
@@ -28,7 +28,7 @@ export interface AgentRuntimeOptions {
   workspaceRoot: string;
   maxToolRounds?: number;
   sessionStateStore?: SessionStateStore;
-  /** true 时审批中的工具调用会阻塞 generateText，批准/拒绝后模型自动继续。 */
+  /** true 时审批中的工具调用会阻塞 streamText，批准/拒绝后模型自动继续。 */
   waitForApproval?: boolean;
   /** 客户端断开时取消正在等待审批的模型运行。 */
   abortSignal?: AbortSignal;
@@ -98,15 +98,20 @@ export class AgentRuntime {
       sessionId,
       stateMarkers: storedMarkers.map((marker) => marker.key)
     });
-    const emit = (payload: Omit<AgentRunEvent, "id" | "runId" | "createdAt">) => {
+    const emit = (
+      payload: Omit<AgentRunEvent, "id" | "runId" | "createdAt"> & { streaming?: boolean },
+      options?: { persist?: boolean }
+    ) => {
       const event = {
         id: crypto.randomUUID(),
         runId,
         createdAt: new Date().toISOString(),
         ...payload
-      };
+      } as AgentRunEvent & { streaming?: boolean };
       onEvent?.(event);
-      persist(() => stateStore.recordRunEvent(event));
+      if (options?.persist !== false) {
+        persist(() => stateStore.recordRunEvent(event));
+      }
     };
     emit({ type: "run_started" });
 
@@ -245,6 +250,162 @@ export class AgentRuntime {
       cacheToolResult(record);
     };
 
+    // ── 流式消息：把 LLM 输出按真实发生顺序推给前端 ──
+    const createStreamingMessage = (name?: string) => {
+      let current: ChatMessage | null = null;
+      let lastEmitAt = 0;
+      const start = () => {
+        current = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "",
+          createdAt: new Date().toISOString()
+        };
+        if (name) {
+          current.name = name;
+        }
+      };
+      const delta = (chunk: string) => {
+        if (!current) {
+          start();
+        }
+        if (current) {
+          current.content += chunk;
+          const now = Date.now();
+          // 节流：部分更新最多每 50ms 推送一次，最终消息在 finalize 时完整推送。
+          if (now - lastEmitAt >= 50) {
+            lastEmitAt = now;
+            emit({ type: "message", message: { ...current }, streaming: true }, { persist: false });
+          }
+        }
+      };
+      const finalize = (): ChatMessage | null => {
+        const message = current;
+        current = null;
+        if (!message || message.content.length === 0) {
+          return null;
+        }
+        messages.push(message);
+        persist(() => stateStore.appendMessage(sessionId, runId, message));
+        emit({ type: "message", message });
+        return message;
+      };
+      return { start, delta, finalize };
+    };
+
+    // ── 单个 streamText 阶段：消费 fullStream，按模型实际动作顺序转发事件 ──
+    const runStreamPhase = async (options: {
+      system: string;
+      messages: ModelMessage[];
+      tools: ToolSet;
+      stopWhen: ReturnType<typeof stepCountIs>;
+    }): Promise<{
+      text: string;
+      finishReason: string;
+      stepCount: number;
+      toolResultCount: number;
+      toolCallNames: string[];
+      responseMessages: ModelMessage[];
+      finalAssistantMessage: ChatMessage | null;
+    }> => {
+      const textMessage = createStreamingMessage();
+      const reasoningMessage = createStreamingMessage("thinking");
+      let finishReason = "";
+      let stepCount = 0;
+      let toolResultCount = 0;
+      const toolCallNames: string[] = [];
+      let finalAssistantMessage: ChatMessage | null = null;
+
+      try {
+        const result = streamText({
+          model: this.options.model,
+          system: options.system,
+          messages: options.messages,
+          tools: options.tools,
+          stopWhen: options.stopWhen,
+          temperature: 0.2,
+          ...(this.options.abortSignal ? { abortSignal: this.options.abortSignal } : {})
+        });
+
+        for await (const part of result.fullStream) {
+          switch (part.type) {
+            case "start-step":
+              stepCount += 1;
+              break;
+            case "reasoning-start":
+              reasoningMessage.start();
+              break;
+            case "reasoning-delta":
+              reasoningMessage.delta(part.text);
+              break;
+            case "reasoning-end":
+              reasoningMessage.finalize();
+              break;
+            case "text-start":
+              textMessage.start();
+              break;
+            case "text-delta":
+              textMessage.delta(part.text);
+              break;
+            case "text-end":
+              finalAssistantMessage = textMessage.finalize() ?? finalAssistantMessage;
+              break;
+            case "tool-call":
+              // 文本/思考先于工具调用完成：在工具卡片出现前落定消息。
+              finalAssistantMessage = textMessage.finalize() ?? finalAssistantMessage;
+              reasoningMessage.finalize();
+              toolCallNames.push(part.toolName);
+              break;
+            case "tool-result":
+              toolResultCount += 1;
+              break;
+            case "finish":
+              finishReason = part.finishReason;
+              break;
+            case "error":
+              throw part.error instanceof Error ? part.error : new Error(String(part.error));
+            default:
+              break;
+          }
+        }
+
+        finalAssistantMessage = textMessage.finalize() ?? finalAssistantMessage;
+        reasoningMessage.finalize();
+
+        let text = "";
+        let finish = finishReason;
+        let responseMessages: ModelMessage[] = [];
+        try {
+          text = await result.text;
+        } catch {
+          // fullStream 已消费完；这里兜底用流式阶段收集到的内容。
+        }
+        try {
+          finish = await result.finishReason;
+        } catch {
+          // 使用 fullStream 中的 finish 事件值。
+        }
+        try {
+          responseMessages = (await result.response).messages;
+        } catch {
+          responseMessages = [];
+        }
+
+        return {
+          text: text || finalAssistantMessage?.content || "",
+          finishReason: finish !== "other" ? finish : finishReason,
+          stepCount,
+          toolResultCount,
+          toolCallNames,
+          responseMessages,
+          finalAssistantMessage
+        };
+      } finally {
+        textMessage.finalize();
+        reasoningMessage.finalize();
+      }
+    };
+
     try {
       // ── 初始化工具路由器 ──
       toolRouter.build(this.options.registry);
@@ -252,6 +413,12 @@ export class AgentRuntime {
       let finalText = "";
       let totalSteps = 0;
       let totalToolResults = 0;
+      const requestModelMessages = request.messages
+        .filter((message) => message.role === "user" || message.role === "assistant")
+        .map((message) => ({
+          role: message.role === "assistant" ? "assistant" as const : "user" as const,
+          content: message.content
+        }));
 
       if (useLayeredRouting) {
         // ══════════════════════════════════════════════════════════════
@@ -270,31 +437,18 @@ export class AgentRuntime {
         // 使用 registry 直接生成 triage 工具集，带上 onRecord 以追踪结果
         const triageOnRecord = createOnRecord();
         const triageToolIds = toolRouter.getTriageToolIds();
-        const triageResult = await generateText({
-          model: this.options.model,
+        const triageResult = await runStreamPhase({
           system: systemPromptWithSkills(SYSTEM_PROMPT_TRIAGE, skillSummary),
-          messages: request.messages
-            .filter((message) => message.role === "user" || message.role === "assistant")
-            .map((message) => ({
-              role: message.role === "assistant" ? "assistant" as const : "user" as const,
-              content: message.content
-            })),
+          messages: requestModelMessages,
           tools: this.options.registry.aiSdkTools(context, triageToolIds, triageOnRecord, approvalOptions),
-          stopWhen: stepCountIs(maxTriageRounds),
-          temperature: 0.2,
-          ...(this.options.abortSignal ? { abortSignal: this.options.abortSignal } : {})
+          stopWhen: stepCountIs(maxTriageRounds)
         });
 
-        totalSteps += triageResult.steps.length;
-        totalToolResults += triageResult.steps.reduce((c, s) => c + s.toolResults.length, 0);
+        totalSteps += triageResult.stepCount;
+        totalToolResults += triageResult.toolResultCount;
 
         // 收集 Phase 1 中调用的工具名，推断需要加载的专用工具类别
-        const triageToolCalls: string[] = [];
-        for (const step of triageResult.steps) {
-          for (const tc of step.toolCalls) {
-            triageToolCalls.push(tc.toolName);
-          }
-        }
+        const triageToolCalls = triageResult.toolCallNames;
         const userMessage = request.messages
           .filter((m) => m.role === "user")
           .map((m) => m.content)
@@ -322,43 +476,41 @@ export class AgentRuntime {
         const deepToolIds = toolRouter.getDeepToolIds([...deepCategories]);
 
         // 使用 Phase 1 的完整消息历史作为 Phase 2 的输入
-        const phase1Messages = triageResult.response.messages;
-
-        const deepResult = await generateText({
-          model: this.options.model,
+        const deepResult = await runStreamPhase({
           system: systemPromptWithSkills(SYSTEM_PROMPT_DEEP, skillSummary),
-          messages: phase1Messages,
+          messages: [...requestModelMessages, ...triageResult.responseMessages],
           tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord, approvalOptions),
-          stopWhen: stepCountIs(maxDeepRounds),
-          temperature: 0.2,
-          ...(this.options.abortSignal ? { abortSignal: this.options.abortSignal } : {})
+          stopWhen: stepCountIs(maxDeepRounds)
         });
 
-        totalSteps += deepResult.steps.length;
-        totalToolResults += deepResult.steps.reduce((c, s) => c + s.toolResults.length, 0);
-        finalText = deepResult.text || deepResult.steps.findLast((s) => s.text)?.text || '';
+        totalSteps += deepResult.stepCount;
+        totalToolResults += deepResult.toolResultCount;
+        finalText = deepResult.text || deepResult.finalAssistantMessage?.content || "";
 
-        const deepFinish = deepResult.finishReason === 'tool-calls'
-          ? ' [Agent stopped at max tool rounds - increase maxDeepRounds]'
-          : '';
+        const deepFinish = deepResult.finishReason === "tool-calls"
+          ? " [Agent stopped at max tool rounds - increase maxDeepRounds]"
+          : "";
 
         // ── 检查是否有待审批 ──
         if (toolRecords.some((record) => record.invocation.status === "pending_approval")) {
           status = "needs_approval";
         }
 
-        const finalMessage = chat(
-          'assistant',
-          finalText || 'Agent completed but did not produce a final text summary. Check the tool results above.' + deepFinish
-        );
-        messages.push(finalMessage);
-        persist(() => stateStore.appendMessage(sessionId, runId, finalMessage));
-        emit({ type: "message", message: finalMessage });
+        // 流式阶段已经输出过 assistant 消息则不再重复；否则补一条兜底消息。
+        if (!deepResult.finalAssistantMessage) {
+          const finalMessage = chat(
+            "assistant",
+            finalText || `Agent completed but did not produce a final text summary. Check the tool results above.${deepFinish}`
+          );
+          messages.push(finalMessage);
+          persist(() => stateStore.appendMessage(sessionId, runId, finalMessage));
+          emit({ type: "message", message: finalMessage });
+        }
 
         const responseAudit = event(
           "model_response",
           "Model response",
-          `Layered routing complete: Phase 1 (${triageResult.steps.length} steps, ${triageResult.steps.reduce((c, s) => c + s.toolResults.length, 0)} tool results) + Phase 2 (${deepResult.steps.length} steps, ${deepResult.steps.reduce((c, s) => c + s.toolResults.length, 0)} tool results). Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${deepResult.finishReason}.${deepResult.finishReason === "tool-calls" ? " Max tool rounds reached." : ""}`
+          `Layered routing complete: Phase 1 (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results) + Phase 2 (${deepResult.stepCount} steps, ${deepResult.toolResultCount} tool results). Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${deepResult.finishReason}.${deepResult.finishReason === "tool-calls" ? " Max tool rounds reached." : ""}`
         );
         audit.push(responseAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, responseAudit));
@@ -367,45 +519,45 @@ export class AgentRuntime {
         // ══════════════════════════════════════════════════════════════
         // 传统模式：全部工具一次性发送（向后兼容）
         // ══════════════════════════════════════════════════════════════
-        const requestAudit = event("model_request", "Model request", `AI SDK run sent to ${this.options.providerLabel}.`);
+        const requestAudit = event("model_request", "Model request", `AI SDK stream sent to ${this.options.providerLabel}.`);
         audit.push(requestAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, requestAudit));
         emit({ type: "audit", audit: requestAudit });
 
-        const result = await generateText({
-          model: this.options.model,
+        const result = await runStreamPhase({
           system: systemPromptWithSkills(SYSTEM_PROMPT_DEEP, skillSummary),
-          messages: request.messages
-            .filter((message) => message.role === "user" || message.role === "assistant")
-            .map((message) => ({
-              role: message.role === "assistant" ? "assistant" as const : "user" as const,
-              content: message.content
-            })),
+          messages: requestModelMessages,
           tools: this.options.registry.aiSdkTools(
             context,
             effectiveEnabledTools,
             createOnRecord(),
             approvalOptions
           ),
-          stopWhen: stepCountIs(this.options.maxToolRounds ?? 10),
-          temperature: 0.2,
-          ...(this.options.abortSignal ? { abortSignal: this.options.abortSignal } : {})
+          stopWhen: stepCountIs(this.options.maxToolRounds ?? 10)
         });
 
         if (toolRecords.some((record) => record.invocation.status === "pending_approval")) {
           status = "needs_approval";
         }
-        finalText = result.text || result.steps.findLast((s) => s.text)?.text || '';
-        const finishInfo = result.finishReason === 'tool-calls' ? ' [Agent stopped at max tool rounds - increase maxToolRounds]' : '';
-        const assistantMessage = chat('assistant', finalText || 'Agent completed but did not produce a final text summary. Check the tool results above.' + finishInfo);
-        messages.push(assistantMessage);
-        persist(() => stateStore.appendMessage(sessionId, runId, assistantMessage));
-        emit({ type: "message", message: assistantMessage });
-        totalToolResults = result.steps.reduce((count, step) => count + step.toolResults.length, 0);
+        totalSteps = result.stepCount;
+        totalToolResults = result.toolResultCount;
+        finalText = result.text || result.finalAssistantMessage?.content || "";
+        const finishInfo = result.finishReason === "tool-calls"
+          ? " [Agent stopped at max tool rounds - increase maxToolRounds]"
+          : "";
+        if (!result.finalAssistantMessage) {
+          const assistantMessage = chat(
+            "assistant",
+            finalText || `Agent completed but did not produce a final text summary. Check the tool results above.${finishInfo}`
+          );
+          messages.push(assistantMessage);
+          persist(() => stateStore.appendMessage(sessionId, runId, assistantMessage));
+          emit({ type: "message", message: assistantMessage });
+        }
         const responseAudit = event(
           "model_response",
           "Model response",
-          `AI SDK finished with ${result.steps.length} step(s), ${totalToolResults} tool result(s), finish reason ${result.finishReason}.${result.finishReason === "tool-calls" ? " Max tool rounds reached before final response." : ""}`
+          `AI SDK stream finished with ${result.stepCount} step(s), ${result.toolResultCount} tool result(s), finish reason ${result.finishReason}.${result.finishReason === "tool-calls" ? " Max tool rounds reached before final response." : ""}`
         );
         audit.push(responseAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, responseAudit));

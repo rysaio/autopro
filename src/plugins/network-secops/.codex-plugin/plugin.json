@@ -1,0 +1,22 @@
+{
+  "name": "network-secops",
+  "version": "0.1.0",
+  "description": "Real HTTP request and DNS lookup tools for the agent. The host service enforces permission policy for HTTP actions.",
+  "author": { "name": "SecOps Agent" },
+  "license": "MIT",
+  "keywords": ["http", "network", "dns", "ctf", "mcp"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Network SecOps",
+    "shortDescription": "Real HTTP and DNS tools for CTF and web reconnaissance.",
+    "longDescription": "Codex-style MCP plugin exposing real network tools: HTTP request and DNS lookup. HTTP methods are gated by host permission policy.",
+    "developerName": "SecOps Agent",
+    "category": "Utility",
+    "capabilities": ["MCP"],
+    "defaultPrompt": [
+      "Fetch the CTF web page and inspect the response.",
+      "Resolve the DNS record for a challenge hostname."
+    ],
+    "brandColor": "#0891B2"
+  }
+}

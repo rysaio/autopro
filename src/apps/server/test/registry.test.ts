@@ -31,10 +31,10 @@ describe("ToolRegistry", () => {
     const registry = new ToolRegistry();
     const manifests = registry.manifests();
 
-    expect(manifests).toHaveLength(12);
+    expect(manifests).toHaveLength(14);
     expect(new Set(manifests.map((manifest) => manifest.id)).size).toBe(manifests.length);
     expect(manifests.every((manifest) => manifest.mcpCompatible)).toBe(true);
-    expect(manifests.filter((manifest) => manifest.toolClass === "action")).toHaveLength(3);
+    expect(manifests.filter((manifest) => manifest.toolClass === "action")).toHaveLength(5);
     expect(manifests.find((manifest) => manifest.id === "full_access.exec")?.risk).toBe("high");
   });
 
@@ -47,14 +47,14 @@ describe("ToolRegistry", () => {
     );
 
     registry.registerTools([external]);
-    expect(registry.manifests()).toHaveLength(13);
+    expect(registry.manifests()).toHaveLength(15);
     expect(registry.manifests().find((manifest) => manifest.id === "external.hello")).toMatchObject({
       id: "external.hello",
       name: "External Hello"
     });
 
     registry.unregisterExternalTools();
-    expect(registry.manifests()).toHaveLength(12);
+    expect(registry.manifests()).toHaveLength(14);
     expect(registry.manifests().find((manifest) => manifest.id === "external.hello")).toBeUndefined();
   });
 

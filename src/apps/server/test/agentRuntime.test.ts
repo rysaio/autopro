@@ -5,6 +5,7 @@ import type {
   LanguageModelV3,
   LanguageModelV3CallOptions,
   LanguageModelV3GenerateResult,
+  LanguageModelV3StreamPart,
   LanguageModelV3StreamResult
 } from "@ai-sdk/provider";
 import type { LanguageModel } from "ai";
@@ -357,8 +358,39 @@ class TwoStepToolModel implements LanguageModelV3 {
     };
   }
 
-  async doStream(_options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
-    throw new Error("Streaming is not implemented for the two-step test model.");
+  async doStream(options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
+    const generated = await this.doGenerate(options);
+    const chunks: LanguageModelV3StreamPart[] = [];
+    for (const content of generated.content) {
+      if (content.type === "text") {
+        const id = `stream_${crypto.randomUUID()}`;
+        chunks.push({ type: "text-start", id });
+        chunks.push({ type: "text-delta", id, delta: content.text });
+        chunks.push({ type: "text-end", id });
+      } else if (content.type === "tool-call") {
+        chunks.push({
+          type: "tool-call",
+          toolCallId: content.toolCallId,
+          toolName: content.toolName,
+          input: content.input
+        });
+      }
+    }
+    chunks.push({
+      type: "finish",
+      finishReason: generated.finishReason,
+      usage: generated.usage
+    });
+    return {
+      stream: new ReadableStream<LanguageModelV3StreamPart>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        }
+      })
+    };
   }
 }
 

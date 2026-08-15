@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "network-secops": {
+      "command": "node",
+      "args": ["./server.mjs"]
+    }
+  }
+}

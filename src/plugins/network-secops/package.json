@@ -1,0 +1,10 @@
+{
+  "name": "@secops-agent/network-secops",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Codex-style MCP plugin that provides real HTTP and DNS network tools for CTF and reconnaissance.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node -e \"console.log('network-secops: no compile step')\""
+  }
+}

@@ -1455,6 +1455,30 @@ h3 {
   margin: 10px 0;
 }
 
+/* 模型思考流：在对话时间线里以独立卡片按真实顺序展示 */
+.message.assistant.thinking .message-body {
+  margin: 2px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--gray-200);
+  border-left: 3px solid var(--accent-400);
+  border-radius: var(--r-sm);
+  background: var(--surface-subtle);
+}
+
+.message.assistant.thinking .thinking-label {
+  margin-bottom: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.message.assistant.thinking .message-content {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 .tool-call {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);

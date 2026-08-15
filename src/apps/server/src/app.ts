@@ -77,6 +77,12 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   const pluginManager = new PluginManager({
     pluginsDir: config.pluginsDir,
     registry,
+    // 让插件进程知道主服务的工作区/沙箱路径：插件侧 shell 等工具必须落在主服务沙箱内。
+    env: {
+      ...process.env,
+      SECOPS_WORKSPACE_ROOT: config.workspaceRoot,
+      SECOPS_SANDBOX_ROOT: config.sandboxRoot
+    },
     ...(options.createPluginClient ? { createClient: options.createPluginClient } : {})
   });
   // AgentEnvironment 基座：统一管理配置（settings/models）与外围设施（plugins）
@@ -146,8 +152,8 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       },
       capabilities: {
         tools: modelStatus.configured,
-        streaming: false,
-        toolStreaming: false
+        streaming: modelStatus.configured,
+        toolStreaming: modelStatus.configured
       }
     };
     if (modelStatus.baseUrl) {
@@ -516,7 +522,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       return reply.code(503).send({ error: "Model provider is not configured. Configure a model connection first." });
     }
     const runtime = createRuntime(config, runtimeSettings.get(), registry, skillCatalog, runRequest, options, sessionStateStore, connection);
-    return runtime.run(runRequest, (event) => auditLog.append(event));
+    return runtime.run(runRequest, (event) => {
+      if (!(event as AgentRunEvent & { streaming?: boolean }).streaming) {
+        auditLog.append(event);
+      }
+    });
   });
 
   
@@ -602,7 +612,9 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     });
     try {
       await runtime.run(runRequest, (event) => {
-        auditLog.append(event);
+        if (!(event as AgentRunEvent & { streaming?: boolean }).streaming) {
+          auditLog.append(event);
+        }
         if (!reply.raw.destroyed && !reply.raw.writableEnded) {
           reply.raw.write(`event: ${event.type}\n`);
           reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
