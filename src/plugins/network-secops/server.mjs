@@ -26,7 +26,7 @@ server.registerTool(
     _meta: {
       risk: "medium",
       toolClass: "action",
-      deferLoading: true
+      deferLoading: false
     }
   },
   async ({ url, method, headers, body }) => {

@@ -31,7 +31,7 @@ import {
   Wrench
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import type {
   AgentRun,
   AgentRunEvent,
@@ -93,6 +93,8 @@ const WORKSPACE_MIN_HEIGHT = 160;
 const WORKSPACE_CONVERSATION_MIN = 64;
 const WORKSPACE_DIVIDER_SPACE = 24; // 分隔条 14px + 上下两处 4px gap
 const WORKSPACE_DEFAULT_RATIO = 0.4;
+const TRANSCRIPT_PAGE_SIZE = 40;
+const STICK_TO_BOTTOM_THRESHOLD = 1; // 只要向上滚动 1px 以上就脱离贴底，便于自由翻阅历史。
 const WORKSPACE_FALLBACK_MAX = 520; // 无法实测几何时的兜底
 const WORKSPACE_KEYBOARD_STEP = 24;
 const WORKSPACE_KEYBOARD_FAST_STEP = 96;
@@ -254,6 +256,9 @@ export function App() {
   const columnResizeStart = useRef<{ pointerId: number; x: number; width: number } | null>(null);
   const [isResizingColumns, setIsResizingColumns] = useState(false);
   const sidebarCollapsed = sidebarWidth === SIDEBAR_COLLAPSED_WIDTH;
+  const [transcriptLimit, setTranscriptLimit] = useState(TRANSCRIPT_PAGE_SIZE);
+  const stickToBottomRef = useRef(true);
+  const prependAnchorRef = useRef<{ oldHeight: number; oldTop: number } | null>(null);
 
   // 当前展示的会话状态：从 sessionStates 按 currentSessionId 派生。
   // 其余组件/派生值继续使用下方同名变量，因此渲染部分无需大改。
@@ -458,6 +463,11 @@ export function App() {
       return left.kind === "tool" && right.kind === "message" ? -1 : 1;
     });
   }, [messages, activeToolInvocations]);
+  // 长对话按社交软件的方式从底部开始渲染：首屏只显示最近 N 条，滚动到顶部再向前展开。
+  const visibleTranscriptItems = useMemo(
+    () => transcriptItems.slice(Math.max(0, transcriptItems.length - transcriptLimit)),
+    [transcriptItems, transcriptLimit]
+  );
   const enabledToolCount = enabledToolList.length;
   const enabledMcpCount = mcpTools.filter((tool) => enabledToolList.includes(tool.manifest.id)).length;
   const visibleTools = useMemo(() => {
@@ -514,6 +524,9 @@ export function App() {
     setCurrentSessionId(id);
     setActivePanel(null);
     setOpenComposerMenu(null);
+    setTranscriptLimit(TRANSCRIPT_PAGE_SIZE);
+    stickToBottomRef.current = true;
+    prependAnchorRef.current = null;
   }
 
   async function archiveSessionById(id: string) {
@@ -598,12 +611,35 @@ export function App() {
   // 打开/切换对话后自动滚动到最新消息（底部）。
   // 用 useLayoutEffect：在浏览器绘制前同步设置滚动位置，
   // 避免「先显示头部再跳到底部」的可见闪烁。
+  // 用户向上翻阅历史时暂停自动贴底，回到底部附近后再恢复。
   useLayoutEffect(() => {
     const element = transcriptRef.current;
-    if (element) {
+    if (!element) {
+      return;
+    }
+    if (prependAnchorRef.current) {
+      // 向前展开更早消息后，保持当前视口不跳动。
+      const anchor = prependAnchorRef.current;
+      element.scrollTop = element.scrollHeight - anchor.oldHeight + anchor.oldTop;
+      prependAnchorRef.current = null;
+      return;
+    }
+    if (stickToBottomRef.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [messages, activeToolInvocations, activeSession]);
+  }, [messages, activeToolInvocations, activeSession, transcriptLimit]);
+
+  function handleTranscriptScroll(event: ReactUIEvent<HTMLDivElement>) {
+    const element = event.currentTarget as HTMLDivElement;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    stickToBottomRef.current = distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD;
+
+    // 长对话反向加载：滚动到顶部附近时，向前展开更早的一页消息。
+    if (element.scrollTop < 40 && transcriptLimit < transcriptItems.length) {
+      prependAnchorRef.current = { oldHeight: element.scrollHeight, oldTop: element.scrollTop };
+      setTranscriptLimit((limit) => Math.min(limit + TRANSCRIPT_PAGE_SIZE, transcriptItems.length));
+    }
+  }
 
   function startNewSession() {
     const id = crypto.randomUUID();
@@ -612,6 +648,9 @@ export function App() {
     setCurrentSessionId(id);
     setActivePanel(null);
     setOpenComposerMenu(null);
+    setTranscriptLimit(TRANSCRIPT_PAGE_SIZE);
+    stickToBottomRef.current = true;
+    prependAnchorRef.current = null;
   }
 
   function applyWorkspaceHeight(height: number) {
@@ -866,6 +905,8 @@ export function App() {
     if (!entry.prompt.trim() || entry.isRunning) {
       return;
     }
+    stickToBottomRef.current = true;
+    prependAnchorRef.current = null;
     updateSession(sessionId, { error: null, isRunning: true });
     const nextMessages: ChatMessage[] = [
       ...entry.messages,
@@ -891,7 +932,9 @@ export function App() {
           role: message.role,
           content: message.content,
           ...(message.id ? { id: message.id } : {}),
-          ...(message.createdAt ? { createdAt: message.createdAt } : {})
+          ...(message.createdAt ? { createdAt: message.createdAt } : {}),
+          ...(message.name ? { name: message.name } : {}),
+          ...(message.toolCallId ? { toolCallId: message.toolCallId } : {})
         })),
         sessionId,
         enabledTools: enabledToolList,
@@ -1803,13 +1846,20 @@ async function handleGenerateReport() {
 
         <section className="chat-stage" aria-label="智能体对话">
           <div
-            className={transcriptItems.length ? "transcript" : "transcript empty"}
+            className={visibleTranscriptItems.length ? "transcript" : "transcript empty"}
             aria-label="对话记录"
+            onScroll={handleTranscriptScroll}
             ref={transcriptRef}
           >
-            {transcriptItems.length ? (
+            {visibleTranscriptItems.length ? (
               <>
-              {transcriptItems.map((item) => (
+              {transcriptLimit < transcriptItems.length ? (
+                <div className="transcript-load-earlier" aria-live="polite">
+                  <Loader2 className="spin" size={13} aria-hidden="true" />
+                  <span>向上滚动加载更早消息</span>
+                </div>
+              ) : null}
+              {visibleTranscriptItems.map((item) => (
                 item.kind === "tool" ? (
                   <ToolCallCard
                     invocation={item.invocation}
@@ -2247,6 +2297,7 @@ function inlineMarkdown(text: string): string {
 function TranscriptMessage({ message }: { message: ChatMessage }) {
   const isTool = message.role === "tool";
   const [toolExpanded, setToolExpanded] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
 
   if (isTool) {
     return (
@@ -2275,8 +2326,19 @@ function TranscriptMessage({ message }: { message: ChatMessage }) {
     return (
       <article aria-label="模型思考过程" className="message assistant thinking">
         <div className="message-body">
-          <div className="thinking-label">模型思考</div>
-          <div className="message-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+          <button
+            className="thinking-toggle"
+            onClick={() => setThinkingExpanded((prev) => !prev)}
+            type="button"
+            title={thinkingExpanded ? "折叠思考链" : "展开思考链"}
+          >
+            {thinkingExpanded ? <ChevronDown size={11} aria-hidden="true" /> : <ChevronRight size={11} aria-hidden="true" />}
+            <span className="thinking-label">模型思考</span>
+            <time>{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
+          </button>
+          {thinkingExpanded ? (
+            <div className="message-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+          ) : null}
         </div>
       </article>
     );
@@ -2414,20 +2476,50 @@ export function ToolCallCard({
 }) {
   const pending = invocation.status === "pending_approval";
   const guidance = invocation.guidance;
-  const executed = !guidance && !pending;
-  // 成功执行的调用默认折叠；失败/拒绝的错误信息默认展开，便于即时处置。
+  const executed = !guidance && !pending && invocation.status === "executed";
+  // 成功执行的调用默认折叠；失败/拒绝/待审批/可恢复引导默认展开，便于即时处置。
+  const [expanded, setExpanded] = useState(!executed);
   const resultOpen = invocation.status === "failed" || invocation.status === "denied";
+
+  if (executed) {
+    return (
+      <div className={`tool-call ${invocation.status}`} key={invocation.id}>
+        <button
+          className="tool-call-toggle"
+          onClick={() => setExpanded((prev) => !prev)}
+          type="button"
+          title={expanded ? "折叠工具调用" : "展开工具调用"}
+        >
+          {expanded ? <ChevronDown size={11} aria-hidden="true" /> : <ChevronRight size={11} aria-hidden="true" />}
+          <strong>{invocation.displayName}</strong>
+          <span>{invocation.status}</span>
+          <time>{new Date(invocation.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
+        </button>
+        {expanded ? (
+          <div className="tool-call-result">
+            <div className="tool-call-section">
+              <span className="tool-call-section-label">调用参数</span>
+              <CollapsibleJson data={invocation.arguments} />
+            </div>
+            <div className="tool-call-section">
+              <span className="tool-call-section-label">返回结果</span>
+              <CollapsibleJson data={invocation.result ?? invocation.error} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className={`tool-call ${guidance ? "guidance" : pending ? "pending" : invocation.status}`} key={invocation.id}>
-      {executed ? null : (
-        <div className="tool-call-icon">
-          {guidance ? <AlertTriangle size={16} aria-hidden="true" /> : <LockKeyhole size={16} aria-hidden="true" />}
-        </div>
-      )}
+      <div className="tool-call-icon">
+        {guidance ? <AlertTriangle size={16} aria-hidden="true" /> : <LockKeyhole size={16} aria-hidden="true" />}
+      </div>
       <div>
         <div className="tool-call-title">
           <strong>{invocation.displayName}</strong>
-          {executed ? null : <span>{guidance ? "guidance" : invocation.status}</span>}
+          <span>{guidance ? "guidance" : invocation.status}</span>
         </div>
         {pending ? (
           <div className="approval-panel">

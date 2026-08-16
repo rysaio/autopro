@@ -69,7 +69,7 @@ describe("MCP facade", () => {
       url: "/api/mcp/tools"
     });
     expect(listResponse.statusCode).toBe(200);
-    expect(listResponse.json().tools).toHaveLength(15);
+    expect(listResponse.json().tools).toHaveLength(16);
 
     const removedEndpoint = await app.inject({
       method: "GET",

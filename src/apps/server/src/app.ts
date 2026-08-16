@@ -37,6 +37,7 @@ import { ToolVisibilityStore } from "./runtime/toolVisibilityStore.js";
 import { SkillVisibilityStore } from "./runtime/skillVisibilityStore.js";
 import { SkillCatalog } from "./skills/catalog.js";
 import { createSkillReadTool } from "./skills/skillReadTool.js";
+import { createPluginManageTool } from "./tools/pluginManageTool.js";
 import { createSecOpsMcpServer, mcpContext, mcpToolSummaries } from "./mcp/secopsMcpServer.js";
 import { registerStreamableMcpRoutes } from "./mcp/streamableHttp.js";
 import { ToolRegistry } from "./tools/registry.js";
@@ -85,6 +86,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     },
     ...(options.createPluginClient ? { createClient: options.createPluginClient } : {})
   });
+  registry.registerRuntimeTools([createPluginManageTool(pluginManager, skillCatalog)]);
   // AgentEnvironment 基座：统一管理配置（settings/models）与外围设施（plugins）
   const environment = new AgentEnvironment(runtimeSettings, modelConfigStore, pluginManager, skillCatalog);
   const mcpServerManager = new McpServerManager({

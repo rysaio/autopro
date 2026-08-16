@@ -109,6 +109,7 @@ export function createActionTools(): SecOpsTool[] {
           "Execute a real bash shell command inside the configured sandbox directory. The command runs with cwd=sandboxRoot and a 15 second timeout. Use this for CTF quizzes, local network requests with curl, file inspection, script execution, and other real command-line work. Output is truncated to 20k characters.",
         toolClass: "action",
         risk: "medium",
+        deferLoading: false,
         tags: ["action", "shell", "sandbox", "ctf", "bash", "command"],
         inputSchema: {
           type: "object",
@@ -133,6 +134,7 @@ export function createActionTools(): SecOpsTool[] {
           "Make a real HTTP(S) request to a URL. Supports GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS with optional JSON headers and body. Returns the response status, headers, and body truncated to 20k characters. Use for CTF quizzes, web API lookups, and real network reconnaissance.",
         toolClass: "action",
         risk: "medium",
+        deferLoading: false,
         tags: ["action", "http", "network", "ctf", "requests", "web"],
         inputSchema: {
           type: "object",
@@ -221,12 +223,13 @@ function manifest(input: {
   description: string;
   toolClass: ToolClass;
   risk: ToolRisk;
+  deferLoading?: boolean;
   tags: string[];
   inputSchema: ToolManifest["inputSchema"];
 }): ToolManifest {
   return {
     ...input,
-    deferLoading: true,
+    deferLoading: input.deferLoading ?? true,
     mcpCompatible: true
   };
 }

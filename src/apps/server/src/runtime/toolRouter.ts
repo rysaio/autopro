@@ -151,7 +151,9 @@ export class ToolRouter {
     if (msg.includes("执行") || msg.includes("命令") || msg.includes("exec") ||
       msg.includes("运行") || msg.includes("run") || msg.includes("笔记") ||
       msg.includes("案例") || msg.includes("沙箱") || msg.includes("note") ||
-      msg.includes("ctf") || msg.includes("shell") || msg.includes("bash")
+      msg.includes("ctf") || msg.includes("shell") || msg.includes("bash") ||
+      msg.includes("network") || msg.includes("网络") || msg.includes("http") ||
+      msg.includes("dns") || msg.includes("域名") || msg.includes("curl")
     ) {
       categories.add("sandbox-actions");
     }
