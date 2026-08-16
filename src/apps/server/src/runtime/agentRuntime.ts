@@ -251,7 +251,9 @@ export class AgentRuntime {
     };
 
     // ── 流式消息：把 LLM 输出按真实发生顺序推给前端 ──
-    const createStreamingMessage = (name?: string) => {
+    // stream=false 时只内部收集，不推送到前端也不持久化；
+    // 由调用方在决策后决定是否发布为最终回复。
+    const createStreamingMessage = (name?: string, stream = true) => {
       let current: ChatMessage | null = null;
       let lastEmitAt = 0;
       const start = () => {
@@ -271,6 +273,9 @@ export class AgentRuntime {
         }
         if (current) {
           current.content += chunk;
+          if (!stream) {
+            return;
+          }
           const now = Date.now();
           // 节流：部分更新最多每 50ms 推送一次，最终消息在 finalize 时完整推送。
           if (now - lastEmitAt >= 50) {
@@ -285,9 +290,11 @@ export class AgentRuntime {
         if (!message || message.content.length === 0) {
           return null;
         }
-        messages.push(message);
-        persist(() => stateStore.appendMessage(sessionId, runId, message));
-        emit({ type: "message", message });
+        if (stream) {
+          messages.push(message);
+          persist(() => stateStore.appendMessage(sessionId, runId, message));
+          emit({ type: "message", message });
+        }
         return message;
       };
       return { start, delta, finalize };
@@ -299,6 +306,8 @@ export class AgentRuntime {
       messages: ModelMessage[];
       tools: ToolSet;
       stopWhen: ReturnType<typeof stepCountIs>;
+      /** false 时只收集 assistant 文本，不向前端推送、不持久化；用于分诊阶段的中间文本。 */
+      streamText?: boolean;
     }): Promise<{
       text: string;
       finishReason: string;
@@ -308,7 +317,7 @@ export class AgentRuntime {
       responseMessages: ModelMessage[];
       finalAssistantMessage: ChatMessage | null;
     }> => {
-      const textMessage = createStreamingMessage();
+      const textMessage = createStreamingMessage(undefined, options.streamText !== false);
       const reasoningMessage = createStreamingMessage("thinking");
       let finishReason = "";
       let stepCount = 0;
@@ -441,7 +450,8 @@ export class AgentRuntime {
           system: systemPromptWithSkills(SYSTEM_PROMPT_TRIAGE, skillSummary),
           messages: requestModelMessages,
           tools: this.options.registry.aiSdkTools(context, triageToolIds, triageOnRecord, approvalOptions),
-          stopWhen: stepCountIs(maxTriageRounds)
+          stopWhen: stepCountIs(maxTriageRounds),
+          streamText: false
         });
 
         totalSteps += triageResult.stepCount;
@@ -456,61 +466,95 @@ export class AgentRuntime {
         const inferredCategories = toolRouter.inferCategories(triageToolCalls, userMessage);
         const savedTokens = toolRouter.estimateTokenSavings(inferredCategories);
 
+        // ── 决策：是否进入 Deep Dive ──
+        // 规则：1) Phase 1 没有最终文本；2) 因 tool-calls 达到轮次上限；
+        //       3) Deep Dive 相对 Triage 能加载新工具。
+        const triageFinal = triageResult.finalAssistantMessage;
+        const triageToolIdSet = new Set(triageToolIds);
+        const decisionToolIds = toolRouter.getDeepToolIds(inferredCategories);
+        const hasSpecializedTools = decisionToolIds.some((id) => !triageToolIdSet.has(id));
+        const shouldRunDeep = !triageFinal
+          || triageResult.finishReason === "tool-calls"
+          || hasSpecializedTools;
+
         const routeAudit = event(
           "model_request",
-          "Phase 2: Deep Dive",
-          `Routing: inferred categories [${inferredCategories.join(", ")}], estimated token savings: ~${savedTokens} tokens (${toolRouter.getCategorySummary()["core-triage"]?.count ?? 0} core + ${inferredCategories.filter((c) => c !== "core-triage").reduce((sum, c) => sum + (toolRouter.getCategorySummary()[c]?.count ?? 0), 0)} specialized tools)`
+          shouldRunDeep ? "Phase 2: Deep Dive" : "Phase 2: Skipped",
+          shouldRunDeep
+            ? `Routing: inferred categories [${inferredCategories.join(", ")}], estimated token savings: ~${savedTokens} tokens. Phase 1 final text ${triageFinal ? "present" : "missing"}, finish ${triageResult.finishReason}, specialized tools ${hasSpecializedTools ? "required" : "not required"}.`
+            : `Routing: inferred categories [${inferredCategories.join(", ")}] can be satisfied by triage tools. Phase 1 final text will be published as the only reply.`
         );
         audit.push(routeAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, routeAudit));
         emit({ type: "audit", audit: routeAudit });
 
-        // ══════════════════════════════════════════════════════════════
-        // Phase 2: DEEP DIVE — 核心 + 推断的专用工具
-        // ══════════════════════════════════════════════════════════════
-        const deepOnRecord = createOnRecord();
-        // 动作工具（sandbox-actions）固定加载：保证 action 工具永远可达，
-        // 不依赖关键词推断（“拉黑/记笔记”等说法可能不在推断表内）
-        const deepCategories = new Set(inferredCategories);
-        deepCategories.add("sandbox-actions");
-        const deepToolIds = toolRouter.getDeepToolIds([...deepCategories]);
+        let responseDetail = "";
+        if (shouldRunDeep) {
+          // ══════════════════════════════════════════════════════════════
+          // Phase 2: DEEP DIVE — 核心 + 推断的专用工具
+          // ══════════════════════════════════════════════════════════════
+          const deepOnRecord = createOnRecord();
+          // 动作工具（sandbox-actions）固定加载：保证 action 工具永远可达，
+          // 不依赖关键词推断（“拉黑/记笔记”等说法可能不在推断表内）
+          const deepCategories = new Set(inferredCategories);
+          deepCategories.add("sandbox-actions");
+          const deepToolIds = toolRouter.getDeepToolIds([...deepCategories]);
 
-        // 使用 Phase 1 的完整消息历史作为 Phase 2 的输入
-        const deepResult = await runStreamPhase({
-          system: systemPromptWithSkills(SYSTEM_PROMPT_DEEP, skillSummary),
-          messages: [...requestModelMessages, ...triageResult.responseMessages],
-          tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord, approvalOptions),
-          stopWhen: stepCountIs(maxDeepRounds)
-        });
+          // 使用 Phase 1 的完整消息历史作为 Phase 2 的输入
+          const deepResult = await runStreamPhase({
+            system: systemPromptWithSkills(SYSTEM_PROMPT_DEEP, skillSummary),
+            messages: [...requestModelMessages, ...triageResult.responseMessages],
+            tools: this.options.registry.aiSdkTools(context, deepToolIds, deepOnRecord, approvalOptions),
+            stopWhen: stepCountIs(maxDeepRounds)
+          });
 
-        totalSteps += deepResult.stepCount;
-        totalToolResults += deepResult.toolResultCount;
-        finalText = deepResult.text || deepResult.finalAssistantMessage?.content || "";
+          totalSteps += deepResult.stepCount;
+          totalToolResults += deepResult.toolResultCount;
+          finalText = deepResult.text || deepResult.finalAssistantMessage?.content || "";
 
-        const deepFinish = deepResult.finishReason === "tool-calls"
-          ? " [Agent stopped at max tool rounds - increase maxDeepRounds]"
-          : "";
+          const deepFinish = deepResult.finishReason === "tool-calls"
+            ? " [Agent stopped at max tool rounds - increase maxDeepRounds]"
+            : "";
+
+          // 流式阶段已经输出过 assistant 消息则不再重复；否则补一条兜底消息。
+          if (!deepResult.finalAssistantMessage) {
+            const finalMessage = chat(
+              "assistant",
+              finalText || `Agent completed but did not produce a final text summary. Check the tool results above.${deepFinish}`
+            );
+            messages.push(finalMessage);
+            persist(() => stateStore.appendMessage(sessionId, runId, finalMessage));
+            emit({ type: "message", message: finalMessage });
+          }
+          responseDetail = `Layered routing complete: Phase 1 (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results) + Phase 2 (${deepResult.stepCount} steps, ${deepResult.toolResultCount} tool results). Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${deepResult.finishReason}.${deepResult.finishReason === "tool-calls" ? " Max tool rounds reached." : ""}`;
+        } else {
+          // 无需 Deep Dive：发布 Phase 1 最终文本作为本轮唯一模型回复。
+          finalText = triageFinal?.content || triageResult.text || "";
+          if (triageFinal) {
+            messages.push(triageFinal);
+            persist(() => stateStore.appendMessage(sessionId, runId, triageFinal));
+            emit({ type: "message", message: triageFinal });
+          } else {
+            const finalMessage = chat(
+              "assistant",
+              finalText || "Agent completed but did not produce a final text summary."
+            );
+            messages.push(finalMessage);
+            persist(() => stateStore.appendMessage(sessionId, runId, finalMessage));
+            emit({ type: "message", message: finalMessage });
+          }
+          responseDetail = `Layered routing complete: Phase 1 only (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results). Deep Dive skipped. Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${triageResult.finishReason}.`;
+        }
 
         // ── 检查是否有待审批 ──
         if (toolRecords.some((record) => record.invocation.status === "pending_approval")) {
           status = "needs_approval";
         }
 
-        // 流式阶段已经输出过 assistant 消息则不再重复；否则补一条兜底消息。
-        if (!deepResult.finalAssistantMessage) {
-          const finalMessage = chat(
-            "assistant",
-            finalText || `Agent completed but did not produce a final text summary. Check the tool results above.${deepFinish}`
-          );
-          messages.push(finalMessage);
-          persist(() => stateStore.appendMessage(sessionId, runId, finalMessage));
-          emit({ type: "message", message: finalMessage });
-        }
-
         const responseAudit = event(
           "model_response",
           "Model response",
-          `Layered routing complete: Phase 1 (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results) + Phase 2 (${deepResult.stepCount} steps, ${deepResult.toolResultCount} tool results). Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${deepResult.finishReason}.${deepResult.finishReason === "tool-calls" ? " Max tool rounds reached." : ""}`
+          responseDetail
         );
         audit.push(responseAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, responseAudit));

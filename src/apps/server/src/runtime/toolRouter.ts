@@ -109,7 +109,8 @@ export class ToolRouter {
   inferCategories(triageToolCalls: string[], userMessage: string): ToolCategory[] {
     const categories = new Set<ToolCategory>(["core-triage"]); // 核心工具始终加载
 
-    // 规则 1：根据已调用的工具推断
+    // 规则 1：根据已调用的工具推断。
+    // 注意：shell/http 已进入 Triage 工具集，不应再触发 Deep Dive。
     for (const call of triageToolCalls) {
       if (call.startsWith("secops_wazuh_")) categories.add("wazuh-platform");
       if (call.startsWith("secops_shuffle_")) categories.add("shuffle-soar");
@@ -117,8 +118,6 @@ export class ToolRouter {
       if (
         call === "secops_case_note_write" ||
         call === "secops_command_run_sandbox" ||
-        call === "secops_command_run_shell" ||
-        call === "secops_http_request" ||
         call === "secops_full_access_exec"
       ) {
         categories.add("sandbox-actions");
@@ -148,12 +147,12 @@ export class ToolRouter {
     ) {
       categories.add("reporting");
     }
-    if (msg.includes("执行") || msg.includes("命令") || msg.includes("exec") ||
-      msg.includes("运行") || msg.includes("run") || msg.includes("笔记") ||
-      msg.includes("案例") || msg.includes("沙箱") || msg.includes("note") ||
-      msg.includes("ctf") || msg.includes("shell") || msg.includes("bash") ||
-      msg.includes("network") || msg.includes("网络") || msg.includes("http") ||
-      msg.includes("dns") || msg.includes("域名") || msg.includes("curl")
+    // sandbox-actions 只放“Triage 无法直接执行的延迟动作工具”：
+    // 笔记/案例、沙箱预置命令、全权限执行。shell/network/http/dns 已常驻 Triage，
+    // 不再为了它们进入 Deep Dive。
+    if (msg.includes("笔记") || msg.includes("案例") || msg.includes("note") ||
+      msg.includes("case note") || msg.includes("沙箱") || msg.includes("sandbox") ||
+      msg.includes("全权限") || msg.includes("full access")
     ) {
       categories.add("sandbox-actions");
     }
