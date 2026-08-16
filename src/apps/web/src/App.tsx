@@ -30,7 +30,7 @@ import {
   XCircle,
   Wrench
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import type {
   AgentRun,
@@ -152,6 +152,10 @@ function defaultWorkspaceHeight(zone: number | null, max: number): number {
 type InspectorTab = "plan" | "audit" | "artifacts";
 type WorkbenchPanel = "archived" | "plugins" | "skills" | "tools" | "dashboard" | "knowledge-graph" | "model-config" | InspectorTab;
 type ToolClassFilter = ToolClass | "all";
+
+type TranscriptItem =
+  | { id: string; kind: "message"; at: string; message: ChatMessage }
+  | { id: string; kind: "tool"; at: string; invocation: ToolInvocation };
 
 const toolClassFilters: Array<{ id: ToolClassFilter; label: string }> = [
   { id: "all", label: "全部" },
@@ -454,14 +458,35 @@ export function App() {
       at: invocation.startedAt,
       invocation
     }));
-    return [...messageItems, ...toolItems].sort((left, right) => {
-      const byTime = left.at.localeCompare(right.at);
-      if (byTime !== 0) {
-        return byTime;
+    // 两个序列本身都按时间升序；归并排序把 O(n log n) 降到 O(n)，
+    // 避免流式更新每 50ms 都重排整段长对话。
+    const merged: TranscriptItem[] = [];
+    let messageIndex = 0;
+    let toolIndex = 0;
+    while (messageIndex < messageItems.length || toolIndex < toolItems.length) {
+      if (messageIndex >= messageItems.length) {
+        merged.push(toolItems[toolIndex]!);
+        toolIndex += 1;
+        continue;
       }
-      // 同一时刻先展示工具调用再展示 assistant 文本，避免模型“先说话后动手”时语序被时间戳精度打乱。
-      return left.kind === "tool" && right.kind === "message" ? -1 : 1;
-    });
+      if (toolIndex >= toolItems.length) {
+        merged.push(messageItems[messageIndex]!);
+        messageIndex += 1;
+        continue;
+      }
+      const messageItem = messageItems[messageIndex]!;
+      const toolItem = toolItems[toolIndex]!;
+      const byTime = messageItem.at.localeCompare(toolItem.at);
+      if (byTime < 0) {
+        merged.push(messageItem);
+        messageIndex += 1;
+      } else {
+        // 同一时刻先展示工具调用再展示 assistant 文本，避免模型“先说话后动手”时语序被时间戳精度打乱。
+        merged.push(toolItem);
+        toolIndex += 1;
+      }
+    }
+    return merged;
   }, [messages, activeToolInvocations]);
   // 长对话按社交软件的方式从底部开始渲染：首屏只显示最近 N 条，滚动到顶部再向前展开。
   const visibleTranscriptItems = useMemo(
@@ -2294,10 +2319,11 @@ function inlineMarkdown(text: string): string {
   return text;
 }
 
-function TranscriptMessage({ message }: { message: ChatMessage }) {
+function TranscriptMessageBase({ message }: { message: ChatMessage }) {
   const isTool = message.role === "tool";
   const [toolExpanded, setToolExpanded] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const renderedContent = useMemo(() => renderMarkdown(message.content), [message.content]);
 
   if (isTool) {
     return (
@@ -2315,7 +2341,7 @@ function TranscriptMessage({ message }: { message: ChatMessage }) {
             <span className="tool-msg-hint">{toolExpanded ? "收起" : "详情"}</span>
           </button>
           {toolExpanded ? (
-            <div className="tool-message-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+            <div className="tool-message-content" dangerouslySetInnerHTML={{ __html: renderedContent }} />
           ) : null}
         </div>
       </article>
@@ -2337,7 +2363,7 @@ function TranscriptMessage({ message }: { message: ChatMessage }) {
             <time>{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
           </button>
           {thinkingExpanded ? (
-            <div className="message-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+            <div className="message-content" dangerouslySetInnerHTML={{ __html: renderedContent }} />
           ) : null}
         </div>
       </article>
@@ -2347,11 +2373,13 @@ function TranscriptMessage({ message }: { message: ChatMessage }) {
   return (
     <article aria-label={message.role === "user" ? "用户消息" : "智能体消息"} className={`message ${message.role}`}>
       <div className="message-body">
-        <div className="message-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+        <div className="message-content" dangerouslySetInnerHTML={{ __html: renderedContent }} />
       </div>
     </article>
   );
 }
+
+const TranscriptMessage = memo(TranscriptMessageBase);
 
 function labelForRole(role: ChatMessage["role"]) {
   if (role === "user") {
