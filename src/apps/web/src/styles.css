@@ -1553,12 +1553,22 @@ h3 {
   contain-intrinsic-size: auto 80px;
 }
 
-.tool-call.executed {
+ .tool-call.executed {
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
   padding: 5px 0;
   border: none;
   background: transparent;
+}
+
+/* 相邻工具调用条：先压缩掉 transcript 的 22px 网格 gap */
+.tool-call + .tool-call {
+  margin-top: -22px;
+}
+
+/* 两条已执行的紧凑工具调用条：再把透明内边距重叠，让按钮行直接贴住 */
+.tool-call.executed + .tool-call.executed {
+  margin-top: -32px;
 }
 
 .tool-call.guidance {

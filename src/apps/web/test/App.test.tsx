@@ -52,6 +52,12 @@ if (!/\.message\.assistant\.thinking \+ \.tool-call\.executed\s*{[^}]*padding-to
 if (!/\.message\.assistant\.thinking \+ \.tool-call:not\(\.executed\)\s*{[^}]*padding-top:\s*4px/.test(styles)) {
   throw new Error("Expected non-executed tool call cards under a thinking card to use a tighter top padding.");
 }
+if (!/\.tool-call \+ \.tool-call\s*{[^}]*margin-top:\s*-22px/.test(styles)) {
+  throw new Error("Expected adjacent tool call cards to collapse the transcript grid gap.");
+}
+if (!/\.tool-call\.executed \+ \.tool-call\.executed\s*{[^}]*margin-top:\s*-32px/.test(styles)) {
+  throw new Error("Expected adjacent executed tool call bars to overlap their transparent padding and sit flush.");
+}
 if (!/\.approval-panel\s*{[^}]*display:\s*grid/.test(styles)) {
   throw new Error("Expected approval panel to remain displayed as a grid.");
 }
