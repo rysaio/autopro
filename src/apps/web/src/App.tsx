@@ -440,9 +440,12 @@ export function App() {
   const activeAudit = lastRun?.audit ?? (streamAudit.length ? streamAudit : activeSession?.audit ?? []);
   const visibleAudit = activeAudit.length ? activeAudit : persistedAudit;
   const activeArtifacts = lastRun?.artifacts ?? (streamArtifacts.length ? streamArtifacts : activeSession?.artifacts ?? []);
-  const activeToolInvocations = lastRun?.toolInvocations ?? (
-    streamToolInvocations.length ? streamToolInvocations : activeSession?.toolInvocations ?? []
-  );
+  // 工具调用采用会话级累积视图：新开一轮对话时上一轮的工具卡片仍保留在时间线里。
+  // streamToolInvocations 保存该会话所有已观察到的工具调用；没有流式数据时
+  // 再回退到最近一次 run 或服务器快照。
+  const activeToolInvocations = streamToolInvocations.length
+    ? streamToolInvocations
+    : lastRun?.toolInvocations ?? activeSession?.toolInvocations ?? [];
   const transcriptItems = useMemo(() => {
     const messageItems = messages
       .filter((message) => message.role !== "tool")
@@ -948,7 +951,10 @@ export function App() {
       activeSession: null,
       streamAudit: [],
       streamArtifacts: [],
-      streamToolInvocations: [],
+      // 保留上一轮累积的工具调用，避免新对话开始时旧工具卡片从时间线消失。
+      streamToolInvocations: entry.streamToolInvocations.length
+        ? entry.streamToolInvocations
+        : entry.lastRun?.toolInvocations ?? [],
       prompt: ""
     });
     try {
@@ -983,12 +989,18 @@ export function App() {
           }
           const next = { ...current };
           delete next[sessionId];
-          next[finalSessionId] = Object.assign({}, previous, settled);
+          next[finalSessionId] = Object.assign({}, previous, settled, {
+            streamToolInvocations: mergeInvocations(previous.streamToolInvocations, run.toolInvocations)
+          });
           return next;
         });
         setCurrentSessionId((current) => (current === sessionId ? finalSessionId : current));
       } else {
-        updateSession(sessionId, settled);
+        updateSession(sessionId, (entry) => ({
+          ...entry,
+          ...settled,
+          streamToolInvocations: mergeInvocations(entry.streamToolInvocations, run.toolInvocations)
+        }));
       }
       await refreshApprovals();
       await refreshPersistedAudit();
@@ -2424,6 +2436,20 @@ function upsertInvocation(current: ToolInvocation[], invocation: ToolInvocation)
   return [...current, invocation];
 }
 
+export function mergeInvocations(current: ToolInvocation[], next: ToolInvocation[]): ToolInvocation[] {
+  if (!current.length) {
+    return [...next];
+  }
+  if (!next.length) {
+    return current;
+  }
+  const byId = new Map(current.map((invocation) => [invocation.id, invocation]));
+  for (const invocation of next) {
+    byId.set(invocation.id, invocation);
+  }
+  return [...byId.values()];
+}
+
 function upsertMessage(current: ChatMessage[], message: ChatMessage): ChatMessage[] {
   if (current.some((item) => item.id === message.id)) {
     return current.map((item) => (item.id === message.id ? message : item));
@@ -2507,7 +2533,6 @@ export function ToolCallCard({
   const executed = !guidance && !pending && invocation.status === "executed";
   // 成功执行的调用默认折叠；失败/拒绝/待审批/可恢复引导默认展开，便于即时处置。
   const [expanded, setExpanded] = useState(!executed);
-  const resultOpen = invocation.status === "failed" || invocation.status === "denied";
 
   if (executed) {
     return (
@@ -2527,11 +2552,11 @@ export function ToolCallCard({
           <div className="tool-call-result">
             <div className="tool-call-section">
               <span className="tool-call-section-label">调用参数</span>
-              <CollapsibleJson data={invocation.arguments} />
+              <CollapsibleJson data={invocation.arguments} defaultOpen={true} />
             </div>
             <div className="tool-call-section">
               <span className="tool-call-section-label">返回结果</span>
-              <CollapsibleJson data={invocation.result ?? invocation.error} />
+              <CollapsibleJson data={invocation.result ?? invocation.error} defaultOpen={true} />
             </div>
           </div>
         ) : null}
@@ -2567,7 +2592,7 @@ export function ToolCallCard({
           <div className="guidance-panel">
             <div className="tool-call-section">
               <span className="tool-call-section-label">调用参数</span>
-              <CollapsibleJson data={invocation.arguments} />
+              <CollapsibleJson data={invocation.arguments} defaultOpen={true} />
             </div>
             <div className="tool-call-section">
               <span className="tool-call-section-label">返回结果</span>
@@ -2596,11 +2621,11 @@ export function ToolCallCard({
           <div className="tool-call-result">
             <div className="tool-call-section">
               <span className="tool-call-section-label">调用参数</span>
-              <CollapsibleJson data={invocation.arguments} />
+              <CollapsibleJson data={invocation.arguments} defaultOpen={true} />
             </div>
             <div className="tool-call-section">
               <span className="tool-call-section-label">返回结果</span>
-              <CollapsibleJson data={invocation.result ?? invocation.error} defaultOpen={resultOpen} />
+              <CollapsibleJson data={invocation.result ?? invocation.error} defaultOpen={true} />
             </div>
           </div>
         )}

@@ -2,7 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import type { ChatMessage, ToolGuidance, ToolInvocation, ToolManifest } from "@secops-agent/shared";
-import { clampSidebarWidth, conversationTitle, reconcileEnabledTools, ToolCallCard } from "../src/App.js";
+import { clampSidebarWidth, conversationTitle, mergeInvocations, reconcileEnabledTools, ToolCallCard } from "../src/App.js";
 import { McpServerConfigView } from "../src/McpServerConfigView.js";
 import { PluginView } from "../src/PluginView.js";
 import { SkillView } from "../src/SkillView.js";
@@ -39,6 +39,18 @@ if (passiveControlContrast >= focusedControlContrast) {
 }
 if (!/textarea:focus-visible,[\s\S]*input:focus-visible,[\s\S]*select:focus-visible\s*{[\s\S]*outline:\s*none;[\s\S]*box-shadow:\s*0 0 0 2px var\(--focus-halo\)/.test(styles)) {
   throw new Error("Expected inputs to use a soft focus halo instead of a thick dark outline.");
+}
+if (!/\.tool-call-section \.collapsible-json-toggle\s*{[^}]*display:\s*inline-flex/.test(styles)) {
+  throw new Error("Expected tool call payload/result toggles to remain visible so analysts can expand details.");
+}
+if (!/\.message\.assistant\.thinking \+ \.tool-call\s*{[^}]*margin-top:\s*-14px/.test(styles)) {
+  throw new Error("Expected the transcript spacing between a thinking card and an immediately following tool call card to be tightened.");
+}
+if (!/\.approval-panel\s*{[^}]*display:\s*grid/.test(styles)) {
+  throw new Error("Expected approval panel to remain displayed as a grid.");
+}
+if (!/\.approval-actions\s*{[^}]*display:\s*flex/.test(styles)) {
+  throw new Error("Expected approval actions to remain displayed as a flex row.");
 }
 if (!/\.model-config-row\.active\s*{[^}]*background:\s*var\(--surface-raised\)/.test(styles)) {
   throw new Error("Expected the active model configuration row to use a raised white surface.");
@@ -130,7 +142,7 @@ const cases: Array<{ name: string; invocation: ToolInvocation; expected: string[
       status: "pending_approval",
       error: "Action tool requires explicit analyst approval"
     }),
-    expected: ["pending_approval", "Allow", "Deny"]
+    expected: ["pending_approval", "Allow", "Deny", "approval-panel", "approval-actions"]
   }
 ];
 
@@ -243,6 +255,13 @@ for (const unexpected of ["removed", "new-high-risk"]) {
   if (reconciled.has(unexpected)) {
     throw new Error(`Expected refreshed tool selection to exclude ${unexpected}.`);
   }
+}
+
+const firstInvocation = invocation({ id: "tool-old", status: "executed", result: { ok: true } });
+const secondInvocation = invocation({ id: "tool-new", status: "executed", result: { ok: true } });
+const mergedInvocations = mergeInvocations([firstInvocation], [firstInvocation, secondInvocation]);
+if (mergedInvocations.length !== 2 || mergedInvocations[0]?.id !== "tool-old" || mergedInvocations[1]?.id !== "tool-new") {
+  throw new Error("Expected session tool invocations to accumulate by id across conversation turns.");
 }
 
 function invocation(input: Partial<ToolInvocation> & Pick<ToolInvocation, "id" | "status">): ToolInvocation {

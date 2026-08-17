@@ -1476,6 +1476,11 @@ h3 {
   background: var(--surface-subtle);
 }
 
+/* 思考链紧跟着工具调用卡时，收紧两者间距，让“思考 → 调用”在时间线上更连贯 */
+.message.assistant.thinking + .tool-call {
+  margin-top: -14px;
+}
+
 .message.assistant.thinking .thinking-label {
   margin-bottom: 4px;
   color: var(--text-tertiary);
@@ -1659,10 +1664,6 @@ h3 {
   font-weight: 800;
   letter-spacing: 0;
   text-transform: uppercase;
-}
-
-.tool-call-section .collapsible-json-toggle {
-  display: none;
 }
 
 .tool-call-section pre {
@@ -2916,6 +2917,10 @@ h3 {
 /* ===== Collapsible JSON ===== */
 .collapsible-json {
   margin-top: 2px;
+}
+
+.tool-call-section .collapsible-json-toggle {
+  display: inline-flex;
 }
 
 .collapsible-json-toggle {
