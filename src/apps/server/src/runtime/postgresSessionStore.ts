@@ -228,37 +228,31 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
 
   async listSessions(limit = 50, includeArchived = false): Promise<AgentSessionSummary[]> {
     const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
+    // 相关标量子查询替代多表 LEFT JOIN + COUNT(DISTINCT ...)：
+    // 避免 runs × messages × tool_invocations × guidance × approvals 的笛卡尔积膨胀，
+    // 会话数量增长后列表查询仍可保持稳定延迟。
     const result = await this.db.query<SessionSummaryRow>(
       `SELECT
          s.id,
          s.created_at,
          s.updated_at,
-         max(s.archived_at) AS archived_at,
-         count(DISTINCT r.id)::int AS run_count,
-         count(DISTINCT m.id)::int AS message_count,
-         count(DISTINCT ti.id)::int AS tool_invocation_count,
-         count(DISTINCT tg.id)::int AS guidance_count,
-         count(DISTINCT pa.id)::int AS pending_approval_count,
-         latest.message AS latest_message
+         s.archived_at,
+         (SELECT count(*) FROM secops_runs r WHERE r.session_id = s.id)::int AS run_count,
+         (SELECT count(*) FROM secops_messages m WHERE m.session_id = s.id)::int AS message_count,
+         (SELECT count(*) FROM secops_tool_invocations ti WHERE ti.session_id = s.id)::int AS tool_invocation_count,
+         (SELECT count(*) FROM secops_tool_guidance tg WHERE tg.session_id = s.id)::int AS guidance_count,
+         (SELECT count(*) FROM secops_pending_approvals pa
+          WHERE pa.session_id = s.id
+            AND pa.status = 'pending'
+            AND pa.expires_at > now())::int AS pending_approval_count,
+         (SELECT message
+          FROM secops_messages latest_messages
+          WHERE latest_messages.session_id = s.id
+          ORDER BY latest_messages.created_at DESC, latest_messages.id DESC
+          LIMIT 1) AS latest_message
        FROM secops_sessions s
-       LEFT JOIN secops_runs r ON r.session_id = s.id
-       LEFT JOIN secops_messages m ON m.session_id = s.id
-       LEFT JOIN secops_tool_invocations ti ON ti.session_id = s.id
-       LEFT JOIN secops_tool_guidance tg ON tg.session_id = s.id
-       LEFT JOIN secops_pending_approvals pa
-         ON pa.session_id = s.id
-        AND pa.status = 'pending'
-        AND pa.expires_at > now()
-       LEFT JOIN LATERAL (
-         SELECT message
-         FROM secops_messages latest_messages
-         WHERE latest_messages.session_id = s.id
-         ORDER BY latest_messages.created_at DESC, latest_messages.id DESC
-         LIMIT 1
-       ) latest ON true
        WHERE ($2::boolean AND s.archived_at IS NOT NULL)
           OR (NOT $2::boolean AND s.archived_at IS NULL)
-       GROUP BY s.id, s.created_at, s.updated_at, latest.message
        ORDER BY s.updated_at DESC, s.id DESC
        LIMIT $1`,
       [boundedLimit, includeArchived]

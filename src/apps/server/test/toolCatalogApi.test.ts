@@ -341,17 +341,20 @@ describe("tool catalog API with plugins", () => {
     const config = testConfig();
     await installFakePlugin(config.pluginsDir, "wazuh-demo", "Wazuh Demo");
     const app = buildServer(config, {
-      // 序列模型：triage 调 core 工具后结束，deep 调插件 action 工具后结束
+      // 序列模型：triage 连续调用 core 工具直到达到轮次上限，deep 调插件 action 工具后结束。
+      // 新的路由决策只根据模型是否给出最终答复/是否达到轮次上限决定是否进入 deep；
+      // 用户消息中的 wazuh 关键词只用于 deep 阶段的类别加载。
       createModel: (_connection, _request) => createSequencedModel([
-        { tool: "secops_ioc_enrich" },
-        null,
+        { tool: "secops_ioc_enrich", input: { indicator: "203.0.113.10" } },
+        { tool: "secops_ioc_enrich", input: { indicator: "203.0.113.10" } },
+        { tool: "secops_ioc_enrich", input: { indicator: "203.0.113.10" } },
         { tool: "secops_wazuh_block_ip", input: { ip: "203.0.113.10" } },
         null
       ]),
       createPluginClient
     });
 
-    // triage 阶段模型只能看到 core 工具；deep 阶段经关键词推断加载 wazuh-platform，
+    // triage 阶段模型只能看到 core 工具，3 轮后达到上限；deep 阶段经关键词推断加载 wazuh-platform，
     // 插件 action 工具 wazuh.block_ip 在 sandbox+ask 下必须走审批（全局 ask：所有 action 均审批）
     const run = await app.inject({
       method: "POST",
@@ -364,6 +367,7 @@ describe("tool catalog API with plugins", () => {
     expect(run.statusCode).toBe(200);
     const result = run.json();
     expect(result.status).toBe("needs_approval");
+    expect(result.audit.some((event: { label?: string }) => event.label === "Phase 1: Triage")).toBe(true);
     expect(result.toolInvocations.some((tool: { toolName: string; status: string }) =>
       tool.toolName === "wazuh.block_ip" && tool.status === "pending_approval"
     )).toBe(true);

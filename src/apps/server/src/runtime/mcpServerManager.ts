@@ -75,9 +75,8 @@ export class McpServerManager {
   }
 
   async load(): Promise<McpServerConfigState> {
-    for (const server of this.servers) {
-      await this.connect(server);
-    }
+    // 每个独立 MCP server 使用互不相同的 sourceId，可安全并行连接以缩短冷启动时间。
+    await Promise.all(this.servers.map((server) => this.connect(server)));
     return this.list();
   }
 

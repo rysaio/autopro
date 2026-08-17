@@ -635,6 +635,16 @@ export function App() {
   }
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const pendingScrollElementRef = useRef<HTMLDivElement | null>(null);
+
+  // 清理未执行的滚动节流帧，避免卸载后仍访问 DOM。
+  useEffect(() => () => {
+    if (scrollFrameRef.current !== null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
+  }, []);
 
   // 打开/切换对话后自动滚动到最新消息（底部）。
   // 用 useLayoutEffect：在浏览器绘制前同步设置滚动位置，
@@ -658,15 +668,28 @@ export function App() {
   }, [messages, activeToolInvocations, activeSession, transcriptLimit]);
 
   function handleTranscriptScroll(event: ReactUIEvent<HTMLDivElement>) {
-    const element = event.currentTarget as HTMLDivElement;
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    stickToBottomRef.current = distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD;
-
-    // 长对话反向加载：滚动到顶部附近时，向前展开更早的一页消息。
-    if (element.scrollTop < 40 && transcriptLimit < transcriptItems.length) {
-      prependAnchorRef.current = { oldHeight: element.scrollHeight, oldTop: element.scrollTop };
-      setTranscriptLimit((limit) => Math.min(limit + TRANSCRIPT_PAGE_SIZE, transcriptItems.length));
+    // 滚动事件频率很高；每帧最多读取一次 scrollHeight/clientHeight，
+    // 避免在滚动过程中反复触发强制布局（layout thrash）。
+    pendingScrollElementRef.current = event.currentTarget as HTMLDivElement;
+    if (scrollFrameRef.current !== null) {
+      return;
     }
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const element = pendingScrollElementRef.current;
+      pendingScrollElementRef.current = null;
+      if (!element) {
+        return;
+      }
+      const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+      stickToBottomRef.current = distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD;
+
+      // 长对话反向加载：滚动到顶部附近时，向前展开更早的一页消息。
+      if (element.scrollTop < 40 && transcriptLimit < transcriptItems.length) {
+        prependAnchorRef.current = { oldHeight: element.scrollHeight, oldTop: element.scrollTop };
+        setTranscriptLimit((limit) => Math.min(limit + TRANSCRIPT_PAGE_SIZE, transcriptItems.length));
+      }
+    });
   }
 
   function startNewSession() {
@@ -2517,6 +2540,41 @@ function CollapsibleJson({
   );
 }
 
+function ExecutedToolCallCardBase({ invocation }: { invocation: ToolInvocation }) {
+  // 成功执行的调用默认折叠；失败/拒绝/待审批/可恢复引导默认展开，便于即时处置。
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className={`tool-call ${invocation.status}`} key={invocation.id}>
+      <button
+        className="tool-call-toggle"
+        onClick={() => setExpanded((prev) => !prev)}
+        type="button"
+        title={expanded ? "折叠工具调用" : "展开工具调用"}
+      >
+        {expanded ? <ChevronDown size={11} aria-hidden="true" /> : <ChevronRight size={11} aria-hidden="true" />}
+        <strong>{invocation.displayName}</strong>
+        <span>{invocation.status}</span>
+        <time>{new Date(invocation.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
+      </button>
+      {expanded ? (
+        <div className="tool-call-result">
+          <div className="tool-call-section">
+            <span className="tool-call-section-label">调用参数</span>
+            <CollapsibleJson data={invocation.arguments} defaultOpen={true} />
+          </div>
+          <div className="tool-call-section">
+            <span className="tool-call-section-label">返回结果</span>
+            <CollapsibleJson data={invocation.result ?? invocation.error} defaultOpen={true} />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const ExecutedToolCallCard = memo(ExecutedToolCallCardBase);
+
 export function ToolCallCard({
   invocation,
   isResolving,
@@ -2531,37 +2589,11 @@ export function ToolCallCard({
   const pending = invocation.status === "pending_approval";
   const guidance = invocation.guidance;
   const executed = !guidance && !pending && invocation.status === "executed";
-  // 成功执行的调用默认折叠；失败/拒绝/待审批/可恢复引导默认展开，便于即时处置。
-  const [expanded, setExpanded] = useState(!executed);
 
+  // 成功执行的工具卡片占长对话的大多数；拆成 memo 子组件，
+  // 避免流式更新或滚动加载时，稳定的历史工具卡片跟着 App 一起重渲染。
   if (executed) {
-    return (
-      <div className={`tool-call ${invocation.status}`} key={invocation.id}>
-        <button
-          className="tool-call-toggle"
-          onClick={() => setExpanded((prev) => !prev)}
-          type="button"
-          title={expanded ? "折叠工具调用" : "展开工具调用"}
-        >
-          {expanded ? <ChevronDown size={11} aria-hidden="true" /> : <ChevronRight size={11} aria-hidden="true" />}
-          <strong>{invocation.displayName}</strong>
-          <span>{invocation.status}</span>
-          <time>{new Date(invocation.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
-        </button>
-        {expanded ? (
-          <div className="tool-call-result">
-            <div className="tool-call-section">
-              <span className="tool-call-section-label">调用参数</span>
-              <CollapsibleJson data={invocation.arguments} defaultOpen={true} />
-            </div>
-            <div className="tool-call-section">
-              <span className="tool-call-section-label">返回结果</span>
-              <CollapsibleJson data={invocation.result ?? invocation.error} defaultOpen={true} />
-            </div>
-          </div>
-        ) : null}
-      </div>
-    );
+    return <ExecutedToolCallCard invocation={invocation} />;
   }
 
   return (

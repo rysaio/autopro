@@ -80,10 +80,10 @@ export class ToolRouter {
   }
 
   /**
-   * 获取 Phase 1 分诊工具 ID 列表（所有常驻工具）
+   * 获取 Phase 1 分诊工具 ID 列表（所有常驻工具）。
+   * 先调用 build(registry) 再读取；若尚未 build 则返回空数组。
    */
   getTriageToolIds(): string[] {
-    this.build(null!); // 确保已初始化（build 在 registry 可用时调用）
     return [...this.alwaysVisibleIds];
   }
 
@@ -173,7 +173,6 @@ export class ToolRouter {
    * 获取 Phase 2 专用工具 ID 列表
    */
   getSpecializedToolIds(categories: ToolCategory[]): string[] {
-    this.build(null!);
     const toolIds = new Set<string>();
     for (const cat of categories) {
       const ids = this.categoryMap.get(cat) ?? [];

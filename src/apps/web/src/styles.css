@@ -1232,6 +1232,7 @@ h3 {
   overflow: auto;
   padding: 24px max(16px, calc((100% - 840px) / 2)) 36px;
   scrollbar-color: var(--accent-400) transparent;
+  overscroll-behavior: contain;
 }
 
 .transcript::-webkit-scrollbar-track {
@@ -1314,6 +1315,8 @@ h3 {
   display: block;
   width: 100%;
   max-width: 100%;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
 }
 
 .message.user {
@@ -1546,6 +1549,8 @@ h3 {
   border: 1px solid var(--warn-200);
   border-radius: var(--r-md);
   background: var(--warn-50);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
 }
 
 .tool-call.executed {

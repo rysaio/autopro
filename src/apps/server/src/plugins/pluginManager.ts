@@ -90,9 +90,8 @@ export class PluginManager {
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
       .map((entry) => entry.name)
       .sort();
-    for (const pluginId of pluginDirs) {
-      await this.loadPlugin(pluginId);
-    }
+    // 插件目录互不依赖；并行连接各插件的 MCP server 可显著缩短冷启动时间。
+    await Promise.all(pluginDirs.map((pluginId) => this.loadPlugin(pluginId)));
   }
 
   /** 断开全部已加载插件连接、移除其工具，再重新扫描加载（无需重启服务）。 */
@@ -162,7 +161,9 @@ export class PluginManager {
     const clients: McpClientHandle[] = [];
     const serverStates: NonNullable<PluginSummary["mcpServers"]> = [];
     let toolCount = 0;
-    for (const serverName of serverNames) {
+    // 同一插件可声明多个 MCP server；并行连接可以缩短单插件冷启动时间。
+    // registry.registerTools 是同步原子操作，并发调用也会逐个完成，重复检测不受影响。
+    await Promise.all(serverNames.map(async (serverName) => {
       const config = mcpServers[serverName] as McpServerConfigFile;
       let client: McpClientHandle | undefined;
       let resolved: ResolvedMcpServer | undefined;
@@ -192,7 +193,7 @@ export class PluginManager {
           error instanceof Error ? error.message : String(error)
         ));
       }
-    }
+    }));
     const state: PluginState = {
       id: pluginId,
       name: manifest.name,

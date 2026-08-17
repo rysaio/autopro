@@ -266,6 +266,43 @@ describe("ToolRegistry", () => {
     expect(read.invocation.status).toBe("executed");
   });
 
+  it("caches read-only tool results and invalidates after action execution", async () => {
+    const registry = new ToolRegistry();
+    let executions = 0;
+    registry.registerTools([
+      new TestTool(
+        "test_cached_read",
+        testManifest("test.cached.read", "Cached Read"),
+        async () => {
+          executions += 1;
+          return { output: { ok: true } };
+        }
+      )
+    ]);
+    const autoContext = { ...context, permissionMode: "auto" as const };
+
+    const first = await registry.executeApiTool("test_cached_read", "cache-read-1", {}, autoContext, { useCache: true });
+    const second = await registry.executeApiTool("test_cached_read", "cache-read-2", {}, autoContext, { useCache: true });
+
+    expect(first.invocation.status).toBe("executed");
+    expect(second.invocation.status).toBe("executed");
+    expect(executions).toBe(1);
+    expect(registry.cache.stats().hits).toBe(1);
+
+    const action = await registry.executeApiTool("secops_case_note_write", "cache-action", {
+      caseId: "INC-CACHE",
+      title: "Cache invalidation note",
+      body: "This action should clear read-only cache entries."
+    }, autoContext);
+
+    expect(action.invocation.status).toBe("executed");
+    expect(registry.cache.stats().size).toBe(0);
+
+    const third = await registry.executeApiTool("test_cached_read", "cache-read-3", {}, autoContext, { useCache: true });
+    expect(third.invocation.status).toBe("executed");
+    expect(executions).toBe(2);
+  });
+
   it("autoApproveHighRisk=false executes high risk actions fully automatically", async () => {
     const registry = new ToolRegistry(undefined, undefined, false);
     registry.registerTools([

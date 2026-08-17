@@ -1,7 +1,8 @@
 import { jsonSchema, type ToolExecutionOptions, type ToolSet } from "ai";
-import type { ToolManifest, ToolInvocation } from "@secops-agent/shared";
+import type { EvidenceArtifact, ToolClass, ToolManifest, ToolInvocation } from "@secops-agent/shared";
 import type { ModelToolCall } from "../providers/types.js";
 import { approvalResult, ApprovalStore, type PendingApprovalStore } from "../runtime/approvalStore.js";
+import { ToolCache, type ToolCacheCategory } from "../runtime/toolCache.js";
 import { createActionTools } from "./actionTools.js";
 import { isRecoverableToolResult } from "./guidance.js";
 import { validateToolInput } from "./inputValidation.js";
@@ -30,6 +31,8 @@ export class ToolRegistry {
   private readonly deferLoadingOverrides = new Map<string, boolean>();
   /** 模型工具调用正在等待审批决策时的 Promise 解析器。 */
   private readonly approvalWaiters = new Map<string, ApprovalWaiter>();
+  /** 服务生命周期内共享的语义工具缓存（跨 run 命中）。 */
+  readonly cache = new ToolCache();
 
   constructor(
     tools: SecOpsTool[] = [
@@ -89,6 +92,8 @@ export class ToolRegistry {
       }
       for (const manifestId of owned.manifestIds) {
         this.byManifestId.delete(manifestId);
+        // 工具被移除后，其旧缓存条目不应继续命中（插件/服务重载可能更换实现）。
+        this.cache.invalidate(`${manifestId}:`);
       }
       this.externalSources.delete(sourceId);
     }
@@ -108,6 +113,14 @@ export class ToolRegistry {
   /** 设置 auto 模式下 risk=high 的 action 工具是否仍需审批（运行时热更新）。 */
   setAutoApproveHighRisk(value: boolean): void {
     this.autoApproveHighRisk = value;
+  }
+
+  hasManifest(id: string): boolean {
+    return this.byManifestId.has(id);
+  }
+
+  getManifest(id: string): ToolManifest | undefined {
+    return this.byManifestId.get(id)?.manifest;
   }
 
   setDeferLoadingOverride(id: string, deferLoading: boolean): boolean {
@@ -163,7 +176,8 @@ export class ToolRegistry {
             secOpsTool.apiName,
             callId,
             coerceRecord(input),
-            context
+            context,
+            { useCache: true }
           );
           if (approvalOptions.waitForApproval && record.invocation.status === "pending_approval") {
             // 先把 pending 事件发出去，让 UI 显示审批卡片；随后阻塞，
@@ -185,14 +199,15 @@ export class ToolRegistry {
   }
 
   async executeToolCall(call: ModelToolCall, context: ToolContext): Promise<ToolExecutionRecord> {
-    return this.executeApiTool(call.function.name, call.id, parseArguments(call.function.arguments), context);
+    return this.executeApiTool(call.function.name, call.id, parseArguments(call.function.arguments), context, { useCache: true });
   }
 
   async executeApiTool(
     apiName: string,
     callId: string,
     parsedArgs: Record<string, unknown>,
-    context: ToolContext
+    context: ToolContext,
+    options: { useCache?: boolean } = {}
   ): Promise<ToolExecutionRecord> {
     const startedAt = new Date().toISOString();
     const tool = this.byApiName.get(apiName);
@@ -243,6 +258,19 @@ export class ToolRegistry {
         artifacts: []
       };
     }
+    // 语义工具缓存：模型工具调用（useCache=true）中，读操作命中后直接返回历史结果，
+    // 跳过重复执行。直接 API/MCP 调用默认 useCache=false，保证用户显式调用拿到新鲜结果。
+    // 动作工具不可缓存，且执行成功后会清空缓存（状态变更可能影响读结果）。
+    if (options.useCache && tool.manifest.toolClass !== "action") {
+      const cached = this.cache.get(tool.manifest.id, parsedArgs);
+      if (cached) {
+        return {
+          invocation: invocation(tool, callId, parsedArgs, "executed", startedAt, cached.result),
+          artifacts: cached.artifacts as EvidenceArtifact[]
+        };
+      }
+    }
+
     try {
       const result = await tool.execute(parsedArgs, context);
       if (isRecoverableToolResult(result.output)) {
@@ -254,6 +282,18 @@ export class ToolRegistry {
           },
           artifacts: result.artifacts ?? []
         };
+      }
+      if (tool.manifest.toolClass === "action") {
+        // 动作成功执行会改变系统状态：无论本次调用是否走缓存，都必须清空读缓存。
+        this.cache.invalidateAfterAction();
+      } else if (options.useCache && result.output !== undefined) {
+        this.cache.set(
+          tool.manifest.id,
+          parsedArgs,
+          cacheCategory(tool.manifest.toolClass),
+          result.output,
+          result.artifacts ?? []
+        );
       }
       return {
         invocation: invocation(tool, callId, parsedArgs, "executed", startedAt, result.output),
@@ -355,6 +395,16 @@ export class ToolRegistry {
     return enabledManifestIds
       .map((id) => this.byManifestId.get(id))
       .filter((tool): tool is SecOpsTool => Boolean(tool));
+  }
+}
+
+function cacheCategory(toolClass: ToolClass): ToolCacheCategory {
+  switch (toolClass) {
+    case "perception": return "perception";
+    case "reasoning": return "reasoning";
+    case "evidence": return "evidence";
+    case "action": return "action";
+    default: return "perception";
   }
 }
 

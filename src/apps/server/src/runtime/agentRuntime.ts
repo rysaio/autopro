@@ -13,7 +13,6 @@ import type { ToolExecutionRecord } from "../tools/types.js";
 import { NoopSessionStateStore, type SessionStateStore, type StateMarker } from "./sessionStateStore.js";
 import { SYSTEM_PROMPT_TRIAGE, SYSTEM_PROMPT_DEEP } from "./systemPrompt.js";
 import { systemPromptWithSkills } from "./systemPrompt.js";
-import { ToolCache, type ToolCacheCategory } from "./toolCache.js";
 import { toolRouter } from "./toolRouter.js";
 import type { SkillCatalog } from "../skills/catalog.js";
 
@@ -43,20 +42,7 @@ export interface AgentRuntimeOptions {
 type AgentRunContext = Parameters<ToolRegistry["aiSdkTools"]>[0];
 export type AgentRunEventSink = (event: AgentRunEvent) => void;
 
-// ── 工具分类到缓存类别的映射 ──
-function cacheCategory(toolClass: string): ToolCacheCategory {
-  switch (toolClass) {
-    case "perception": return "perception";
-    case "reasoning": return "reasoning";
-    case "evidence": return "evidence";
-    case "action": return "action";
-    default: return "perception";
-  }
-}
-
 export class AgentRuntime {
-  private readonly toolCache = new ToolCache();
-
   constructor(private readonly options: AgentRuntimeOptions) {}
 
   async run(request: AgentRunRequest, onEvent?: AgentRunEventSink): Promise<AgentRun> {
@@ -122,42 +108,25 @@ export class AgentRuntime {
         : { waitForApproval: true }
       : {};
 
-    // ── 缓存写入（创新点） ──
-    const cacheToolResult = (record: ToolExecutionRecord) => {
-      if (record.invocation.status === "executed" && record.invocation.result) {
-        const recordManifest = this.options.registry.manifests().find((m) => m.id === record.invocation.toolName);
-        if (recordManifest) {
-          this.toolCache.set(
-            record.invocation.toolName,
-            record.invocation.arguments,
-            cacheCategory(recordManifest.toolClass),
-            record.invocation.result,
-            record.artifacts
-          );
-          // Action 执行后使缓存失效（状态可能已变更）
-          if (recordManifest.toolClass === "action") {
-            this.toolCache.invalidateAfterAction();
-          }
-        }
-      }
-    };
-
     // ── 创建 onRecord 回调工厂 ──
+    // 用 Map 替代 find/findIndex，工具调用数量增长时保持 O(1) 更新。
+    const toolRecordIndex = new Map<string, number>();
     const createOnRecord = () => (record: ToolExecutionRecord) => {
-      const previous = toolRecords.find((existing) => existing.invocation.id === record.invocation.id);
+      const existingIndex = toolRecordIndex.get(record.invocation.id);
+      const previous = existingIndex === undefined ? undefined : toolRecords[existingIndex];
       const resolvingPendingApproval = waitForApproval
         && previous?.invocation.status === "pending_approval"
         && record.invocation.status !== "pending_approval";
 
       // pending 事件与批准/拒绝后的真实结果使用同一个 toolCallId：
       // 内存、SSE 与持久化存储均按 id 覆盖，避免一张审批卡变成两条记录。
-      const recordIndex = toolRecords.findIndex((existing) => existing.invocation.id === record.invocation.id);
-      if (recordIndex === -1) {
+      if (existingIndex === undefined) {
         toolRecords.push(record);
         toolInvocations.push(record.invocation);
+        toolRecordIndex.set(record.invocation.id, toolRecords.length - 1);
       } else {
-        toolRecords[recordIndex] = record;
-        toolInvocations[recordIndex] = record.invocation;
+        toolRecords[existingIndex] = record;
+        toolInvocations[existingIndex] = record.invocation;
       }
       persist(() => stateStore.recordToolInvocation(sessionId, runId, record.invocation, record.artifacts));
       const guidance = record.invocation.guidance;
@@ -196,7 +165,6 @@ export class AgentRuntime {
         messages.push(toolMessage);
         persist(() => stateStore.appendMessage(sessionId, runId, toolMessage));
         emit({ type: "message", message: toolMessage });
-        cacheToolResult(record);
         return;
       }
 
@@ -247,7 +215,6 @@ export class AgentRuntime {
       messages.push(toolMessage);
       persist(() => stateStore.appendMessage(sessionId, runId, toolMessage));
       emit({ type: "message", message: toolMessage });
-      cacheToolResult(record);
     };
 
     // ── 流式消息：把 LLM 输出按真实发生顺序推给前端 ──
@@ -461,12 +428,11 @@ export class AgentRuntime {
         emit({ type: "audit", audit: triageAudit });
 
         // 使用 registry 直接生成 triage 工具集，带上 onRecord 以追踪结果
-        const triageOnRecord = createOnRecord();
         const triageToolIds = toolRouter.getTriageToolIds();
         const triageResult = await runStreamPhase({
           system: systemPromptWithSkills(SYSTEM_PROMPT_TRIAGE, skillSummary),
           messages: requestModelMessages,
-          tools: this.options.registry.aiSdkTools(context, triageToolIds, triageOnRecord, approvalOptions),
+          tools: this.options.registry.aiSdkTools(context, triageToolIds, createOnRecord(), approvalOptions),
           stopWhen: stepCountIs(maxTriageRounds),
           streamText: false
         });
@@ -474,7 +440,7 @@ export class AgentRuntime {
         totalSteps += triageResult.stepCount;
         totalToolResults += triageResult.toolResultCount;
 
-        // 收集 Phase 1 中调用的工具名，推断需要加载的专用工具类别
+        // 收集 Phase 1 中调用的工具名和用户消息，推断进入 Deep Dive 时应加载的专用工具类别。
         const triageToolCalls = triageResult.toolCallNames;
         const userMessage = request.messages
           .filter((m) => m.role === "user")
@@ -484,22 +450,18 @@ export class AgentRuntime {
         const savedTokens = toolRouter.estimateTokenSavings(inferredCategories);
 
         // ── 决策：是否进入 Deep Dive ──
-        // 规则：1) Phase 1 没有最终文本；2) 因 tool-calls 达到轮次上限；
-        //       3) Deep Dive 相对 Triage 能加载新工具。
+        // 只有模型在 triage 阶段没有给出最终答复、或因达到轮次上限而停不下来时，
+        // 才进入 Deep Dive。关键词推断只决定“加载哪些专用工具”，
+        // 不再因为关键词命中而强制模型在已给出答复后再跑一遍。
         const triageFinal = triageResult.finalAssistantMessage;
-        const triageToolIdSet = new Set(triageToolIds);
-        const decisionToolIds = toolRouter.getDeepToolIds(inferredCategories);
-        const hasSpecializedTools = decisionToolIds.some((id) => !triageToolIdSet.has(id));
-        const shouldRunDeep = !triageFinal
-          || triageResult.finishReason === "tool-calls"
-          || hasSpecializedTools;
+        const shouldRunDeep = !triageFinal || triageResult.finishReason === "tool-calls";
 
         const routeAudit = event(
           "model_request",
           shouldRunDeep ? "Phase 2: Deep Dive" : "Phase 2: Skipped",
           shouldRunDeep
-            ? `Routing: inferred categories [${inferredCategories.join(", ")}], estimated token savings: ~${savedTokens} tokens. Phase 1 final text ${triageFinal ? "present" : "missing"}, finish ${triageResult.finishReason}, specialized tools ${hasSpecializedTools ? "required" : "not required"}.`
-            : `Routing: inferred categories [${inferredCategories.join(", ")}] can be satisfied by triage tools. Phase 1 final text will be published as the only reply.`
+            ? `Routing: inferred categories [${inferredCategories.join(", ")}], estimated token savings: ~${savedTokens} tokens. Phase 1 final text ${triageFinal ? "present" : "missing"}, finish ${triageResult.finishReason}.`
+            : `Routing: triage produced a final answer; skipping Deep Dive. Categories [${inferredCategories.join(", ")}] were inferred for reference only.`
         );
         audit.push(routeAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, routeAudit));
@@ -543,7 +505,7 @@ export class AgentRuntime {
             persist(() => stateStore.appendMessage(sessionId, runId, finalMessage));
             emit({ type: "message", message: finalMessage });
           }
-          responseDetail = `Layered routing complete: Phase 1 (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results) + Phase 2 (${deepResult.stepCount} steps, ${deepResult.toolResultCount} tool results). Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${deepResult.finishReason}.${deepResult.finishReason === "tool-calls" ? " Max tool rounds reached." : ""}`;
+          responseDetail = `Layered routing complete: Phase 1 (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results) + Phase 2 (${deepResult.stepCount} steps, ${deepResult.toolResultCount} tool results). Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.options.registry.cache.hitRate() * 100)}% hit rate, ~${this.options.registry.cache.stats().savedTokensEstimate} tokens saved. Finish: ${deepResult.finishReason}.${deepResult.finishReason === "tool-calls" ? " Max tool rounds reached." : ""}`;
         } else {
           // 无需 Deep Dive：把 Phase 1 最终文本作为本轮唯一模型回复流式发布。
           finalText = triageFinal?.content || triageResult.text || "";
@@ -556,7 +518,7 @@ export class AgentRuntime {
             );
             await publishBufferedMessage(finalMessage);
           }
-          responseDetail = `Layered routing complete: Phase 1 only (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results). Deep Dive skipped. Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${triageResult.finishReason}.`;
+          responseDetail = `Layered routing complete: Phase 1 only (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results). Deep Dive skipped. Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.options.registry.cache.hitRate() * 100)}% hit rate, ~${this.options.registry.cache.stats().savedTokensEstimate} tokens saved. Finish: ${triageResult.finishReason}.`;
         }
 
         // ── 检查是否有待审批 ──
@@ -633,9 +595,9 @@ export class AgentRuntime {
     }
 
     // ── 缓存统计 ──
-    const cacheStats = this.toolCache.stats();
+    const cacheStats = this.options.registry.cache.stats();
     if (cacheStats.hits > 0) {
-      console.log(`[ToolCache] Run ${runId}: ${cacheStats.hits} hits, ${cacheStats.misses} misses, hit rate ${Math.round(this.toolCache.hitRate() * 100)}%, ~${cacheStats.savedTokensEstimate} tokens saved`);
+      console.log(`[ToolCache] Run ${runId}: ${cacheStats.hits} hits, ${cacheStats.misses} misses, hit rate ${Math.round(this.options.registry.cache.hitRate() * 100)}%, ~${cacheStats.savedTokensEstimate} tokens saved`);
     }
 
     const run = {

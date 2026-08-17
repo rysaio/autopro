@@ -55,6 +55,8 @@ export interface BuildServerOptions {
 
 export function buildServer(config: AppConfig, options: BuildServerOptions = {}) {
   const app = Fastify({ logger: true });
+  const allowedHosts = new Set(config.allowedHosts.map((item) => item.toLowerCase()));
+  const allowedOrigins = new Set(config.allowedOrigins.map((item) => item.toLowerCase()));
   const durableSessionStore = config.durableSessionMode === "postgres"
     ? new PostgresSessionStore(config.dataDir)
     : undefined;
@@ -106,11 +108,11 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
 
   app.addHook("onRequest", async (request, reply) => {
     const host = normalizeHost(request.headers.host);
-    if (!host || !isAllowed(host, config.allowedHosts)) {
+    if (!host || !allowedHosts.has(host)) {
       return reply.code(403).send({ error: host ? `Host ${host} is not allowed` : "Host header is required" });
     }
     const origin = normalizeOrigin(request.headers.origin);
-    if (origin && !isAllowed(origin, config.allowedOrigins)) {
+    if (origin && !allowedOrigins.has(origin)) {
       return reply.code(403).send({ error: `Origin ${origin} is not allowed` });
     }
     if (config.apiToken && request.method !== "OPTIONS" && !isAuthorized(request.headers.authorization, config.apiToken)) {
@@ -122,7 +124,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   void app.register(cors, {
     origin: (origin, callback) => {
       const normalized = normalizeOrigin(origin);
-      callback(null, !normalized || isAllowed(normalized, config.allowedOrigins));
+      callback(null, !normalized || allowedOrigins.has(normalized));
     }
   });
   app.addHook("onReady", async () => {
@@ -136,6 +138,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     await mcpServerManager.disconnectAll();
     await pluginManager.disconnectAll();
     await durableSessionStore?.close();
+    auditLog.close();
   });
   registerStreamableMcpRoutes(app, registry, config, () => runtimeSettings.get());
 
@@ -643,7 +646,7 @@ function applyToolVisibilityOverrides(registry: ToolRegistry, store: ToolVisibil
 }
 
 function hasManifest(registry: ToolRegistry, id: string): boolean {
-  return registry.manifests().some((manifest) => manifest.id === id);
+  return registry.hasManifest(id);
 }
 
 function isPluginMcpServerId(id: string): boolean {
@@ -806,10 +809,6 @@ function coerceLimit(value: unknown, fallback: number): number {
 
 function coerceBoolean(value: unknown): boolean {
   return value === true || value === "true" || value === "1";
-}
-
-function isAllowed(value: string, allowed: string[]): boolean {
-  return allowed.map((item) => item.toLowerCase()).includes(value.toLowerCase());
 }
 
 function isAuthorized(authorization: string | undefined, expectedToken: string): boolean {

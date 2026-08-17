@@ -97,7 +97,10 @@ export async function migratePostgresSessionStore(db: PGlite): Promise<void> {
     CREATE INDEX IF NOT EXISTS secops_audit_events_session_run_idx ON secops_audit_events(session_id, run_id);
     CREATE INDEX IF NOT EXISTS secops_state_markers_session_key_idx ON secops_state_markers(session_id, key);
     CREATE INDEX IF NOT EXISTS secops_pending_approvals_status_idx ON secops_pending_approvals(status, expires_at);
+    CREATE INDEX IF NOT EXISTS secops_pending_approvals_session_status_idx ON secops_pending_approvals(session_id, status, expires_at);
     CREATE INDEX IF NOT EXISTS secops_sessions_archived_idx ON secops_sessions(archived_at);
+    CREATE INDEX IF NOT EXISTS secops_sessions_updated_idx ON secops_sessions(updated_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS secops_messages_session_created_idx ON secops_messages(session_id, created_at, id);
   `);
 }
 
