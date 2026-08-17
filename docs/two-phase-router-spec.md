@@ -51,6 +51,6 @@
   - `decisionToolIds = toolRouter.getDeepToolIds(inferredCategories)`（不强制追加 sandbox-actions）
   - `hasNewTools = decisionToolIds.some(id => !triageToolIdSet.has(id))`
   - `shouldRunDeep = !triageFinal || triageResult.finishReason === "tool-calls" || hasNewTools`
-- `shouldRunDeep === false` 时发布 `triageFinal`（若为空则兜底生成一条），结束 run。
+- `shouldRunDeep === false` 时通过 `publishBufferedMessage` 把 `triageFinal` 以流式分片发布到前端，结束 run。
 - `shouldRunDeep === true` 时进入 Phase 2，并在 Deep Dive 工具集中追加 `sandbox-actions` 以保证动作工具可达；Phase 1 文本不发布。
 - `inferCategories` 同步收紧：shell/network/http/dns/curl 等已常驻 Triage，不再触发 sandbox-actions。

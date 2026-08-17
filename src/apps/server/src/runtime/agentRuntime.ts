@@ -300,6 +300,23 @@ export class AgentRuntime {
       return { start, delta, finalize };
     };
 
+    // ── 将分诊阶段内部收集的最终消息以流式方式发布 ──
+    // 决策为“仅 Phase 1”时，用户仍然看到连续输出，而不是突然冒出一整段。
+    const publishBufferedMessage = async (message: ChatMessage) => {
+      const chunkSize = 48;
+      for (let offset = 0; offset < message.content.length; offset += chunkSize) {
+        const partial: ChatMessage = {
+          ...message,
+          content: message.content.slice(0, offset + chunkSize)
+        };
+        emit({ type: "message", message: partial, streaming: true }, { persist: false });
+        await new Promise((resolve) => setTimeout(resolve, 8));
+      }
+      messages.push(message);
+      persist(() => stateStore.appendMessage(sessionId, runId, message));
+      emit({ type: "message", message });
+    };
+
     // ── 单个 streamText 阶段：消费 fullStream，按模型实际动作顺序转发事件 ──
     const runStreamPhase = async (options: {
       system: string;
@@ -528,20 +545,16 @@ export class AgentRuntime {
           }
           responseDetail = `Layered routing complete: Phase 1 (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results) + Phase 2 (${deepResult.stepCount} steps, ${deepResult.toolResultCount} tool results). Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${deepResult.finishReason}.${deepResult.finishReason === "tool-calls" ? " Max tool rounds reached." : ""}`;
         } else {
-          // 无需 Deep Dive：发布 Phase 1 最终文本作为本轮唯一模型回复。
+          // 无需 Deep Dive：把 Phase 1 最终文本作为本轮唯一模型回复流式发布。
           finalText = triageFinal?.content || triageResult.text || "";
           if (triageFinal) {
-            messages.push(triageFinal);
-            persist(() => stateStore.appendMessage(sessionId, runId, triageFinal));
-            emit({ type: "message", message: triageFinal });
+            await publishBufferedMessage(triageFinal);
           } else {
             const finalMessage = chat(
               "assistant",
               finalText || "Agent completed but did not produce a final text summary."
             );
-            messages.push(finalMessage);
-            persist(() => stateStore.appendMessage(sessionId, runId, finalMessage));
-            emit({ type: "message", message: finalMessage });
+            await publishBufferedMessage(finalMessage);
           }
           responseDetail = `Layered routing complete: Phase 1 only (${triageResult.stepCount} steps, ${triageResult.toolResultCount} tool results). Deep Dive skipped. Total: ${totalSteps} steps, ${totalToolResults} tool results. Cache: ${Math.round(this.toolCache.hitRate() * 100)}% hit rate, ~${this.toolCache.stats().savedTokensEstimate} tokens saved. Finish: ${triageResult.finishReason}.`;
         }
