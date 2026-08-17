@@ -1478,7 +1478,17 @@ h3 {
 
 /* 思考链紧跟着工具调用卡时，收紧两者间距，让“思考 → 调用”在时间线上更连贯 */
 .message.assistant.thinking + .tool-call {
-  margin-top: -14px;
+  margin-top: -22px;
+}
+
+/* 已执行的工具调用卡在思考链下方时去掉顶部内边距，让两行按钮真正贴近 */
+.message.assistant.thinking + .tool-call.executed {
+  padding-top: 0;
+}
+
+/* 未执行的工具调用卡（审批/失败/引导等）也压紧顶部内边距，避免卡片留白过大 */
+.message.assistant.thinking + .tool-call:not(.executed) {
+  padding-top: 4px;
 }
 
 .message.assistant.thinking .thinking-label {

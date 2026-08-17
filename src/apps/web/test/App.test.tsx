@@ -43,8 +43,14 @@ if (!/textarea:focus-visible,[\s\S]*input:focus-visible,[\s\S]*select:focus-visi
 if (!/\.tool-call-section \.collapsible-json-toggle\s*{[^}]*display:\s*inline-flex/.test(styles)) {
   throw new Error("Expected tool call payload/result toggles to remain visible so analysts can expand details.");
 }
-if (!/\.message\.assistant\.thinking \+ \.tool-call\s*{[^}]*margin-top:\s*-14px/.test(styles)) {
+if (!/\.message\.assistant\.thinking \+ \.tool-call\s*{[^}]*margin-top:\s*-22px/.test(styles)) {
   throw new Error("Expected the transcript spacing between a thinking card and an immediately following tool call card to be tightened.");
+}
+if (!/\.message\.assistant\.thinking \+ \.tool-call\.executed\s*{[^}]*padding-top:\s*0/.test(styles)) {
+  throw new Error("Expected an executed tool call card under a thinking card to remove its top padding.");
+}
+if (!/\.message\.assistant\.thinking \+ \.tool-call:not\(\.executed\)\s*{[^}]*padding-top:\s*4px/.test(styles)) {
+  throw new Error("Expected non-executed tool call cards under a thinking card to use a tighter top padding.");
 }
 if (!/\.approval-panel\s*{[^}]*display:\s*grid/.test(styles)) {
   throw new Error("Expected approval panel to remain displayed as a grid.");
