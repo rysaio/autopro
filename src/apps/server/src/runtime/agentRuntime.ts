@@ -450,18 +450,22 @@ export class AgentRuntime {
         const savedTokens = toolRouter.estimateTokenSavings(inferredCategories);
 
         // ── 决策：是否进入 Deep Dive ──
-        // 只有模型在 triage 阶段没有给出最终答复、或因达到轮次上限而停不下来时，
-        // 才进入 Deep Dive。关键词推断只决定“加载哪些专用工具”，
-        // 不再因为关键词命中而强制模型在已给出答复后再跑一遍。
+        // 规则：1) Phase 1 没有最终文本；2) 因 tool-calls 达到轮次上限；
+        //       3) Deep Dive 相对 Triage 能加载新工具（关键词或工具调用命中）。
         const triageFinal = triageResult.finalAssistantMessage;
-        const shouldRunDeep = !triageFinal || triageResult.finishReason === "tool-calls";
+        const triageToolIdSet = new Set(triageToolIds);
+        const decisionToolIds = toolRouter.getDeepToolIds(inferredCategories);
+        const hasSpecializedTools = decisionToolIds.some((id) => !triageToolIdSet.has(id));
+        const shouldRunDeep = !triageFinal
+          || triageResult.finishReason === "tool-calls"
+          || hasSpecializedTools;
 
         const routeAudit = event(
           "model_request",
           shouldRunDeep ? "Phase 2: Deep Dive" : "Phase 2: Skipped",
           shouldRunDeep
-            ? `Routing: inferred categories [${inferredCategories.join(", ")}], estimated token savings: ~${savedTokens} tokens. Phase 1 final text ${triageFinal ? "present" : "missing"}, finish ${triageResult.finishReason}.`
-            : `Routing: triage produced a final answer; skipping Deep Dive. Categories [${inferredCategories.join(", ")}] were inferred for reference only.`
+            ? `Routing: inferred categories [${inferredCategories.join(", ")}], estimated token savings: ~${savedTokens} tokens. Phase 1 final text ${triageFinal ? "present" : "missing"}, finish ${triageResult.finishReason}, specialized tools ${hasSpecializedTools ? "required" : "not required"}.`
+            : `Routing: inferred categories [${inferredCategories.join(", ")}] can be satisfied by triage tools. Phase 1 final text will be published as the only reply.`
         );
         audit.push(routeAudit);
         persist(() => stateStore.recordAuditEvent(sessionId, runId, routeAudit));
