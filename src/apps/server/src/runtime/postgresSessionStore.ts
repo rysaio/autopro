@@ -226,6 +226,52 @@ export class PostgresSessionStore implements SessionStateStore, PendingApprovalS
     return detail;
   }
 
+  async updateArtifact(
+    sessionId: string,
+    artifactId: string,
+    input: { title?: string; summary?: string }
+  ): Promise<EvidenceArtifact | undefined> {
+    return withTransaction(this.db, async (client) => {
+      const existing = await client.query<JsonPayloadRow<"artifact">>(
+        `SELECT artifact FROM secops_artifacts WHERE id = $1 AND session_id = $2`,
+        [artifactId, sessionId]
+      );
+      const current = existing.rows[0]?.artifact as EvidenceArtifact | undefined;
+      if (!current) {
+        return undefined;
+      }
+      const updated: EvidenceArtifact = {
+        ...current,
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.summary !== undefined ? { summary: input.summary } : {})
+      };
+      await client.query(
+        `UPDATE secops_artifacts
+         SET artifact = $3::jsonb
+         WHERE id = $1 AND session_id = $2`,
+        [artifactId, sessionId, JSON.stringify(updated)]
+      );
+      await syncRunArtifacts(client, sessionId, artifactId, updated);
+      return updated;
+    });
+  }
+
+  async deleteArtifact(sessionId: string, artifactId: string): Promise<boolean> {
+    return withTransaction(this.db, async (client) => {
+      const deleted = await client.query<{ id: string }>(
+        `DELETE FROM secops_artifacts
+         WHERE id = $1 AND session_id = $2
+         RETURNING id`,
+        [artifactId, sessionId]
+      );
+      if (deleted.rows.length === 0) {
+        return false;
+      }
+      await syncRunArtifacts(client, sessionId, artifactId, undefined);
+      return true;
+    });
+  }
+
   async listSessions(limit = 50, includeArchived = false): Promise<AgentSessionSummary[]> {
     const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
     // 相关标量子查询替代多表 LEFT JOIN + COUNT(DISTINCT ...)：
@@ -464,6 +510,34 @@ interface PendingApprovalRow {
   invocation: ToolInvocation;
   context: StoredApproval["context"];
   expires_at: Date | string;
+}
+
+async function syncRunArtifacts(
+  client: import("@electric-sql/pglite").Transaction,
+  sessionId: string,
+  artifactId: string,
+  updated: EvidenceArtifact | undefined
+): Promise<void> {
+  const runs = await client.query<{ id: string; run: AgentRun | null }>(
+    `SELECT id, run FROM secops_runs WHERE session_id = $1 AND run IS NOT NULL`,
+    [sessionId]
+  );
+  for (const row of runs.rows) {
+    if (!row.run) {
+      continue;
+    }
+    const current = row.run.artifacts ?? [];
+    if (!current.some((artifact) => artifact.id === artifactId)) {
+      continue;
+    }
+    const next = updated
+      ? current.map((artifact) => (artifact.id === artifactId ? updated : artifact))
+      : current.filter((artifact) => artifact.id !== artifactId);
+    await client.query(
+      `UPDATE secops_runs SET run = $2::jsonb WHERE id = $1`,
+      [row.id, JSON.stringify({ ...row.run, artifacts: next })]
+    );
+  }
 }
 
 function toIso(value: Date | string): string {

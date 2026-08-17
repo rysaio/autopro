@@ -242,6 +242,71 @@ describe("PostgresSessionStore", () => {
     await expect(secondStore.list()).resolves.toHaveLength(0);
   });
 
+  it("updates and deletes evidence artifacts and syncs stored runs", async () => {
+    const store = new PostgresSessionStore(new PGlite());
+    stores.push(store);
+    await store.migrate();
+    const sessionId = "session-artifact-edit";
+    const runId = randomUUID();
+    const startedAt = new Date().toISOString();
+    await store.startRun({ sessionId, runId, startedAt });
+
+    const artifact: EvidenceArtifact = {
+      id: "artifact-edit-1",
+      title: "IOC: 198.51.100.23",
+      kind: "ioc",
+      summary: "Original summary",
+      data: { indicator: "198.51.100.23" },
+      createdAt: new Date().toISOString()
+    };
+    const run: AgentRun = {
+      id: runId,
+      status: "completed",
+      provider: "test-provider",
+      model: "test-model",
+      startedAt,
+      completedAt: new Date().toISOString(),
+      messages: [],
+      toolInvocations: [],
+      audit: [],
+      artifacts: [artifact]
+    };
+    await store.recordToolInvocation(sessionId, runId, {
+      id: "tool-call-edit",
+      toolName: "ioc.enrich",
+      displayName: "IOC Enrichment",
+      status: "executed",
+      risk: "low",
+      arguments: { indicator: "198.51.100.23" },
+      result: { ok: true },
+      startedAt,
+      completedAt: new Date().toISOString()
+    }, [artifact]);
+    await store.completeRun(sessionId, run);
+
+    const updated = await store.updateArtifact(sessionId, artifact.id, {
+      title: "IOC: 198.51.100.23 (updated)",
+      summary: "Updated summary"
+    });
+    expect(updated).toMatchObject({
+      id: artifact.id,
+      title: "IOC: 198.51.100.23 (updated)",
+      summary: "Updated summary"
+    });
+
+    const restored = await store.restoreSession(sessionId);
+    expect(restored?.artifacts).toEqual([updated]);
+    expect(restored?.runs[0]?.artifacts).toEqual([updated]);
+
+    expect(await store.deleteArtifact(sessionId, artifact.id)).toBe(true);
+    expect(await store.updateArtifact(sessionId, artifact.id, { title: "Missing" })).toBeUndefined();
+    expect(await store.deleteArtifact(sessionId, artifact.id)).toBe(false);
+
+    const afterDelete = await store.restoreSession(sessionId);
+    expect(afterDelete?.artifacts).toEqual([]);
+    expect(afterDelete?.runs[0]?.artifacts).toEqual([]);
+  });
+
   it("archives, lists archived, restores, and deletes sessions", async () => {
     const store = new PostgresSessionStore(new PGlite());
     stores.push(store);

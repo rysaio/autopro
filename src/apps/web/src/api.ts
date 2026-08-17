@@ -327,6 +327,28 @@ export function fetchSession(id: string): Promise<AgentSessionDetail> {
   return getJson<AgentSessionDetail>(`/api/sessions/${encodeURIComponent(id)}`);
 }
 
+export interface UpdateArtifactInput {
+  title?: string;
+  summary?: string;
+}
+
+export function updateArtifact(
+  sessionId: string,
+  artifactId: string,
+  input: UpdateArtifactInput
+): Promise<{ artifact: EvidenceArtifact }> {
+  return putJson<{ artifact: EvidenceArtifact }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/artifacts/${encodeURIComponent(artifactId)}`,
+    input
+  );
+}
+
+export function deleteArtifact(sessionId: string, artifactId: string): Promise<{ deleted: boolean }> {
+  return deleteJson<{ deleted: boolean }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/artifacts/${encodeURIComponent(artifactId)}`
+  );
+}
+
 export function approveToolCall(id: string): Promise<ApprovalDecisionResult> {
   return postJson<ApprovalDecisionResult>(`/api/approvals/${id}/approve`, {});
 }

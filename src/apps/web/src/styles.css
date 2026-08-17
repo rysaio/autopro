@@ -2811,6 +2811,36 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+}
+
+.artifact-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.copy-btn.danger:hover {
+  color: var(--danger-600);
+  border-color: var(--danger-200);
+  background: var(--danger-50);
+}
+
+.artifact-edit-form {
+  display: grid;
+  gap: 8px;
+}
+
+.artifact-edit-form input,
+.artifact-edit-form textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--r-sm);
+  color: var(--gray-800);
+  background: var(--gray-50);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .copy-btn {

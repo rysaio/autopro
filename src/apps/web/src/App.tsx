@@ -18,6 +18,7 @@ import {
   LockKeyhole,
   MessageSquare,
   Network,
+  Pencil,
   PlugZap,
   Plus,
   Search,
@@ -71,6 +72,8 @@ import {
   streamAgent,
   unarchiveSession,
   updateActionLevel,
+  updateArtifact,
+  deleteArtifact,
   updateSkillVisibility,
   generateReport,
   exportReport,
@@ -1231,6 +1234,27 @@ async function handleGenerateReport() {
       // fallback
     }
   }
+
+  async function handleUpdateArtifact(artifactId: string, input: { title?: string; summary?: string }) {
+    setError(null);
+    try {
+      const { artifact } = await updateArtifact(currentSessionId, artifactId, input);
+      updateSession(currentSessionId, (entry) => updateArtifactInEntry(entry, artifact));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function handleDeleteArtifact(artifactId: string) {
+    setError(null);
+    try {
+      await deleteArtifact(currentSessionId, artifactId);
+      updateSession(currentSessionId, (entry) => removeArtifactFromEntry(entry, artifactId));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   async function resolveApproval(id: string, decision: "approve" | "deny") {
     setResolvingApprovalId(id);
     setError(null);
@@ -1884,6 +1908,8 @@ async function handleGenerateReport() {
                       artifacts={activeArtifacts}
                       copiedId={copiedId}
                       onCopy={copyToClipboard}
+                      onDelete={handleDeleteArtifact}
+                      onUpdate={handleUpdateArtifact}
                     />
                     {activeArtifacts.length > 0 ? <MitreMatrix artifacts={activeArtifacts} toolInvocations={activeToolInvocations} /> : null}
                   </div>
@@ -2480,6 +2506,47 @@ function upsertMessage(current: ChatMessage[], message: ChatMessage): ChatMessag
   return [...current, message];
 }
 
+function mapArtifacts(artifacts: EvidenceArtifact[], next: EvidenceArtifact): EvidenceArtifact[] {
+  if (artifacts.some((artifact) => artifact.id === next.id)) {
+    return artifacts.map((artifact) => (artifact.id === next.id ? next : artifact));
+  }
+  return [...artifacts, next];
+}
+
+function filterArtifacts(artifacts: EvidenceArtifact[], artifactId: string): EvidenceArtifact[] {
+  return artifacts.filter((artifact) => artifact.id !== artifactId);
+}
+
+function updateArtifactInEntry(entry: SessionEntry, next: EvidenceArtifact): SessionEntry {
+  return {
+    ...entry,
+    activeSession: entry.activeSession ? {
+      ...entry.activeSession,
+      artifacts: mapArtifacts(entry.activeSession.artifacts, next)
+    } : entry.activeSession,
+    lastRun: entry.lastRun ? {
+      ...entry.lastRun,
+      artifacts: mapArtifacts(entry.lastRun.artifacts, next)
+    } : entry.lastRun,
+    streamArtifacts: mapArtifacts(entry.streamArtifacts, next)
+  };
+}
+
+function removeArtifactFromEntry(entry: SessionEntry, artifactId: string): SessionEntry {
+  return {
+    ...entry,
+    activeSession: entry.activeSession ? {
+      ...entry.activeSession,
+      artifacts: filterArtifacts(entry.activeSession.artifacts, artifactId)
+    } : entry.activeSession,
+    lastRun: entry.lastRun ? {
+      ...entry.lastRun,
+      artifacts: filterArtifacts(entry.lastRun.artifacts, artifactId)
+    } : entry.lastRun,
+    streamArtifacts: filterArtifacts(entry.streamArtifacts, artifactId)
+  };
+}
+
 function mergeMessages(current: ChatMessage[], nextMessages: ChatMessage[]): ChatMessage[] {
   const seen = new Set(current.map((message) => message.id));
   return [
@@ -2812,12 +2879,19 @@ function AuditView({ events }: { events: AuditEvent[] }) {
 function EnhancedArtifactView({
   artifacts,
   copiedId,
-  onCopy
+  onCopy,
+  onUpdate,
+  onDelete
 }: {
   artifacts: EvidenceArtifact[];
   copiedId: string | null;
   onCopy: (text: string, id: string) => void;
+  onUpdate: (artifactId: string, input: { title?: string; summary?: string }) => void;
+  onDelete: (artifactId: string) => void;
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editSummary, setEditSummary] = useState("");
   const grouped = useMemo(() => {
     const groups: Record<string, EvidenceArtifact[]> = {};
     for (const a of artifacts) {
@@ -2834,6 +2908,22 @@ function EnhancedArtifactView({
     asset: "资产",
     case_note: "案件记录"
   };
+
+  function startEdit(artifact: EvidenceArtifact) {
+    setEditingId(artifact.id);
+    setEditTitle(artifact.title);
+    setEditSummary(artifact.summary);
+  }
+
+  function saveEdit(artifactId: string) {
+    const nextTitle = editTitle.trim();
+    const nextSummary = editSummary.trim();
+    onUpdate(artifactId, {
+      ...(nextTitle ? { title: nextTitle } : {}),
+      ...(nextSummary ? { summary: nextSummary } : {})
+    });
+    setEditingId(null);
+  }
 
   return (
     <div className="inspector-body">
@@ -2857,18 +2947,77 @@ function EnhancedArtifactView({
               <article className="artifact enhanced" key={artifact.id}>
                 <div className="artifact-header">
                   <div className="artifact-kind">{artifact.kind}</div>
-                  <button
-                    className="copy-btn"
-                    onClick={() => onCopy(JSON.stringify(artifact.data, null, 2), artifact.id)}
-                    title="复制到剪贴板"
-                    type="button"
-                  >
-                    {copiedId === artifact.id ? <CheckCircle2 size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-                  </button>
+                  <div className="artifact-actions">
+                    {editingId === artifact.id ? (
+                      <>
+                        <button
+                          className="copy-btn"
+                          onClick={() => saveEdit(artifact.id)}
+                          title="保存修改"
+                          type="button"
+                        >
+                          <CheckCircle2 size={14} aria-hidden="true" />
+                        </button>
+                        <button
+                          className="copy-btn"
+                          onClick={() => setEditingId(null)}
+                          title="取消"
+                          type="button"
+                        >
+                          <XCircle size={14} aria-hidden="true" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="copy-btn"
+                          onClick={() => onCopy(JSON.stringify(artifact.data, null, 2), artifact.id)}
+                          title="复制到剪贴板"
+                          type="button"
+                        >
+                          {copiedId === artifact.id ? <CheckCircle2 size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                        </button>
+                        <button
+                          className="copy-btn"
+                          onClick={() => startEdit(artifact)}
+                          title="编辑标题与摘要"
+                          type="button"
+                        >
+                          <Pencil size={14} aria-hidden="true" />
+                        </button>
+                        <button
+                          className="copy-btn danger"
+                          onClick={() => onDelete(artifact.id)}
+                          title="删除证据"
+                          type="button"
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <strong>{artifact.title}</strong>
-                <p>{artifact.summary}</p>
-                <CollapsibleJson data={artifact.data} maxPreviewLength={300} />
+                {editingId === artifact.id ? (
+                  <div className="artifact-edit-form">
+                    <input
+                      aria-label="证据标题"
+                      onChange={(event) => setEditTitle(event.target.value)}
+                      value={editTitle}
+                    />
+                    <textarea
+                      aria-label="证据摘要"
+                      onChange={(event) => setEditSummary(event.target.value)}
+                      rows={3}
+                      value={editSummary}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <strong>{artifact.title}</strong>
+                    <p>{artifact.summary}</p>
+                    <CollapsibleJson data={artifact.data} maxPreviewLength={300} />
+                  </>
+                )}
               </article>
             ))}
           </div>

@@ -453,6 +453,42 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
     return session;
   });
 
+  // 证据工件：允许分析师修改标题/摘要，或删除不采纳的证据。
+  app.put("/api/sessions/:id/artifacts/:artifactId", async (request, reply) => {
+    if (!durableSessionStore) {
+      return reply.code(503).send({ error: "Durable session store is not configured" });
+    }
+    const params = request.params as { id: string; artifactId: string };
+    const body = coerceRecord(request.body);
+    const input: { title?: string; summary?: string } = {};
+    if (typeof body.title === "string") {
+      input.title = body.title.trim();
+    }
+    if (typeof body.summary === "string") {
+      input.summary = body.summary.trim();
+    }
+    if (Object.keys(input).length === 0) {
+      return reply.code(400).send({ error: "title or summary must be provided" });
+    }
+    const updated = await durableSessionStore.updateArtifact(params.id, params.artifactId, input);
+    if (!updated) {
+      return reply.code(404).send({ error: `No artifact found for ${params.artifactId}` });
+    }
+    return { artifact: updated };
+  });
+
+  app.delete("/api/sessions/:id/artifacts/:artifactId", async (request, reply) => {
+    if (!durableSessionStore) {
+      return reply.code(503).send({ error: "Durable session store is not configured" });
+    }
+    const params = request.params as { id: string; artifactId: string };
+    const deleted = await durableSessionStore.deleteArtifact(params.id, params.artifactId);
+    if (!deleted) {
+      return reply.code(404).send({ error: `No artifact found for ${params.artifactId}` });
+    }
+    return { deleted: true };
+  });
+
   app.get("/api/audit/events", async (request) => {
     const query = request.query as { limit?: string | number } | undefined;
     const limit = coerceLimit(query?.limit, 100);
