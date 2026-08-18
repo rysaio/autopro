@@ -6,12 +6,20 @@ import {
   searchMitreAttack,
   getMitreTechniqueById,
   getTriagePlaybook,
-  getMaliciousIpRisk,
   suspiciousPortPatterns,
-  maliciousAsnPatterns,
-  geolocationRiskHints,
-  mitreAttackTechniques
+  geolocationRiskHints
 } from "./threatIntel.js";
+import {
+  isDocumentationIp,
+  isPrivateIp,
+  isDomainLike,
+  isHashLike,
+  isUrlLike,
+  liveThreatIntelLookup,
+  liveMitreTechniqueLookup,
+  liveAssetResolution,
+  liveSigmaRuleSearch
+} from "./liveEnrichment.js";
 
 type ToolHandler = (args: Record<string, unknown>, context: ToolContext) => Promise<ToolExecutionResult>;
 
@@ -49,7 +57,7 @@ export function createSecOpsTools(): SecOpsTool[] {
         id: "ioc.enrich",
         name: "IOC Enrichment",
         description:
-          "Classify an IP, domain, URL, or hash-like indicator with local deterministic context, threat intelligence, MITRE ATT&CK technique mapping, and defensive recommendations.",
+          "Classify an IP, domain, URL, or hash-like indicator with local deterministic context, threat intelligence, MITRE ATT&CK technique mapping, and defensive recommendations. When the indicator is network-resolvable, the tool attempts live no-config enrichment via DNS, ipinfo.io, AlienVault OTX, GreyNoise, and CIRCL hashlookup, then falls back to local knowledge when the network is unavailable.",
         toolClass: "perception",
         risk: "low",
         tags: ["ioc", "triage", "read-only", "threat-intel", "mitre"],
@@ -65,9 +73,9 @@ export function createSecOpsTools(): SecOpsTool[] {
           additionalProperties: false
         }
       }),
-      async (args) => {
+      async (args, context) => {
         const indicator = requireString(args, "indicator");
-        const result = enrichIndicator(indicator);
+        const result = await enrichIndicator(indicator, context);
         return {
           output: result,
           artifacts: [
@@ -86,7 +94,7 @@ export function createSecOpsTools(): SecOpsTool[] {
         id: "detection.rule.search",
         name: "Detection Rule Search",
         description:
-          "Search a curated local library of defensive detection ideas by keyword, ATT&CK tactic, or technique ID. Returns matched rules with technique IDs.",
+          "Search a curated local library of defensive detection ideas by keyword, ATT&CK tactic, or technique ID. When the public SigmaHQ rule tree is reachable, the tool also searches GitHub for matching Sigma rule paths without requiring configuration. Returns matched rules with technique IDs.",
         toolClass: "reasoning",
         risk: "low",
         tags: ["detection", "sigma", "read-only", "mitre"],
@@ -106,16 +114,25 @@ export function createSecOpsTools(): SecOpsTool[] {
           additionalProperties: false
         }
       }),
-      async (args) => {
+      async (args, context) => {
         const query = requireString(args, "query");
         const tactic = typeof args.tactic === "string" ? args.tactic : undefined;
         const matches = searchRules(query, tactic);
+        const liveSigma = await liveSigmaRuleSearch(query, context.workspaceRoot);
         return {
           output: {
             query,
             tactic,
             count: matches.length,
-            matches
+            matches,
+            liveSigma: {
+              status: liveSigma.report.status,
+              checkedAt: liveSigma.report.checkedAt,
+              fromCache: liveSigma.fromCache,
+              truncated: liveSigma.truncated,
+              count: liveSigma.rules.length,
+              rules: liveSigma.rules
+            }
           },
           artifacts: [
             artifact(
@@ -138,7 +155,7 @@ export function createSecOpsTools(): SecOpsTool[] {
         id: "asset.inventory.lookup",
         name: "Asset Inventory Lookup",
         description:
-          "Look up sample asset ownership, criticality, network segment, department, business context, and containment notes for triage context.",
+          "Look up sample asset ownership, criticality, network segment, department, business context, and containment notes for triage context. For unknown hostnames or public IPs, the tool attempts live DNS or ipinfo.io resolution and attaches the result to the local inventory lookup.",
         toolClass: "perception",
         risk: "low",
         tags: ["asset", "ownership", "read-only", "network-segment"],
@@ -154,13 +171,23 @@ export function createSecOpsTools(): SecOpsTool[] {
           additionalProperties: false
         }
       }),
-      async (args) => {
+      async (args, context) => {
         const asset = requireString(args, "asset");
         const result = lookupAsset(asset);
+        const liveResolution = await liveAssetResolution(asset, context.workspaceRoot);
+        const output = {
+          ...result,
+          liveResolution: {
+            status: liveResolution.report.status,
+            checkedAt: liveResolution.report.checkedAt,
+            fromCache: liveResolution.fromCache,
+            data: liveResolution.data
+          }
+        };
         return {
-          output: result,
+          output,
           artifacts: [
-            artifact("asset", `Asset: ${asset}`, result.summary, result)
+            artifact("asset", `Asset: ${asset}`, output.summary, output)
           ]
         };
       }
@@ -228,7 +255,7 @@ export function createSecOpsTools(): SecOpsTool[] {
         id: "threat.intel.lookup",
         name: "Threat Intelligence Lookup",
         description:
-          "Look up threat intelligence for an IP, domain, URL, or hash from the local knowledge base. Returns threat category, severity, known campaigns, MITRE ATT&CK techniques, and associated IOCs.",
+          "Look up threat intelligence for an IP, domain, URL, or hash by combining the local knowledge base with live no-config public sources (DNS, ipinfo.io, AlienVault OTX, GreyNoise, CIRCL hashlookup). Returns threat category, severity, known campaigns, MITRE ATT&CK techniques, and associated IOCs. Falls back to local knowledge when the network is unavailable.",
         toolClass: "perception",
         risk: "low",
         tags: ["threat-intel", "ioc", "read-only", "mitre"],
@@ -244,25 +271,39 @@ export function createSecOpsTools(): SecOpsTool[] {
           additionalProperties: false
         }
       }),
-      async (args) => {
+      async (args, context) => {
         const indicator = requireString(args, "indicator");
         const intel = lookupThreatIntel(indicator);
-        if (intel) {
-          const mitreDetails = intel.mitreTechniques
+        const live = await liveThreatIntelLookup(indicator, context.workspaceRoot);
+        const liveBlock = {
+          status: live.report.status,
+          checkedAt: live.report.checkedAt,
+          fromCache: live.fromCache,
+          probes: live.report.probes,
+          assessment: live.assessment,
+          data: live.data
+        };
+
+        if (intel || live.assessment?.found) {
+          const category = intel?.category ?? live.assessment?.category ?? "unknown";
+          const severity = intel?.severity ?? live.assessment?.severity ?? "medium";
+          const mitreTechniques = intel?.mitreTechniques ?? [];
+          const mitreDetails = mitreTechniques
             .map((tid) => getMitreTechniqueById(tid))
             .filter(Boolean);
           const result = {
             indicator,
             found: true,
-            type: intel.type,
-            category: intel.category,
-            severity: intel.severity,
-            description: intel.description,
-            firstSeen: intel.firstSeen,
-            tags: intel.tags,
-            mitreTechniques: intel.mitreTechniques,
+            type: intel?.type ?? inferIndicatorType(indicator),
+            category,
+            severity,
+            description: intel?.description ?? live.assessment?.description ?? `Live enrichment suggests ${indicator} is malicious.`,
+            firstSeen: intel?.firstSeen ?? live.assessment?.firstSeen ?? "unknown",
+            tags: intel?.tags ?? live.assessment?.tags ?? [],
+            mitreTechniques,
             mitreDetails,
-            summary: `${indicator} is a known ${intel.category} indicator with ${intel.severity} severity.`
+            live: liveBlock,
+            summary: `${indicator} is a known ${category} indicator with ${severity} severity${live.assessment?.found ? " (confirmed by live sources)" : ""}.`
           };
           return {
             output: result,
@@ -274,8 +315,9 @@ export function createSecOpsTools(): SecOpsTool[] {
         const notFound = {
           indicator,
           found: false,
-          summary: `${indicator} was not found in the local threat intelligence knowledge base. Consider external enrichment.`,
-          recommendation: "Search for this indicator in external threat intelligence platforms (VirusTotal, AlienVault OTX, AbuseIPDB)."
+          live: liveBlock,
+          summary: `${indicator} was not found in the local threat intelligence knowledge base or public no-config sources.`,
+          recommendation: "Search for this indicator in configured threat intelligence platforms (VirusTotal, AlienVault OTX, AbuseIPDB) or request an analyst-configured lookup."
         };
         return {
           output: notFound,
@@ -295,7 +337,7 @@ export function createSecOpsTools(): SecOpsTool[] {
         id: "mitre.attack.search",
         name: "MITRE ATT&CK Search",
         description:
-          "Search the MITRE ATT&CK knowledge base by technique ID (e.g., T1059), tactic name, keyword, platform, or data source. Returns matching techniques with detection and mitigation guidance.",
+          "Search the MITRE ATT&CK knowledge base by technique ID (e.g., T1059), tactic name, keyword, platform, or data source. Exact technique IDs are enriched live from attack.mitre.org when reachable. Returns matching techniques with detection and mitigation guidance.",
         toolClass: "reasoning",
         risk: "low",
         tags: ["mitre", "attack", "read-only", "detection", "ttps"],
@@ -315,23 +357,36 @@ export function createSecOpsTools(): SecOpsTool[] {
           additionalProperties: false
         }
       }),
-      async (args) => {
+      async (args, context) => {
         const query = requireString(args, "query");
         const tactic = typeof args.tactic === "string" ? args.tactic : undefined;
 
         // Check if query is a direct technique ID
         const directMatch = getMitreTechniqueById(query);
         if (directMatch) {
+          const live = await liveMitreTechniqueLookup(directMatch.id, context.workspaceRoot);
+          const technique = {
+            ...directMatch,
+            ...(live.technique?.name ? { name: live.technique.name } : {}),
+            ...(live.technique?.description ? { description: live.technique.description } : {}),
+            live: {
+              status: live.report.status,
+              checkedAt: live.report.checkedAt,
+              fromCache: live.fromCache,
+              url: live.technique?.url ?? `https://attack.mitre.org/techniques/${directMatch.id}/`,
+              source: "attack.mitre.org"
+            }
+          };
           return {
             output: {
               query,
               tactic,
               exactMatch: true,
               count: 1,
-              techniques: [directMatch]
+              techniques: [technique]
             },
             artifacts: [
-              artifact("ioc", `MITRE ATT&CK: ${query}`, `Found technique ${directMatch.id}: ${directMatch.name}`, directMatch)
+              artifact("ioc", `MITRE ATT&CK: ${query}`, `Found technique ${directMatch.id}: ${directMatch.name}`, technique)
             ]
           };
         }
@@ -346,7 +401,11 @@ export function createSecOpsTools(): SecOpsTool[] {
             tactic,
             exactMatch: false,
             count: results.length,
-            techniques: results
+            techniques: results,
+            live: {
+              status: "skipped",
+              reason: "Keyword/tactic search uses the local MITRE ATT&CK knowledge base. Exact technique IDs (e.g., T1059) are fetched live from attack.mitre.org."
+            }
           },
           artifacts: [
             artifact("detection", `MITRE ATT&CK search: ${query}`, `${results.length} techniques matched.`, results)
@@ -364,7 +423,7 @@ export function createSecOpsTools(): SecOpsTool[] {
         id: "alert.triage.playbook",
         name: "Alert Triage Playbook",
         description:
-          "Return a guided triage playbook for a specific alert type (brute_force, malware, phishing, data_exfiltration, lateral_movement, privilege_escalation). Includes step-by-step investigation actions, escalation criteria, containment actions, and investigation questions.",
+          "Return a guided triage playbook for a specific alert type (brute_force, malware, phishing, data_exfiltration, lateral_movement, privilege_escalation). Includes step-by-step investigation actions, escalation criteria, containment actions, and investigation questions. Attempts live MITRE ATT&CK technique enrichment for the playbook's mapped techniques when attack.mitre.org is reachable.",
         toolClass: "reasoning",
         risk: "low",
         tags: ["triage", "playbook", "read-only", "incident-response", "mitre"],
@@ -380,16 +439,36 @@ export function createSecOpsTools(): SecOpsTool[] {
           additionalProperties: false
         }
       }),
-      async (args) => {
+      async (args, context) => {
         const alertType = requireString(args, "alertType");
         const playbook = getTriagePlaybook(alertType);
         if (playbook) {
           const mitreDetails = playbook.mitreTechniques
             .map((tid) => getMitreTechniqueById(tid))
             .filter(Boolean);
+          const liveTechniques = await Promise.all(playbook.mitreTechniques.map(async (tid) => {
+            const live = await liveMitreTechniqueLookup(tid, context.workspaceRoot);
+            return {
+              techniqueId: tid,
+              status: live.report.status,
+              checkedAt: live.report.checkedAt,
+              fromCache: live.fromCache,
+              name: live.technique?.name ?? null,
+              description: live.technique?.description ?? null,
+              url: live.technique?.url ?? `https://attack.mitre.org/techniques/${tid}/`
+            };
+          }));
+          const anyOnline = liveTechniques.some((live) => live.status === "online");
+          const allSkipped = liveTechniques.every((live) => live.status === "skipped");
           const result = {
             ...playbook,
             mitreDetails,
+            knowledge: {
+              status: anyOnline ? "online" : allSkipped ? "skipped" : "offline",
+              checkedAt: new Date().toISOString(),
+              localPlaybook: true,
+              liveTechniques
+            },
             summary: `Triage playbook for ${playbook.title} (${playbook.severity} severity, ${playbook.steps.length} investigation steps).`
           };
           return {
@@ -453,6 +532,15 @@ function requireStringArray(args: Record<string, unknown>, key: string): string[
   return value.map((item) => item.trim()).filter(Boolean);
 }
 
+function inferIndicatorType(indicator: string): "ip" | "domain" | "hash" | "url" | "asn" | "port" {
+  const normalized = indicator.trim().toLowerCase();
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(normalized)) return "ip";
+  if (/^[a-f0-9]{32,64}$/i.test(normalized)) return "hash";
+  if (/^https?:\/\//i.test(normalized)) return "url";
+  if (/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/i.test(normalized)) return "domain";
+  return "ip";
+}
+
 function artifact(
   kind: EvidenceArtifact["kind"],
   title: string,
@@ -473,23 +561,23 @@ function artifact(
 // IOC Enrichment (ENHANCED with MITRE, port/ASN/geo heuristics)
 // ============================================================
 
-function enrichIndicator(indicator: string) {
-  const isDocumentationIp = /^(192\.0\.2|198\.51\.100|203\.0\.113)\./.test(indicator);
-  const isPrivateIp = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(indicator);
-  const isHashLike = /^[a-f0-9]{32,64}$/i.test(indicator);
-  const isDomain = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/i.test(indicator);
-  const isUrl = /^https?:\/\//i.test(indicator);
+async function enrichIndicator(indicator: string, context: ToolContext) {
+  const docIp = isDocumentationIp(indicator);
+  const privateIp = isPrivateIp(indicator);
+  const hashLike = isHashLike(indicator);
+  const domain = isDomainLike(indicator);
+  const url = isUrlLike(indicator);
   const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(indicator);
 
-  const type = isHashLike ? "hash" : isUrl ? "url" : isDomain ? "domain" : "network";
+  const type = hashLike ? "hash" : url ? "url" : domain ? "domain" : "network";
 
   // Base risk score
   let score = 34;
-  if (isHashLike) score = 54;
-  else if (isDomain) score = 42;
-  else if (isUrl) score = 48;
-  else if (isDocumentationIp) score = 5;
-  else if (isPrivateIp) score = 10;
+  if (hashLike) score = 54;
+  else if (domain) score = 42;
+  else if (url) score = 48;
+  else if (docIp) score = 5;
+  else if (privateIp) score = 10;
 
   // Threat intelligence lookup
   const intel = lookupThreatIntel(indicator);
@@ -525,7 +613,7 @@ function enrichIndicator(indicator: string) {
 
   // Geolocation risk hints (sample heuristic)
   let geoRisk = null;
-  if (isIp && !isPrivateIp && !isDocumentationIp) {
+  if (isIp && !privateIp && !docIp) {
     geoRisk = geolocationRiskHints[0]; // placeholder; indicates geo context should be checked
   }
 
@@ -538,8 +626,8 @@ function enrichIndicator(indicator: string) {
   // Determine confidence
   let confidence = "medium-local";
   if (intel) confidence = "high-intel-match";
-  else if (isDocumentationIp) confidence = "low-sample";
-  else if (isPrivateIp) confidence = "internal-traffic";
+  else if (docIp) confidence = "low-sample";
+  else if (privateIp) confidence = "internal-traffic";
 
   // Build recommended actions
   const recommendedActions = [
@@ -554,19 +642,51 @@ function enrichIndicator(indicator: string) {
     recommendedActions.push(`Note: Port ${portRisk.port}/${portRisk.protocol} is ${portRisk.note}`);
   }
 
+  // Live enrichment against public no-config sources. Always falls back to
+  // the local knowledge base when the network is unavailable.
+  const live = await liveThreatIntelLookup(indicator, context.workspaceRoot);
+  const liveBlock = {
+    status: live.report.status,
+    checkedAt: live.report.checkedAt,
+    fromCache: live.fromCache,
+    probes: live.report.probes,
+    assessment: live.assessment,
+    data: live.data
+  };
+
+  if (live.assessment?.found) {
+    if (live.assessment.severity === "critical") score = Math.max(score, 95);
+    else if (live.assessment.severity === "high") score = Math.max(score, 80);
+    else if (live.assessment.severity === "medium") score = Math.max(score, 60);
+    if (!intel) confidence = "high-live-match";
+  }
+
+  const dataSources = ["local heuristics", "sample SecOps knowledge base", "threat intelligence KB", "MITRE ATT&CK mapping"];
+  if (live.fromCache) {
+    dataSources.push("live knowledge cache");
+  }
+  if (live.report.status === "online") {
+    for (const probe of live.report.probes) {
+      if (probe.status === "ok") {
+        dataSources.push(probe.source);
+      }
+    }
+  }
+
   return {
     indicator,
     type,
     riskScore: score,
     confidence,
-    summary: `${indicator} classified as ${type} with risk score ${score}${intel ? ` (matched threat intel: ${intel.category})` : ""}.`,
+    summary: `${indicator} classified as ${type} with risk score ${score}${intel ? ` (matched threat intel: ${intel.category})` : ""}${live.assessment?.found ? " (live sources confirmed malicious activity)" : ""}.`,
     recommendedActions,
     threatIntel: intelResult,
+    live: liveBlock,
     mitreTechniques,
     mitreDetails,
     portRisk,
     geoRiskHint: geoRisk ? "Cross-reference with geolocation context for risk assessment." : null,
-    dataSources: ["local heuristics", "sample SecOps knowledge base", "threat intelligence KB", "MITRE ATT&CK mapping"]
+    dataSources
   };
 }
 
